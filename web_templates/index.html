@@ -1725,11 +1725,48 @@ function stepDescripcionIA() {
         placeholder="Ej: Red de saneamiento de la comunidad con colector principal DN200 de 18 ml en mal estado. Se observan fisuras longitudinales y deposito sedimentario en toda su longitud. Se propone encamisado CIPP y limpieza previa robotizada..."></textarea>
       ${checkInforme}
     </div>
+    <div class="mb-3">
+      <label class="form-label fw-normal text-muted" style="font-size:.82rem">Archivos de apoyo <span style="font-weight:400">(opcional - PDF, Word, notas de obra)</span></label>
+      <div id="ia-drop" style="border:2px dashed #dce4ef;border-radius:10px;padding:14px 16px;background:#f8fafc;cursor:pointer;transition:border-color .2s;display:flex;align-items:center;gap:12px"
+        onclick="document.getElementById('ia-file-input').click()"
+        ondragover="event.preventDefault();this.style.borderColor='#2563eb'"
+        ondragleave="this.style.borderColor='#dce4ef'"
+        ondrop="_iaDrop(event)">
+        <i class="bi bi-paperclip" style="font-size:1.4rem;color:#2563eb;flex-shrink:0"></i>
+        <div>
+          <div style="font-size:.83rem;color:#444;font-weight:600">Arrastra archivos o haz clic para seleccionar</div>
+          <div style="font-size:.75rem;color:#8fa3b8">PDF, Word (.docx), texto (.txt)</div>
+        </div>
+      </div>
+      <input id="ia-file-input" type="file" multiple accept=".pdf,.docx,.doc,.txt,.md" style="display:none" onchange="_iaFilesSelected(this.files)">
+      <div id="ia-file-list" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;"></div>
+    </div>
     <div class="text-end">
       <button class="btn btn-next" onclick="llamarGeneradorIA()">
         <i class="bi bi-robot me-2"></i>Generar presupuesto con IA
       </button>
     </div>`);
+}
+
+let _iaFiles = [];
+function _iaDrop(e) {
+  e.preventDefault();
+  document.getElementById('ia-drop').style.borderColor = '#dce4ef';
+  _iaFilesSelected(e.dataTransfer.files);
+}
+function _iaFilesSelected(fileList) {
+  for (const f of fileList) {
+    if (!_iaFiles.find(x => x.name === f.name)) _iaFiles.push(f);
+  }
+  const listEl = document.getElementById('ia-file-list');
+  if (!listEl) return;
+  listEl.innerHTML = _iaFiles.map((f, i) =>
+    `<span class="badge bg-secondary d-flex align-items-center gap-1" style="font-size:.75rem;max-width:200px">
+      <i class="bi bi-paperclip"></i>
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">${f.name}</span>
+      <span onclick="_iaFiles.splice(${i},1);_iaFilesSelected([])" style="cursor:pointer;flex-shrink:0">&times;</span>
+    </span>`
+  ).join('');
 }
 
 async function llamarGeneradorIA() {
@@ -1758,16 +1795,24 @@ async function llamarGeneradorIA() {
   prog(60);
 
   try {
-    const resp = await fetch('/api/generar_partidas_ia', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        descripcion: desc,
-        tipo: tipo,
-        api_key: apiKey,
-        informe: informeData,
-      })
-    });
+    let resp;
+    if (_iaFiles.length > 0) {
+      // Con archivos: usar FormData
+      const fm = new FormData();
+      fm.append('descripcion', desc);
+      fm.append('tipo', tipo);
+      fm.append('api_key', apiKey);
+      if (informeData) fm.append('informe', JSON.stringify(informeData));
+      _iaFiles.forEach(f => fm.append('archivos_ia', f));
+      resp = await fetch('/api/generar_partidas_ia', { method: 'POST', body: fm });
+    } else {
+      // Sin archivos: JSON simple
+      resp = await fetch('/api/generar_partidas_ia', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ descripcion: desc, tipo: tipo, api_key: apiKey, informe: informeData }),
+      });
+    }
     const data = await resp.json();
     if (data.error) {
       botMsg(`<span class="text-danger"><i class="bi bi-exclamation-triangle me-2"></i>Error: ${esc(data.error)}</span>`);
@@ -1951,10 +1996,11 @@ function stepPartidas(which) {
   const bid='bar'+which; const blabel=which==='b'?'TOTAL B':which==='a'?'TOTAL A':'TOTAL';
   rc[prefix]=0;
 
-  // Boton Volver segun contexto
+  // Boton Volver segun contexto - siempre guardar antes de navegar
   const backFn = which==='b' ? "_guardarPartidasDesdeDOM('b','item_b'); stepPartidas('a');"
     : tipo==='contrato_subcontrata' ? 'stepContratoSubcCondiciones()'
-    : 'stepObraTextos()';
+    : which==='a' ? "_guardarPartidasDesdeDOM('a','item_a'); stepObraTextos();"
+    : "_guardarPartidasDesdeDOM('1','item'); stepObraTextos();";
 
   panel(`
     <div class="table-responsive">

@@ -62,6 +62,7 @@ TEMPLATE_FILES = {
 ALLOWED_IA_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp",
     ".pdf", ".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v",
+    ".doc", ".docx", ".txt", ".md",
 }
 
 app = Flask(__name__, template_folder="web_templates")
@@ -550,16 +551,40 @@ def api_generar_partidas_ia():
     import traceback as _tb
     try:
         from core.ai_analyst import generate_partidas_ia
-        data = request.get_json(force=True)
-        descripcion = data.get("descripcion", "").strip()
-        tipo        = data.get("tipo", "obra_1")
-        api_key     = data.get("api_key", "").strip()
-        informe     = data.get("informe") or None  # existing IA report or null
+        # Aceptar tanto JSON como FormData (cuando hay archivos adjuntos)
+        ct = request.content_type or ""
+        if "multipart/form-data" in ct:
+            descripcion = request.form.get("descripcion", "").strip()
+            tipo        = request.form.get("tipo", "obra_1")
+            api_key     = request.form.get("api_key", "").strip()
+            informe_raw = request.form.get("informe", "")
+            try:
+                informe = json.loads(informe_raw) if informe_raw else None
+            except Exception:
+                informe = None
+            # Guardar archivos subidos temporalmente
+            _ia_tmp = Path(tempfile.mkdtemp(prefix="ia_gen_"))
+            saved_files: list[Path] = []
+            for fobj in request.files.getlist("archivos_ia"):
+                suf = Path(fobj.filename or "").suffix.lower()
+                if suf in {".pdf", ".docx", ".doc", ".txt", ".md"}:
+                    dest = _ia_tmp / (uuid.uuid4().hex[:6] + suf)
+                    fobj.save(dest)
+                    saved_files.append(dest)
+        else:
+            data = request.get_json(force=True)
+            descripcion = data.get("descripcion", "").strip()
+            tipo        = data.get("tipo", "obra_1")
+            api_key     = data.get("api_key", "").strip()
+            informe     = data.get("informe") or None  # existing IA report or null
+            saved_files = []
+            _ia_tmp = None
 
         tarifas = get_tarifas()
         result = generate_partidas_ia(
             descripcion, tipo, api_key, informe,
-            tarifas_items=tarifas.all_items()
+            tarifas_items=tarifas.all_items(),
+            files=saved_files or None,
         )
 
         if "_error" in result:
@@ -595,6 +620,10 @@ def api_generar_partidas_ia():
 
     except Exception as e:
         return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
+    finally:
+        if '_ia_tmp' in dir() and _ia_tmp and _ia_tmp.exists():
+            import shutil as _sh
+            _sh.rmtree(_ia_tmp, ignore_errors=True)
 
 
 @app.route("/api/chat_informe", methods=["POST"])

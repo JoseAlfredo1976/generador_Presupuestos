@@ -297,6 +297,8 @@ def analyze(files: list[Path], tipo: str, context: str = "", api_key: str = "",
     video_ext = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
     pdf_ext = {".pdf"}
     img_ext = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    txt_ext = {".txt", ".md"}
+    docx_ext = {".docx", ".doc"}
 
     for fp in files:
         suf = fp.suffix.lower()
@@ -320,6 +322,20 @@ def analyze(files: list[Path], tipo: str, context: str = "", api_key: str = "",
             content.append({"type": "text", "text": f"\n[IMAGEN: {fp.name}]\n"})
             data, mt = _encode_image(fp)
             content.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
+        elif suf in txt_ext:
+            try:
+                text = fp.read_text(encoding="utf-8", errors="ignore")[:6000]
+                content.append({"type": "text", "text": f"\n[DOCUMENTO TEXTO: {fp.name}]\n{text}\n"})
+            except Exception:
+                pass
+        elif suf in docx_ext:
+            try:
+                from docx import Document as _DocxDoc
+                doc = _DocxDoc(fp)
+                text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())[:6000]
+                content.append({"type": "text", "text": f"\n[DOCUMENTO WORD: {fp.name}]\n{text}\n"})
+            except Exception:
+                pass
 
     content.append({
         "type": "text",
@@ -427,6 +443,7 @@ def generate_partidas_ia(
     api_key: str = "",
     informe: dict | None = None,
     tarifas_items: list[dict] | None = None,
+    files: list[Path] | None = None,
 ) -> dict:
     """Generate budget items (partidas) from tarifas catalog + technical texts."""
     key = api_key.strip() or os.environ.get("ANTHROPIC_API_KEY", "")
@@ -462,20 +479,55 @@ def generate_partidas_ia(
     if descripcion.strip():
         context_parts.append(f"DESCRIPCION DEL CASO:\n{descripcion.strip()}")
 
-    if not any([informe, descripcion.strip()]):
+    # Procesar archivos adjuntos (PDF, Word, texto)
+    pdf_files: list[Path] = []
+    if files:
+        for fp in files:
+            suf = fp.suffix.lower()
+            if suf == ".pdf":
+                pdf_files.append(fp)
+            elif suf in (".txt", ".md"):
+                try:
+                    text = fp.read_text(encoding="utf-8", errors="ignore")[:5000]
+                    context_parts.append(f"DOCUMENTO ({fp.name}):\n{text}")
+                except Exception:
+                    pass
+            elif suf in (".docx", ".doc"):
+                try:
+                    from docx import Document as _DocxDoc
+                    doc = _DocxDoc(fp)
+                    text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())[:5000]
+                    context_parts.append(f"DOCUMENTO WORD ({fp.name}):\n{text}")
+                except Exception:
+                    pass
+
+    if not any([informe, descripcion.strip(), files]):
         raise ValueError("Debes proporcionar al menos una descripcion o un informe.")
 
-    user_content = "\n\n".join(context_parts)
-    user_content += f"\n\nGenera el contenido del presupuesto de obra segun este esquema JSON:\n{schema}"
-
+    suffix = f"\n\nGenera el contenido del presupuesto de obra segun este esquema JSON:\n{schema}"
     if tipo == "obra_2":
-        user_content += "\n\nPara 2 opciones: Opcion A = solucion preferente (sin zanja/rehabilitacion), Opcion B = alternativa (sustitucion o metodo diferente)."
+        suffix += "\n\nPara 2 opciones: Opcion A = solucion preferente (sin zanja/rehabilitacion), Opcion B = alternativa (sustitucion o metodo diferente)."
+
+    text_block = "\n\n".join(context_parts) + suffix
+
+    # Si hay PDFs, usar contenido multimodal
+    if pdf_files:
+        msg_content: list[dict] = []
+        for fp in pdf_files:
+            msg_content.append({"type": "text", "text": f"\n[DOCUMENTO PDF: {fp.name}]\n"})
+            msg_content.append({
+                "type": "document",
+                "source": {"type": "base64", "media_type": "application/pdf", "data": _encode_pdf(fp)},
+            })
+        msg_content.append({"type": "text", "text": text_block})
+    else:
+        msg_content = text_block
 
     response = client.messages.create(
         model=MODEL,
         max_tokens=4096,
         system=_PARTIDAS_SYSTEM,
-        messages=[{"role": "user", "content": user_content}],
+        messages=[{"role": "user", "content": msg_content}],
     )
 
     raw = response.content[0].text.strip()

@@ -197,9 +197,9 @@
       <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
         <div class="dz-icon"><i class="bi bi-camera-video"></i></div>
         <p><strong>Arrastra los videos aqui</strong> o haz clic para seleccionar</p>
-        <small>Puedes subir <strong>varios videos a la vez</strong> &middot; MP4, AVI, MOV, MKV &middot; Tambien imagenes JPG/PNG y PDFs</small>
+        <small>Puedes subir <strong>varios archivos a la vez</strong> &middot; MP4, AVI, MOV, MKV &middot; Imagenes JPG/PNG &middot; PDFs &middot; Word (.docx) &middot; Texto (.txt)</small>
       </div>
-      <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.mp4,.avi,.mov,.mkv,.webm,.m4v" style="display:none" onchange="addFiles(this.files)">
+      <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.mp4,.avi,.mov,.mkv,.webm,.m4v,.docx,.doc,.txt" style="display:none" onchange="addFiles(this.files)">
       <div id="file-list"></div>
     </div>
 
@@ -427,7 +427,8 @@ function removeFile(name) {
 
 function renderFileList() {
   const ICONS = { pdf:'📄', jpg:'🖼️', jpeg:'🖼️', png:'🖼️', webp:'🖼️', gif:'🖼️',
-    mp4:'🎬', avi:'🎬', mov:'🎬', mkv:'🎬', webm:'🎬', m4v:'🎬' };
+    mp4:'🎬', avi:'🎬', mov:'🎬', mkv:'🎬', webm:'🎬', m4v:'🎬',
+    docx:'📝', doc:'📝', txt:'📋', md:'📋' };
   const list = document.getElementById('file-list');
   list.innerHTML = '';
   for (const [name, f] of files) {
