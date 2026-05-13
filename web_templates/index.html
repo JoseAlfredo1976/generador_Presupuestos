@@ -1030,6 +1030,33 @@ function step2() {
 function _esc(s) { return String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ── Numeracion automatica ──────────────────────────────────────────────────────
+// ── Autocomplete clientes ─────────────────────────────────────────────────────
+let _acTimer = null;
+function _acCliente(inp) {
+  clearTimeout(_acTimer);
+  const ul = document.getElementById('ac_cnombre');
+  if (!ul) return;
+  const q = inp.value.trim();
+  if (q.length < 2) { ul.style.display = 'none'; return; }
+  _acTimer = setTimeout(async () => {
+    try {
+      const r = await fetch(`/api/clientes?q=${encodeURIComponent(q)}`);
+      const items = await r.json();
+      if (!items.length) { ul.style.display = 'none'; return; }
+      ul.innerHTML = items.map(c =>
+        `<li class="list-group-item list-group-item-action py-1 px-2" style="cursor:pointer;font-size:.88rem"
+          onmousedown="event.preventDefault();document.getElementById('f_cnombre').value=this.dataset.v;document.getElementById('ac_cnombre').style.display='none'"
+          data-v="${c.replace(/"/g,'&quot;')}">${c}</li>`
+      ).join('');
+      ul.style.display = 'block';
+    } catch(e) { ul.style.display = 'none'; }
+  }, 250);
+}
+document.addEventListener('click', () => {
+  const ul = document.getElementById('ac_cnombre');
+  if (ul) ul.style.display = 'none';
+});
+
 async function _sugerirNumero() {
   const inp = document.getElementById('f_num');
   const hint = document.getElementById('num-hint');
@@ -1086,8 +1113,12 @@ function step3() {
     ${iaBanner}
     <div class="row g-3">
       <div class="col-md-8"><label class="form-label">Nombre del cliente / comunidad *</label>
+        <div class="position-relative">
         <input id="f_cnombre" type="text" class="form-control" placeholder="C.P. C/ Mayor 10"
-          value="${_esc(fd.cliente_nombre||p.cliente_nombre||'')}"></div>
+          value="${_esc(fd.cliente_nombre||p.cliente_nombre||'')}"
+          autocomplete="off" oninput="_acCliente(this)">
+        <ul id="ac_cnombre" class="list-group position-absolute w-100 shadow-sm" style="z-index:999;display:none;max-height:220px;overflow-y:auto"></ul>
+        </div>
       <div class="col-md-4"><label class="form-label">Telefono</label>
         <input id="f_ctel" type="text" class="form-control"
           value="${_esc(fd.cliente_tel||p.cliente_tel||'')}"></div>

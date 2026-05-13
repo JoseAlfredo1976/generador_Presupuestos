@@ -693,6 +693,14 @@ def api_siguiente_numero():
     return jsonify({"numero": numero})
 
 
+@app.route("/api/clientes")
+def api_clientes():
+    """Autocomplete de clientes. Param GET: q (texto a buscar)"""
+    from utils.base_datos import buscar_clientes
+    q = request.args.get("q", "").strip()
+    return jsonify(buscar_clientes(q, limit=15))
+
+
 @app.route("/api/tarifas")
 def api_tarifas_list():
     return jsonify(get_tarifas().all_codes())

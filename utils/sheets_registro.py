@@ -152,10 +152,26 @@ def siguiente_numero(tipo: str, num_base: int | None = None) -> str:
             return f"{num_base}{siguiente_letra}/{year}"
 
     except FileNotFoundError:
-        # Sin credenciales: modo offline, devolver vacio
-        return ""
+        # Sin credenciales: usar base local como fallback
+        return _siguiente_numero_local(tipo, num_base)
     except Exception as e:
-        log.warning("Sheets.siguiente_numero error: %s", e)
+        log.warning("Sheets.siguiente_numero error: %s - usando base local", e)
+        return _siguiente_numero_local(tipo, num_base)
+
+
+def _siguiente_numero_local(tipo: str, num_base: int | None = None) -> str:
+    """Fallback: numeracion desde BASE_DATOS.xlsx cuando Sheets no esta disponible."""
+    try:
+        from utils.base_datos import siguiente_numero_local
+        year = _año_corto()
+        n = siguiente_numero_local(tipo)
+        if n is None:
+            return ""
+        if num_base is None:
+            return f"{n}/{year}"
+        else:
+            return f"{num_base}A/{year}"
+    except Exception:
         return ""
 
 
