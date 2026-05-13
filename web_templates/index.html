@@ -1,0 +1,2901 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generador de Presupuestos - Grupo Europa</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<style>
+/* ── Reset y base */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  background: #f0f4f9;
+  color: #0d1b2a;
+  min-height: 100vh;
+  display: flex;
+}
+
+/* ── Sidebar */
+#sidebar {
+  width: 270px;
+  min-height: 100vh;
+  background: #0d1b2a;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 200;
+  transition: transform .3s ease;
+}
+
+.sb-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 20px 20px;
+}
+.sb-logo-icon {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+.sb-brand {
+  font-size: .82rem;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: .08em;
+  line-height: 1.2;
+}
+.sb-sub {
+  font-size: .68rem;
+  color: #8fa3b8;
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+.sb-divider {
+  height: 1px;
+  background: rgba(255,255,255,.08);
+  margin: 0 20px 20px;
+}
+
+/* Stepper */
+.sb-steps {
+  padding: 0 20px;
+  flex: 1;
+}
+.sb-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  cursor: default;
+}
+.sb-step-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid #3a5068;
+  color: #8fa3b8;
+  font-size: .75rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all .3s;
+}
+.sb-step-label {
+  font-size: .78rem;
+  color: #8fa3b8;
+  font-weight: 500;
+  transition: color .3s;
+}
+
+/* Linea vertical entre pasos */
+.sb-step-line {
+  width: 2px;
+  height: 16px;
+  background: #243447;
+  margin: 0 0 0 33px;
+  border-radius: 2px;
+  transition: background .3s;
+}
+
+/* Estado activo */
+.sb-step.active .sb-step-circle {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+  box-shadow: 0 0 0 4px rgba(37,99,235,.2);
+}
+.sb-step.active .sb-step-label {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* Estado completado */
+.sb-step.done .sb-step-circle {
+  background: #059669;
+  border-color: #059669;
+  color: #fff;
+}
+.sb-step.done .sb-step-label {
+  color: #6ee7b7;
+}
+.sb-step-line.done {
+  background: #059669;
+}
+
+/* Footer sidebar */
+.sb-footer {
+  padding: 16px 20px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+.sb-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #8fa3b8;
+  font-size: .8rem;
+  font-weight: 500;
+  text-decoration: none;
+  padding: 8px 10px;
+  border-radius: 8px;
+  transition: all .2s;
+}
+.sb-nav-link:hover {
+  background: rgba(255,255,255,.07);
+  color: #fff;
+}
+.sb-nav-link i { font-size: 1rem; }
+
+/* ── Main content */
+#main-content {
+  margin-left: 270px;
+  min-height: 100vh;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Top bar */
+#topbar {
+  background: #ffffff;
+  border-bottom: 1px solid #dce4ef;
+  padding: 12px 32px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+#step-breadcrumb {
+  flex: 1;
+  font-size: .8rem;
+  color: #5a7184;
+  font-weight: 500;
+}
+.topbar-link {
+  font-size: .8rem;
+  font-weight: 500;
+  color: #5a7184;
+  text-decoration: none;
+  padding: 5px 12px;
+  border-radius: 20px;
+  transition: all .2s;
+  border: 1px solid transparent;
+}
+.topbar-link:hover { background: #f0f4f9; color: #0d1b2a; }
+.topbar-link.active {
+  background: #eff6ff;
+  color: #2563eb;
+  border-color: #bfdbfe;
+}
+
+/* Content area */
+#content-area {
+  padding: 28px 32px;
+  max-width: 860px;
+  width: 100%;
+}
+
+/* Step header */
+#step-header {
+  margin-bottom: 20px;
+}
+#step-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #0d1b2a;
+  margin: 0 0 4px;
+  line-height: 1.3;
+}
+#step-desc {
+  font-size: .88rem;
+  color: #5a7184;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Panel card */
+#panel-card {
+  background: #ffffff;
+  border: 1px solid #dce4ef;
+  border-radius: 14px;
+  padding: 28px 28px;
+  min-height: 60px;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+/* Animacion */
+@keyframes fade-slide {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+.fade-slide { animation: fade-slide .3s ease forwards; }
+/* Alias legacy */
+@keyframes fi {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.fi { animation: fi .3s ease forwards; }
+
+/* ── Type grid */
+.type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 10px;
+}
+.type-card {
+  border: 2px solid #dce4ef;
+  border-radius: 10px;
+  padding: 12px 8px;
+  cursor: pointer;
+  text-align: center;
+  background: white;
+  transition: all .2s;
+  user-select: none;
+}
+.type-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 4px 12px rgba(37,99,235,.15);
+  transform: translateY(-2px);
+}
+.type-card.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+.type-card .tc-icon { font-size: 1.6rem; }
+.type-card .tc-name {
+  font-size: .68rem;
+  font-weight: 600;
+  color: #0d1b2a;
+  margin-top: 5px;
+  line-height: 1.2;
+}
+
+/* ── Tablas de partidas */
+.tbl-part { font-size: .83rem; }
+.tbl-part thead th {
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 7px 6px;
+  white-space: nowrap;
+}
+.tbl-part td { padding: 5px 5px; vertical-align: middle; }
+.tbl-part .total-cell { font-weight: 700; color: #1d4ed8; }
+
+.tbl-svc thead th {
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 7px 10px;
+  font-size: .85rem;
+}
+.tbl-svc td { padding: 6px 8px; vertical-align: middle; font-size: .87rem; }
+
+/* ── Botones */
+.btn-next {
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 24px;
+  font-weight: 600;
+  font-size: .9rem;
+  transition: all .2s;
+}
+.btn-next:hover { background: #1d4ed8; color: white; }
+
+.btn-gen {
+  width: 100%;
+  padding: 14px;
+  font-size: 1rem;
+  font-weight: 700;
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  transition: all .2s;
+}
+.btn-gen:hover { background: #1d4ed8; }
+
+/* ── Form */
+.form-label {
+  font-size: .8rem;
+  font-weight: 600;
+  color: #5a7184;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.form-control, .form-select {
+  border-radius: 8px;
+  border: 1.5px solid #dce4ef;
+  font-size: .9rem;
+  transition: border-color .2s;
+}
+.form-control:focus, .form-select:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+}
+
+/* ── Total row */
+.total-row {
+  background: #eff6ff;
+  border: 1.5px solid #dce4ef;
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.total-val {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: #1d4ed8;
+}
+
+/* ── Warn box */
+.warn-box {
+  background: #fefce8;
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: .85rem;
+}
+
+/* ── Autocomplete */
+.ac-wrap { position: relative; }
+.ac-drop {
+  position: absolute;
+  top: calc(100% + 2px); left: 0;
+  min-width: 380px; max-width: 540px;
+  max-height: 240px; overflow-y: auto;
+  background: white;
+  border: 1.5px solid #dce4ef;
+  border-radius: 10px;
+  z-index: 2000;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  display: none;
+}
+.ac-drop.open { display: block; }
+.ac-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: .8rem;
+  border-bottom: 1px solid #f0f4f9;
+  line-height: 1.4;
+}
+.ac-item:last-child { border-bottom: none; }
+.ac-item:hover, .ac-item.ac-active { background: #eff6ff; }
+.ac-item .ac-code { font-weight: 700; color: #1d4ed8; }
+.ac-item .ac-price { color: #5a7184; float: right; font-size: .75rem; }
+.ac-item mark { background: #fef3c7; padding: 0 1px; border-radius: 2px; }
+
+/* ── Mic */
+.mic-wrap { position: relative; }
+.mic-btn {
+  position: absolute;
+  top: 7px; right: 7px;
+  z-index: 10;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(37,99,235,.1);
+  color: #2563eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: .82rem;
+  transition: all .2s;
+  padding: 0;
+}
+.mic-btn:hover { background: rgba(37,99,235,.2); }
+.mic-btn.recording {
+  background: #dc2626;
+  color: white;
+  animation: pulse-mic 1s infinite;
+}
+@keyframes pulse-mic {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(220,38,38,0); }
+}
+.mic-wrap textarea, .mic-wrap input[type="text"] { padding-right: 38px; }
+
+/* ── Category label */
+.cat-label {
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: #8fa3b8;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+/* ── IA Badge */
+.tbadge {
+  font-size: .68rem;
+  background: #059669;
+  color: white;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 4px;
+  display: none;
+}
+
+/* ── Overlay */
+#overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(10,20,45,.8);
+  z-index: 9999;
+  align-items: center;
+  justify-content: center;
+}
+#overlay.show { display: flex; }
+.ov-card {
+  background: white;
+  border-radius: 16px;
+  padding: 36px 44px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  min-width: 240px;
+}
+#ov-txt {
+  color: #0d1b2a;
+  font-size: .95rem;
+  font-weight: 600;
+}
+
+/* ── Responsive */
+@media (max-width: 768px) {
+  #sidebar { transform: translateX(-270px); }
+  #sidebar.open { transform: translateX(0); }
+  #main-content { margin-left: 0; }
+  #content-area { padding: 20px 16px; }
+  #topbar { padding: 10px 16px; }
+  #panel-card { padding: 18px 16px; }
+}
+
+/* ── Mobile toggle */
+#sb-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: #0d1b2a;
+  font-size: 1.3rem;
+  cursor: pointer;
+  padding: 0 8px 0 0;
+}
+@media (max-width: 768px) { #sb-toggle { display: block; } }
+
+/* ── Misc helpers */
+.text-muted { color: #5a7184 !important; }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside id="sidebar">
+  <!-- Logo -->
+  <div class="sb-logo">
+    <div class="sb-logo-icon">
+      <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20 3L4 9v10c0 9.5 6.8 18.4 16 20.7C29.2 37.4 36 28.5 36 19V9L20 3z" fill="#2563eb" opacity=".18"/>
+        <path d="M20 5L6 10.5V19c0 8.8 6.3 17 14 19.2C27.7 36 34 27.8 34 19v-8.5L20 5z" stroke="#2563eb" stroke-width="1.5" fill="none"/>
+        <rect x="14" y="17" width="12" height="10" rx="1" fill="#2563eb" opacity=".7"/>
+        <rect x="17" y="14" width="6" height="5" rx="1" fill="#2563eb"/>
+        <rect x="18.5" y="20" width="3" height="4" rx=".5" fill="white"/>
+      </svg>
+    </div>
+    <div>
+      <div class="sb-brand">GRUPO EUROPA</div>
+      <div class="sb-sub">Generador de Presupuestos</div>
+    </div>
+  </div>
+
+  <div class="sb-divider"></div>
+
+  <!-- Stepper vertical -->
+  <nav class="sb-steps">
+    <div class="sb-step active" id="sbstep-1">
+      <div class="sb-step-circle">1</div>
+      <div class="sb-step-label">Tipo de documento</div>
+    </div>
+    <div class="sb-step-line" id="sbline-1"></div>
+    <div class="sb-step" id="sbstep-2">
+      <div class="sb-step-circle">2</div>
+      <div class="sb-step-label">Contrato y direccion</div>
+    </div>
+    <div class="sb-step-line" id="sbline-2"></div>
+    <div class="sb-step" id="sbstep-3">
+      <div class="sb-step-circle">3</div>
+      <div class="sb-step-label">Cliente</div>
+    </div>
+    <div class="sb-step-line" id="sbline-3"></div>
+    <div class="sb-step" id="sbstep-4">
+      <div class="sb-step-circle">4</div>
+      <div class="sb-step-label">Contenido</div>
+    </div>
+    <div class="sb-step-line" id="sbline-4"></div>
+    <div class="sb-step" id="sbstep-5">
+      <div class="sb-step-circle">5</div>
+      <div class="sb-step-label">Generar</div>
+    </div>
+  </nav>
+
+  <!-- Footer sidebar -->
+  <div class="sb-footer">
+    <a href="/analizar" class="sb-nav-link">
+      <i class="bi bi-robot"></i> Analisis IA
+    </a>
+    <a href="/configuracion" class="sb-nav-link" style="margin-top:4px" id="sb-cfg-link">
+      <i class="bi bi-gear"></i> Configuracion
+      <span id="sb-disco-badge" style="display:none;margin-left:6px;font-size:.7rem;padding:1px 6px;border-radius:10px;background:#dc2626;color:white">!</span>
+    </a>
+  </div>
+</aside>
+
+<!-- MAIN CONTENT -->
+<main id="main-content">
+
+  <!-- Top bar -->
+  <div id="topbar">
+    <button id="sb-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')" aria-label="Menu">
+      <i class="bi bi-list"></i>
+    </button>
+    <div id="step-breadcrumb">Paso 1 - Tipo de documento</div>
+    <a href="/" class="topbar-link active">Presupuestos</a>
+    <a href="/analizar" class="topbar-link">Analisis IA</a>
+  </div>
+
+  <!-- Content area -->
+  <div id="content-area">
+
+    <!-- Step header -->
+    <div id="step-header">
+      <h2 id="step-title">Que tipo de documento necesitas?</h2>
+      <p id="step-desc"></p>
+    </div>
+
+    <!-- Panel card -->
+    <div id="panel-card">
+      {% if missing_templates %}
+      <div class="warn-box mb-3">
+        <i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>
+        Faltan plantillas - ejecuta: <code>python download_templates.py</code>
+      </div>
+      {% endif %}
+    </div>
+
+  </div>
+</main>
+
+<!-- Overlay generando -->
+<div id="overlay">
+  <div class="ov-card">
+    <div class="spinner-border text-primary mb-3" style="width:3rem;height:3rem;border-width:.3rem" role="status">
+      <span class="visually-hidden">Cargando...</span>
+    </div>
+    <p id="ov-txt" class="mb-0">Generando documentos...</p>
+  </div>
+</div>
+
+<!-- Hidden form -->
+<form id="ff" action="/generar" method="POST" style="display:none"></form>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ─── State
+const fd = {};
+let tipo = '';
+const rc = {};
+let fdPrefill = null;  // datos extraidos por IA de la solicitud del cliente
+
+// ─── Type catalogue
+const TIPOS = [
+  // Obra
+  { id:'obra_1',              icon:'🏗️',  name:'Obra\n1 Opcion',        cat:'obra'       },
+  { id:'obra_2',              icon:'🔀',  name:'Obra\n2 Opciones',      cat:'obra'       },
+  // Desatascos y servicios
+  { id:'desatasco',           icon:'🚛',  name:'Desatasco',             cat:'svc'        },
+  { id:'cctv_bajante',        icon:'📷',  name:'CCTV\nBajante',         cat:'svc'        },
+  { id:'inspeccion_zum',      icon:'🔍',  name:'Inspeccion\nZUM',       cat:'svc'        },
+  { id:'limpieza_aerea',      icon:'💨',  name:'Limpieza\nAerea',       cat:'svc'        },
+  { id:'fresador',            icon:'⚙️',  name:'Fresador',              cat:'svc'        },
+  { id:'robot_limpieza',      icon:'🤖',  name:'Robot\nLimpieza',       cat:'svc'        },
+  { id:'fuga_agua',           icon:'💧',  name:'Fuga\nAgua',            cat:'svc'        },
+  { id:'vaciado_fosa',        icon:'🪣',  name:'Vaciado\nFosa',         cat:'svc'        },
+  // Nuevos
+  { id:'informe_desatasco',   icon:'📋',  name:'Informe\nDesatasco',    cat:'nuevo'      },
+  { id:'bajantes_amianto',    icon:'🏚️',  name:'Bajantes\nAmianto',     cat:'nuevo'      },
+  { id:'certificado_obra',    icon:'✅',  name:'Certificado\nObra',     cat:'nuevo'      },
+  { id:'plan_seguridad',      icon:'🦺',  name:'Plan\nSeguridad',       cat:'nuevo'      },
+  { id:'contrato_saneamiento',icon:'📝',  name:'Contrato\nSaneamiento', cat:'nuevo'      },
+  // Nuevos oficios
+  { id:'fontaneria',          icon:'🔧',  name:'Fontaneria',            cat:'oficio'     },
+  { id:'albanileria',         icon:'🧱',  name:'Albanileria',           cat:'oficio'     },
+  // Contratos
+  { id:'contrato_subcontrata',icon:'📄',  name:'Contrato\nSubcontrata', cat:'contrato'   },
+];
+const TLABELS = {};
+TIPOS.forEach(t => TLABELS[t.id] = t.icon + ' ' + t.name.replace('\n',' '));
+
+const SVC_ROWS = {
+  desatasco:      [['CAMION','Camion cuba alta presion'],['CAMION_DESP','Desplazamiento camion'],['TAPA','Tapon de registro'],['INODORO','Desmontaje de inodoro'],['CATA','Cata en mocheta']],
+  cctv_bajante:   [['CCTV','Inspeccion CCTV bajante'],['CCTV_DESP','Desplazamiento CCTV'],['TAPA','Tapon de registro'],['INODORO','Desmontaje de inodoro'],['CATA','Cata en mocheta']],
+  inspeccion_zum: [['CCTV','Inspeccion CCTV / ZUM'],['CCTV_DESP','Desplazamiento CCTV']],
+  limpieza_aerea: [['CAMION','Camion alta presion'],['CAMION_DESP','Desplazamiento camion'],['OCUPACION','Ocupacion via publica'],['MEDIOS','Medios auxiliares'],['TAPA','Tapon de registro']],
+  fresador:       [['FRESADOR','Robot fresador'],['FRESADOR_DESP','Desplazamiento fresador'],['CAMION','Camion alta presion'],['CAMION_DESP','Desplazamiento camion'],['MEDIOS','Medios auxiliares']],
+  robot_limpieza: [['CCTV','Robot CCTV'],['CCTV_DESP','Desplazamiento CCTV'],['CAMION','Camion alta presion'],['CAMION_DESP','Desplazamiento camion'],['OCUPACION','Ocupacion via publica'],['MEDIOS','Medios auxiliares'],['LOCALIZACION','Localizacion / Robot']],
+};
+
+const BA_ROWS = [
+  ['MOVILIZACION','Movilizacion de equipo'],
+  ['PLAN_TRABAJO_MCA','Plan de Trabajo MCA (amianto)'],
+  ['MUESTREO_AMIANTO','Muestreo inicial amianto'],
+  ['SUSTITUCION_BAJANTE','Sustitucion de bajante ml'],
+  ['SUSTITUCION_INJERTO','Sustitucion de injerto'],
+  ['APERTURA_CIERRE','Apertura y cierre de mocheta'],
+  ['GESTION_RESIDUOS','Gestion de residuos peligrosos'],
+];
+
+// ─── DOM helpers adaptados al nuevo layout
+function botMsg(html) {
+  const el = document.getElementById('step-desc');
+  if (el) el.innerHTML = html;
+}
+function userMsg(txt) {
+  // Marcar paso actual como completado visualmente
+  const active = document.querySelector('.sb-step.active');
+  if (active) {
+    active.classList.remove('active');
+    active.classList.add('done');
+    active.querySelector('.sb-step-circle').innerHTML = '<i class="bi bi-check-lg" style="font-size:.7rem"></i>';
+    // Marcar linea
+    const id = active.id.replace('sbstep-','');
+    const line = document.getElementById('sbline-' + id);
+    if (line) line.classList.add('done');
+  }
+}
+function panel(html) {
+  rmPanel();
+  const card = document.getElementById('panel-card');
+  card.innerHTML = html;
+  card.classList.remove('fade-slide');
+  void card.offsetWidth; // reflow para reiniciar animacion
+  card.classList.add('fade-slide');
+  setTimeout(() => _addMicBtns(card), 80);
+}
+function rmPanel() {
+  const card = document.getElementById('panel-card');
+  card.innerHTML = '';
+  card.classList.remove('fade-slide');
+}
+function chat() { return document.getElementById('panel-card'); }
+function scrollBot() {
+  setTimeout(() => {
+    const card = document.getElementById('panel-card');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 100);
+}
+function prog(pct) {
+  // Determinar paso activo segun porcentaje
+  let paso;
+  if (pct <= 15)      paso = 1;
+  else if (pct <= 30) paso = 2;
+  else if (pct <= 42) paso = 3;
+  else if (pct <= 79) paso = 4;
+  else                paso = 5;
+
+  const labels = [
+    'Tipo de documento',
+    'Contrato y direccion',
+    'Cliente',
+    'Contenido',
+    'Generar'
+  ];
+
+  for (let s = 1; s <= 5; s++) {
+    const stepEl = document.getElementById('sbstep-' + s);
+    const lineEl = document.getElementById('sbline-' + s);
+    if (!stepEl) continue;
+    const circle = stepEl.querySelector('.sb-step-circle');
+    stepEl.classList.remove('active', 'done');
+    if (s < paso) {
+      stepEl.classList.add('done');
+      circle.innerHTML = '<i class="bi bi-check-lg" style="font-size:.7rem"></i>';
+      if (lineEl) lineEl.classList.add('done');
+    } else if (s === paso) {
+      stepEl.classList.add('active');
+      circle.textContent = s;
+      if (lineEl) lineEl.classList.remove('done');
+    } else {
+      circle.textContent = s;
+      if (lineEl) lineEl.classList.remove('done');
+    }
+  }
+
+  // Actualizar breadcrumb y titulo del paso
+  const breadcrumb = document.getElementById('step-breadcrumb');
+  const title = document.getElementById('step-title');
+  const titulos = [
+    'Que tipo de documento necesitas?',
+    'Contrato y direccion',
+    'Datos del cliente',
+    'Contenido del documento',
+    'Generar documentos'
+  ];
+  if (breadcrumb) breadcrumb.textContent = 'Paso ' + paso + ' - ' + labels[paso - 1];
+  if (title) title.textContent = titulos[paso - 1];
+}
+
+// ─── Dictado por voz
+const _SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let _activeRec = null;
+
+// Campos que NO deben tener microfono (codigos, numeros, emails, telefonos)
+const _NO_MIC_IDS = new Set([
+  'f_num','f_fecha','f_ctel','f_cmail','f_amail','f_atel',
+  'f_plazo','f_pago','ba_val','f_val','f_pago_cs',
+  'ps_cif','ps_dni','ps_tel_emp','ps_prom_cif',
+]);
+const _NO_MIC_PLACEHOLDER = /^(ej:|n[º°]|cod|ref|tel[eé]|email|dni|cif|nif|\d)/i;
+
+function _addMicBtns(container) {
+  if (!_SR) return;
+  container.querySelectorAll('textarea, input[type="text"]').forEach(el => {
+    if (el.dataset.micAdded) return;
+    if (_NO_MIC_IDS.has(el.id)) return;
+    if (_NO_MIC_PLACEHOLDER.test(el.placeholder || '')) return;
+    el.dataset.micAdded = '1';
+    let wrap = el.parentElement;
+    if (!wrap.classList.contains('mic-wrap')) {
+      const w = document.createElement('div');
+      w.className = 'mic-wrap';
+      el.parentElement.insertBefore(w, el);
+      w.appendChild(el);
+      wrap = w;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mic-btn';
+    btn.title = 'Dictar';
+    btn.innerHTML = '<i class="bi bi-mic-fill"></i>';
+    btn.addEventListener('click', () => _toggleDictado(el, btn));
+    wrap.appendChild(btn);
+  });
+}
+
+function _toggleDictado(el, btn) {
+  if (_activeRec) {
+    _activeRec.stop();
+    return;
+  }
+  const rec = new _SR();
+  rec.lang = 'es-ES';
+  rec.continuous = true;
+  rec.interimResults = true;
+  _activeRec = rec;
+  btn.classList.add('recording');
+  btn.title = 'Parar dictado';
+
+  const base = el.value;
+  let interim = '';
+
+  rec.onresult = e => {
+    let finalChunk = '';
+    interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalChunk += e.results[i][0].transcript;
+      else interim += e.results[i][0].transcript;
+    }
+    if (finalChunk) {
+      el.value = el.value + (el.value && !el.value.endsWith(' ') ? ' ' : '') + finalChunk.trim();
+    }
+    el.placeholder = interim ? ('...' + interim) : '';
+  };
+
+  rec.onerror = () => { _stopRec(btn, el); };
+  rec.onend   = () => { _stopRec(btn, el); };
+
+  rec.start();
+}
+
+function _stopRec(btn, el) {
+  _activeRec = null;
+  btn.classList.remove('recording');
+  btn.title = 'Dictar';
+  btn.innerHTML = '<i class="bi bi-mic-fill"></i>';
+  el.placeholder = '';
+}
+
+// ─── STEP 1 - Tipo
+function step1() {
+  prog(8);
+  botMsg('Selecciona el tipo de documento que necesitas generar.');
+  const mk = cat => TIPOS.filter(t=>t.cat===cat).map(card).join('');
+  panel(`
+    <div class="cat-label mb-1">Presupuestos de Obra</div>
+    <div class="type-grid mb-3">${mk('obra')}</div>
+    <div class="cat-label mb-1">Desatascos y Servicios</div>
+    <div class="type-grid mb-3">${mk('svc')}</div>
+    <div class="cat-label mb-1">Informes, Contratos y Planes</div>
+    <div class="type-grid mb-3">${mk('nuevo')}</div>
+    <div class="cat-label mb-1">Otros Oficios</div>
+    <div class="type-grid mb-3">${mk('oficio')}</div>
+    <div class="cat-label mb-1">Contratos de Subcontratacion</div>
+    <div class="type-grid mb-3">${mk('contrato')}</div>
+    <div class="text-end">
+      <button class="btn btn-next" onclick="ok1()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+function card(t) {
+  const lines = t.name.split('\n');
+  return `<div class="type-card" onclick="selTipo('${t.id}',this)">
+    <div class="tc-icon">${t.icon}</div>
+    <div class="tc-name">${lines.join('<br>')}</div>
+  </div>`;
+}
+function selTipo(t, el) {
+  document.querySelectorAll('.type-card').forEach(c=>c.classList.remove('selected'));
+  el.classList.add('selected'); tipo = t;
+}
+function ok1() {
+  if (!tipo) { alert('Elige el tipo de documento.'); return; }
+  fd.tipo_modelo = tipo;
+  rmPanel(); userMsg(TLABELS[tipo]); stepSolicitudIA();
+}
+
+// ─── STEP 1b - Analizar solicitud con IA
+function stepSolicitudIA() {
+  prog(12);
+  botMsg('Puedes adjuntar un email, PDF o documento con la solicitud del cliente para pre-rellenar los datos automaticamente con IA.');
+  panel(`
+    <div id="sol-upload-area" style="border:2px dashed #dce4ef;border-radius:10px;padding:20px;text-align:center;background:#f8fafc;cursor:pointer;transition:border-color .2s;"
+      ondragover="event.preventDefault();this.style.borderColor='#2563eb'"
+      ondragleave="this.style.borderColor='#dce4ef'"
+      ondrop="_solDrop(event)">
+      <i class="bi bi-cloud-arrow-up" style="font-size:2rem;color:#2563eb;"></i>
+      <div style="font-size:.88rem;color:#5a7184;margin-top:6px;">Arrastra aqui email, PDF o imagen<br><span style="font-size:.78rem;color:#8fa3b8;">o haz clic para seleccionar</span></div>
+      <input id="sol-file-input" type="file" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.eml,.msg,.html"
+        style="position:absolute;opacity:0;width:1px;height:1px;"
+        onchange="_solFilesSelected(this.files)">
+    </div>
+    <div id="sol-file-list" style="margin-top:10px;font-size:.82rem;display:none;"></div>
+    <div id="sol-error" class="text-danger mt-2" style="font-size:.83rem;display:none;"></div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <a href="#" style="font-size:.83rem;color:#5a7184;" onclick="fdPrefill=null;step2();return false;">Saltar y rellenar manualmente</a>
+      <button id="sol-btn" class="btn btn-next" onclick="_solAnalizar()" disabled>
+        <i class="bi bi-magic"></i> Analizar con IA
+      </button>
+    </div>`);
+  document.getElementById('sol-upload-area').addEventListener('click', () => {
+    document.getElementById('sol-file-input').click();
+  });
+}
+
+let _solFiles = [];
+function _solDrop(e) {
+  e.preventDefault();
+  document.getElementById('sol-upload-area').style.borderColor = '#dce4ef';
+  _solFilesSelected(e.dataTransfer.files);
+}
+function _solFilesSelected(fileList) {
+  _solFiles = Array.from(fileList);
+  const listEl = document.getElementById('sol-file-list');
+  if (_solFiles.length) {
+    listEl.style.display = 'block';
+    listEl.innerHTML = _solFiles.map(f => `<span class="badge bg-secondary me-1 mb-1"><i class="bi bi-paperclip me-1"></i>${f.name}</span>`).join('');
+    document.getElementById('sol-btn').disabled = false;
+  }
+}
+async function _solAnalizar() {
+  if (!_solFiles.length) return;
+  {% if not api_key_set %}
+  let key = fd._api_key || localStorage.getItem('bg_apikey') || '';
+  if (!key) {
+    key = prompt('Introduce tu API Key de Anthropic (sk-ant-...):') || '';
+    if (!key) return;
+    fd._api_key = key;
+    localStorage.setItem('bg_apikey', key);
+  }
+  {% else %}
+  const key = '';
+  {% endif %}
+  const ov = document.getElementById('overlay');
+  const ovTxt = ov ? ov.querySelector('#ov-txt') : null;
+  if (ovTxt) ovTxt.textContent = 'Analizando documento con IA...';
+  if (ov) ov.classList.add('show');
+  const form = new FormData();
+  _solFiles.forEach(f => form.append('archivos', f));
+  form.append('api_key', key);
+  try {
+    const res = await fetch('/api/analizar_solicitud', { method:'POST', body:form });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    fdPrefill = data;
+    if (ov) ov.classList.remove('show');
+    if (ovTxt) ovTxt.textContent = 'Generando documentos...';
+    _solMostrarPreview(data);
+  } catch(err) {
+    if (ov) ov.classList.remove('show');
+    if (ovTxt) ovTxt.textContent = 'Generando documentos...';
+    const errEl = document.getElementById('sol-error');
+    if (errEl) { errEl.style.display=''; errEl.textContent = 'Error: ' + err.message; }
+  }
+}
+function _solMostrarPreview(d) {
+  rmPanel();
+  const fmtRow = (label, val) => val ? `<tr><td class="text-muted pe-2" style="font-size:.8rem;white-space:nowrap">${label}</td><td style="font-size:.85rem;font-weight:600">${val}</td></tr>` : '';
+  const rows = [
+    fmtRow('Cliente', d.cliente_nombre),
+    fmtRow('Administracion', d.administracion),
+    fmtRow('Direccion obra', d.obra),
+    fmtRow('Servicio', d.servicio),
+    fmtRow('Provincia', d.provincia),
+    fmtRow('Tel. cliente', d.cliente_tel),
+    fmtRow('Email cliente', d.cliente_email),
+    fmtRow('Ref. cliente', d.ref_cliente),
+    fmtRow('Notas', d.notas),
+  ].filter(Boolean).join('');
+  botMsg('<i class="bi bi-check-circle-fill text-success me-1"></i> Datos extraidos del documento. Revisa y edita si es necesario.');
+  panel(`
+    <div class="alert alert-success py-2 mb-3" style="font-size:.85rem"><i class="bi bi-magic me-1"></i><strong>Datos pre-rellenados por IA.</strong> Revisa y corrige lo que necesites.</div>
+    <table class="table table-sm mb-3">${rows || '<tr><td class="text-muted">No se encontraron datos.</td></tr>'}</table>
+    <div class="text-end">
+      <button class="btn btn-next" onclick="rmPanel();step2()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+
+// ─── STEP 2 - Contrato + direccion + fecha
+function step2() {
+  prog(18);
+  const isObra = tipo.startsWith('obra');
+  const isPlan = tipo === 'plan_seguridad';
+  const label = isObra ? 'direccion de la obra' : isPlan ? 'nombre y direccion de la obra' : 'direccion del servicio';
+  const p = fdPrefill || {};
+  const iaBanner = fdPrefill ? `<div class="alert alert-success py-1 px-2 mb-2" style="font-size:.78rem;">
+    <i class="bi bi-magic me-1"></i>Datos pre-rellenados por IA. Revisa y corrige si es necesario.
+    </div>` : '';
+  botMsg(`Introduce el numero de contrato, la ${label} y la fecha.`);
+  // Pre-relleno: prioridad fd (vuelta atras) > fdPrefill (IA) > default
+  const vNum   = fd.num_contrato || '';
+  const vObra  = fd.obra   || p.obra   || '';
+  const vServ  = fd.servicio || p.servicio || '';
+  const vProv  = fd.provincia || p.provincia || 'Madrid';
+  const vFecha = fd.fecha_contrato || '{{ today }}';
+  panel(`
+    ${iaBanner}
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">N&ordm; de contrato *</label>
+        <input id="f_num" type="text" class="form-control" placeholder="Cargando..." value="${_esc(vNum)}" autocomplete="off">
+        <div id="num-hint" class="form-text text-muted" style="font-size:.78rem"></div>
+      </div>
+      <div class="col-md-8">
+        <label class="form-label">${isObra||isPlan ? 'Nombre obra / direccion' : 'Direccion del servicio'} *</label>
+        <input id="f_obra" type="text" class="form-control" placeholder="Ej: C/ Mayor 10, Madrid" value="${_esc(vObra)}">
+      </div>
+      <div class="col-md-5">
+        <label class="form-label">Tipo de servicio</label>
+        <input id="f_serv" type="text" class="form-control" placeholder="Ej: Saneamiento y Poceria" value="${_esc(vServ)}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Provincia</label>
+        <input id="f_prov" type="text" class="form-control" value="${_esc(vProv)}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Fecha</label>
+        <input id="f_fecha" type="date" class="form-control" value="${vFecha}">
+      </div>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <button class="btn btn-outline-secondary btn-sm" onclick="step1()">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </button>
+      <button class="btn btn-next" onclick="ok2()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+  // Sugerir numero solo si no hay uno ya introducido (primera vez, no vuelta atras)
+  if (!vNum) setTimeout(_sugerirNumero, 80);
+}
+function _esc(s) { return String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Numeracion automatica ──────────────────────────────────────────────────────
+async function _sugerirNumero() {
+  const inp = document.getElementById('f_num');
+  const hint = document.getElementById('num-hint');
+  if (!inp) return;
+  // Si ya hay un numero guardado (vuelta atras), no sobreescribir
+  if (inp.value && inp.value.trim()) {
+    inp.placeholder = 'Ej: 4680/26';
+    return;
+  }
+  try {
+    const r = await fetch(`/api/siguiente_numero?tipo=${encodeURIComponent(tipo)}`);
+    const d = await r.json();
+    if (d.numero) {
+      inp.value = d.numero;
+      inp.placeholder = 'Ej: 4680/26';
+      if (hint) {
+        hint.textContent = 'Numero sugerido automaticamente. Cambialo si es una revision del mismo presupuesto.';
+      }
+    } else {
+      inp.placeholder = 'Ej: 4680/26';
+      if (hint) hint.textContent = 'Introduce el numero manualmente (sin conexion a Google Sheets).';
+    }
+  } catch(e) {
+    inp.placeholder = 'Ej: 4680/26';
+  }
+}
+
+function ok2() {
+  const num = v('f_num'), obra = v('f_obra');
+  if (!num||!obra) { alert('El numero de contrato y la direccion son obligatorios.'); return; }
+  fd.num_contrato=num; fd.obra=obra;
+  fd.servicio=v('f_serv'); fd.provincia=v('f_prov')||'Madrid';
+  fd.fecha_contrato=v('f_fecha');
+  rmPanel(); userMsg(`Contrato ${num} - ${obra}`);
+  if (tipo==='plan_seguridad') return stepPlanSeguridad();
+  step3();
+}
+
+// ─── STEP 3 - Cliente
+function step3() {
+  prog(34);
+  const p = fdPrefill || {};
+  const iaBanner = fdPrefill ? `<div class="alert alert-success py-1 px-2 mb-2" style="font-size:.78rem;">
+    <i class="bi bi-magic me-1"></i>Datos pre-rellenados por IA. Revisa y corrige si es necesario.
+    </div>` : '';
+  botMsg('Introduce los datos del cliente o comunidad.');
+  const adm = fd.administracion === '--' ? '' : (fd.administracion || '');
+  const xtraFosa = tipo==='vaciado_fosa' ? `
+    <div class="col-md-6"><label class="form-label">Telefono administrador</label>
+      <input id="f_atel" type="text" class="form-control" value="${_esc(fd.admin_tel||'')}"></div>
+    <div class="col-md-6"><label class="form-label">Email administrador</label>
+      <input id="f_amail" type="email" class="form-control" value="${_esc(fd.admin_email||'')}"></div>` : '';
+  panel(`
+    ${iaBanner}
+    <div class="row g-3">
+      <div class="col-md-8"><label class="form-label">Nombre del cliente / comunidad *</label>
+        <input id="f_cnombre" type="text" class="form-control" placeholder="C.P. C/ Mayor 10"
+          value="${_esc(fd.cliente_nombre||p.cliente_nombre||'')}"></div>
+      <div class="col-md-4"><label class="form-label">Telefono</label>
+        <input id="f_ctel" type="text" class="form-control"
+          value="${_esc(fd.cliente_tel||p.cliente_tel||'')}"></div>
+      <div class="col-md-8"><label class="form-label">Direccion del cliente</label>
+        <input id="f_cdir" type="text" class="form-control"
+          value="${_esc(fd.cliente_dir||p.cliente_dir||'')}"></div>
+      <div class="col-md-4"><label class="form-label">Email</label>
+        <input id="f_cmail" type="email" class="form-control"
+          value="${_esc(fd.cliente_email||p.cliente_email||'')}"></div>
+      <div class="col-12"><label class="form-label">Administrador / promotor</label>
+        <input id="f_admin" type="text" class="form-control" placeholder="Ej: Gesfinc Administracion"
+          value="${_esc(adm||p.administracion||'')}"></div>
+      ${xtraFosa}
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <button class="btn btn-outline-secondary btn-sm" onclick="step2()">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </button>
+      <button class="btn btn-next" onclick="ok3()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+function ok3() {
+  const n = v('f_cnombre');
+  if (!n) { alert('El nombre del cliente es obligatorio.'); return; }
+  fd.cliente_nombre=n; fd.cliente_tel=v('f_ctel');
+  fd.cliente_dir=v('f_cdir'); fd.cliente_email=v('f_cmail');
+  fd.administracion=v('f_admin')||'--';
+  if (tipo==='vaciado_fosa') { fd.admin_tel=v('f_atel')||''; fd.admin_email=v('f_amail')||''; }
+  rmPanel();
+  userMsg(n + (fd.administracion&&fd.administracion!='--' ? ` - ${fd.administracion}` : ''));
+  // Route
+  if (tipo === 'contrato_subcontrata') return stepContratoSubcDatos();
+  if (['obra_1','obra_2','fontaneria','albanileria'].includes(tipo)) return stepObraOrigenIA();
+  if (tipo==='fuga_agua')         return stepFuga();
+  if (tipo==='vaciado_fosa')      return stepVaciado();
+  if (tipo==='informe_desatasco') return stepInformeDesatasco();
+  if (tipo==='bajantes_amianto')  return stepBajantesAmianto();
+  if (tipo==='certificado_obra')  return stepCertificado();
+  if (tipo==='contrato_saneamiento') return stepContratoSaneamiento();
+  return stepSvc();
+}
+
+// ─── STEP 4a-IA - Origen: IA o manual
+function stepObraOrigenIA() {
+  prog(44);
+  const tieneInformeSession = !!sessionStorage.getItem('ia_presupuesto');
+  const tieneInformeRetorno = !!localStorage.getItem('ia_presupuesto_retorno');
+  const tieneInforme = tieneInformeSession || tieneInformeRetorno;
+
+  const labelInforme = tieneInformeRetorno
+    ? `<div class="warn-box mb-3 d-flex align-items-center justify-content-between gap-2" style="background:#d1fae5;border-color:#059669">
+        <span><i class="bi bi-check-circle-fill text-success me-2"></i>
+        <strong>Informe IA listo para importar.</strong> Viene del analizador de videos/fotos.</span>
+        <button class="btn btn-sm btn-success" onclick="importarInformeRetorno()">
+          <i class="bi bi-download me-1"></i>Importar
+        </button>
+       </div>`
+    : tieneInformeSession
+      ? `<div class="warn-box mb-3" style="background:#d1fae5;border-color:#059669">
+          <i class="bi bi-robot text-success me-2"></i>
+          <strong>Informe IA disponible.</strong> Puedes usarlo como base para generar el presupuesto automaticamente.
+         </div>`
+      : '';
+
+  botMsg('Como quieres definir los trabajos y partidas del presupuesto?');
+  panel(`
+    ${labelInforme}
+    <div class="d-grid gap-3">
+      <button class="btn btn-lg" style="background:#2563eb;color:white;border-radius:12px;padding:16px;text-align:left"
+        onclick="stepDescripcionIA()">
+        <i class="bi bi-robot me-3" style="font-size:1.4rem"></i>
+        <span><strong>Generar con IA</strong><br>
+        <small style="opacity:.85">Describe el problema y la IA propone textos y partidas. Tu confirmas y ajustas precios.</small></span>
+      </button>
+      <button class="btn btn-lg" style="background:#059669;color:white;border-radius:12px;padding:16px;text-align:left"
+        onclick="abrirAnalizadorIA()">
+        <i class="bi bi-camera-video me-3" style="font-size:1.4rem"></i>
+        <span><strong>Analizar con videos / fotos / planos</strong><br>
+        <small style="opacity:.85">Abre el analizador IA en una nueva pestana. Sube los archivos, genera el informe y vuelve aqui a importarlo.</small></span>
+      </button>
+      <button class="btn btn-lg" style="background:#7c3aed;color:white;border-radius:12px;padding:16px;text-align:left"
+        onclick="stepImportarSubcontrata()">
+        <i class="bi bi-file-earmark-arrow-up me-3" style="font-size:1.4rem"></i>
+        <span><strong>Importar presupuesto de subcontrata</strong><br>
+        <small style="opacity:.85">Sube el presupuesto de otra empresa. La IA extrae las partidas y aplica tu margen.</small></span>
+      </button>
+      <button class="btn btn-lg btn-outline-secondary" style="border-radius:12px;padding:16px;text-align:left"
+        onclick="rmPanel();stepObraTextos()">
+        <i class="bi bi-pencil me-3" style="font-size:1.4rem"></i>
+        <span><strong>Introducir manualmente</strong><br>
+        <small style="opacity:.8">Escribes los textos y las partidas tu mismo.</small></span>
+      </button>
+    </div>
+    <div class="mt-3">
+      <a href="#" style="font-size:.83rem;color:#8fa3b8;" onclick="step3();return false;">
+        <i class="bi bi-arrow-left me-1"></i>Volver a datos del cliente
+      </a>
+    </div>`);
+}
+
+function abrirAnalizadorIA() {
+  localStorage.setItem('bg_retorno_analisis', '1');
+  localStorage.setItem('bg_fd_saved', JSON.stringify({ ...fd, _tipo: tipo }));
+  window.open('/analizar', '_blank');
+  rmPanel();
+  botMsg('<i class="bi bi-camera-video text-success me-2"></i>Analizador abierto en nueva pestana. Sube tus archivos, genera el informe y pulsa <strong>"Si, generar presupuesto"</strong> alli. Luego vuelve aqui y pulsa <strong>Actualizar</strong>.');
+  panel(`
+    <div class="warn-box mb-3">
+      <i class="bi bi-info-circle me-2"></i>
+      Cuando hayas terminado el analisis en la otra pestana, vuelve aqui y pulsa el boton.
+      <br><small class="text-muted">Si por accidente recargas esta pagina, el progreso se recupera automaticamente.</small>
+    </div>
+    <button class="btn btn-next" onclick="rmPanel();stepObraOrigenIA()">
+      <i class="bi bi-arrow-clockwise me-2"></i>Actualizar - Ya termine el analisis
+    </button>`);
+}
+
+// ─── STEP: Importar presupuesto de subcontrata ───────────────────────────────
+let _subcFiles = [];
+let _subcPartidas = [];
+
+function stepImportarSubcontrata() {
+  prog(46);
+  botMsg('Sube el presupuesto de la subcontrata. La IA extraera todas las partidas automaticamente.');
+  panel(`
+    <div id="subc-drop" style="border:2px dashed #dce4ef;border-radius:12px;padding:28px;text-align:center;background:#f8fafc;cursor:pointer;transition:border-color .2s;"
+      ondragover="event.preventDefault();this.style.borderColor='#7c3aed'"
+      ondragleave="this.style.borderColor='#dce4ef'"
+      ondrop="_subcDrop(event)">
+      <i class="bi bi-file-earmark-arrow-up" style="font-size:2.5rem;color:#7c3aed;"></i>
+      <div style="font-size:.9rem;color:#555;margin-top:8px;font-weight:600;">Arrastra el presupuesto aqui</div>
+      <div style="font-size:.78rem;color:#8fa3b8;margin-top:4px;">PDF, imagen (JPG/PNG) o texto · Haz clic para seleccionar</div>
+      <input id="subc-file-input" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt,.html"
+        style="position:absolute;opacity:0;width:1px;height:1px;"
+        onchange="_subcFilesSelected(this.files)">
+    </div>
+    <div id="subc-file-list" style="margin-top:10px;font-size:.82rem;display:none;"></div>
+    <div id="subc-error" style="color:#dc2626;margin-top:8px;font-size:.83rem;display:none;"></div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <a href="#" style="font-size:.83rem;color:#8fa3b8;" onclick="fd._subcRetornoSvc ? stepSvc() : stepObraOrigenIA();return false;">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </a>
+      <button id="subc-btn" class="btn btn-next" style="background:#7c3aed;" onclick="_subcAnalizar()" disabled>
+        <i class="bi bi-magic me-2"></i>Extraer partidas con IA
+      </button>
+    </div>`);
+  document.getElementById('subc-drop').addEventListener('click', () => {
+    document.getElementById('subc-file-input').click();
+  });
+}
+
+function _subcDrop(e) {
+  e.preventDefault();
+  document.getElementById('subc-drop').style.borderColor = '#dce4ef';
+  _subcFilesSelected(e.dataTransfer.files);
+}
+function _subcFilesSelected(fileList) {
+  _subcFiles = Array.from(fileList);
+  const listEl = document.getElementById('subc-file-list');
+  if (_subcFiles.length) {
+    listEl.style.display = 'block';
+    listEl.innerHTML = _subcFiles.map(f =>
+      `<span class="badge me-1 mb-1" style="background:#7c3aed"><i class="bi bi-paperclip me-1"></i>${f.name}</span>`
+    ).join('');
+    document.getElementById('subc-btn').disabled = false;
+  }
+}
+async function _subcAnalizar() {
+  if (!_subcFiles.length) return;
+  {% if not api_key_set %}
+  let key = fd._api_key || localStorage.getItem('bg_apikey') || '';
+  if (!key) {
+    key = prompt('Introduce tu API Key de Anthropic (sk-ant-...):') || '';
+    if (!key) return;
+    fd._api_key = key; localStorage.setItem('bg_apikey', key);
+  }
+  {% else %}
+  const key = '';
+  {% endif %}
+  const ov = document.getElementById('overlay');
+  const ovTxt = ov ? ov.querySelector('p,#ov-txt') : null;
+  if (ovTxt) ovTxt.textContent = 'Extrayendo partidas del presupuesto...';
+  if (ov) ov.classList.add('show');
+  const form = new FormData();
+  _subcFiles.forEach(f => form.append('archivos', f));
+  form.append('api_key', key);
+  try {
+    const res = await fetch('/api/importar_subcontrata', { method:'POST', body:form });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    _subcPartidas = data.partidas || [];
+    if (ov) ov.classList.remove('show');
+    if (ovTxt) ovTxt.textContent = 'Generando documentos...';
+    _subcMostrarPreview(data);
+  } catch(err) {
+    if (ov) ov.classList.remove('show');
+    if (ovTxt) ovTxt.textContent = 'Generando documentos...';
+    const errEl = document.getElementById('subc-error');
+    if (errEl) { errEl.style.display=''; errEl.textContent='Error: '+err.message; }
+  }
+}
+function _subcMostrarPreview(data) {
+  rmPanel();
+  const n = _subcPartidas.length;
+  const total = _subcPartidas.reduce((s,p) => s + (p.importe||0), 0);
+  const rows = _subcPartidas.slice(0,8).map(p => `
+    <tr>
+      <td style="font-size:.78rem">${esc(p.descripcion||'')}</td>
+      <td style="font-size:.78rem;text-align:center">${p.cantidad||1} ${esc(p.unidad||'PA')}</td>
+      <td style="font-size:.78rem;text-align:right">${fmtE(p.precio_unitario||0)}</td>
+      <td style="font-size:.78rem;text-align:right;font-weight:700">${fmtE(p.importe||0)}</td>
+    </tr>`).join('');
+  const masRows = n > 8 ? `<tr><td colspan="4" class="text-muted" style="font-size:.75rem;text-align:center">... y ${n-8} partidas mas</td></tr>` : '';
+
+  botMsg(`<i class="bi bi-check-circle-fill me-1" style="color:#059669"></i> <strong>${n} partidas extraidas</strong>${data.empresa ? ' de <em>'+esc(data.empresa)+'</em>' : ''}. Ahora indica el margen a aplicar.`);
+  panel(`
+    <div style="border:1px solid #dce4ef;border-radius:10px;overflow:hidden;margin-bottom:16px;">
+      <table class="table table-sm mb-0" style="margin:0">
+        <thead><tr style="background:#7c3aed;color:white">
+          <th>Descripcion</th><th style="width:100px;text-align:center">Cant./Ud.</th>
+          <th style="width:90px;text-align:right">P.Unit.</th><th style="width:90px;text-align:right">Importe</th>
+        </tr></thead>
+        <tbody>${rows}${masRows}</tbody>
+        <tfoot><tr style="background:#f0f4f9">
+          <td colspan="3" style="font-weight:700;font-size:.82rem">TOTAL SUBCONTRATA (sin IVA)</td>
+          <td style="text-align:right;font-weight:800;color:#7c3aed">${fmtE(total)}</td>
+        </tr></tfoot>
+      </table>
+    </div>
+    <div class="row g-3 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label">% de incremento / margen</label>
+        <div class="input-group">
+          <input id="subc-pct" type="number" class="form-control" value="20" min="0" max="500" step="0.5" oninput="_subcActualizarTotal()">
+          <span class="input-group-text">%</span>
+        </div>
+        <div class="text-muted mt-1" style="font-size:.75rem">Tu precio final: <strong id="subc-total-final">${fmtE(total*1.2)}</strong></div>
+      </div>
+      <div class="col-md-7">
+        <div style="background:#eff6ff;border:1px solid #dce4ef;border-radius:8px;padding:10px 14px;font-size:.82rem">
+          <i class="bi bi-info-circle me-1" style="color:#2563eb"></i>
+          Se aplicara el % a cada precio unitario. Podras revisar y ajustar cada partida individualmente despues.
+        </div>
+      </div>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <a href="#" style="font-size:.83rem;color:#8fa3b8;" onclick="stepImportarSubcontrata();return false;">
+        <i class="bi bi-arrow-left me-1"></i>Subir otro archivo
+      </a>
+      <button class="btn btn-next" style="background:#7c3aed;" onclick="_subcAplicarYContinuar()">
+        Aplicar margen y continuar <i class="bi bi-arrow-right ms-2"></i>
+      </button>
+    </div>`);
+}
+function _subcActualizarTotal() {
+  const pct = parseFloat(document.getElementById('subc-pct')?.value) || 0;
+  const total = _subcPartidas.reduce((s,p) => s + (p.importe||0), 0);
+  const el = document.getElementById('subc-total-final');
+  if (el) el.textContent = fmtE(total * (1 + pct/100));
+}
+function _subcAplicarYContinuar() {
+  const pct = parseFloat(document.getElementById('subc-pct')?.value) || 0;
+  const factor = 1 + pct / 100;
+  const enriched = _subcPartidas.map(p => ({
+    descripcion: p.descripcion || '',
+    unidad:      p.unidad || 'PA',
+    cantidad:    p.cantidad || 1,
+    precio_unitario: Math.round((p.precio_unitario || 0) * factor * 100) / 100,
+    importe:     Math.round((p.importe || 0) * factor * 100) / 100,
+  }));
+  fd._subcPct = pct;
+  rmPanel();
+  userMsg(`Margen ${pct}% aplicado · ${_subcPartidas.length} partidas`);
+
+  // Si venimos desde un servicio, re-renderizamos stepSvc con las partidas listas
+  if (fd._subcRetornoSvc) {
+    delete fd._subcRetornoSvc;
+    fd._subcPartidasSvc = enriched;
+    stepSvc();
+    return;
+  }
+  // Flujo normal obra: pre-fill stepPartidas
+  fd._subcPartidas = enriched;
+  if (tipo === 'obra_2') stepPartidas('a'); else stepPartidas('1');
+}
+
+// Lanza import subcontrata desde stepSvc (servicios) y vuelve al mismo step
+function _subcIniciarDesdeServ() {
+  fd._subcRetornoSvc = true;
+  stepImportarSubcontrata();
+}
+
+// ─── FLUJO: Contrato de Subcontratacion ──────────────────────────────────────
+
+// PASO A: Datos de la subcontratista
+function stepContratoSubcDatos() {
+  prog(44);
+  botMsg('Datos de la empresa subcontratista.');
+  // Defaults del modelo Lyana
+  const d = fd._subcDatos || {};
+  panel(`
+    <div class="row g-3">
+      <div class="col-md-8"><label class="form-label">Empresa subcontratista *</label>
+        <input id="sc_empresa" class="form-control" value="${_esc(d.empresa||'POCERÍAS Y CONSTRUCCIONES LYANA S.L.U.')}"></div>
+      <div class="col-md-4"><label class="form-label">CIF</label>
+        <input id="sc_cif" class="form-control" value="${_esc(d.cif||'B-86776226')}"></div>
+      <div class="col-md-8"><label class="form-label">Domicilio social</label>
+        <input id="sc_domicilio" class="form-control" value="${_esc(d.domicilio||'c/ Naranjo 5 - 28500 Arganda del Rey')}"></div>
+      <div class="col-md-4"><label class="form-label">Telefono</label>
+        <input id="sc_tel" class="form-control" value="${_esc(d.telefono||'918 279 114')}"></div>
+      <div class="col-md-8"><label class="form-label">Email</label>
+        <input id="sc_email" class="form-control" value="${_esc(d.email||'info@poceriaslyana.com')}"></div>
+    </div>
+    <hr class="my-3">
+    <div class="cat-label mb-2">Representante / Administrador</div>
+    <div class="row g-3">
+      <div class="col-md-8"><label class="form-label">Nombre completo</label>
+        <input id="sc_rep_nombre" class="form-control" value="${_esc(d.rep_nombre||'Noemí del Pino Martínez')}"></div>
+      <div class="col-md-4"><label class="form-label">DNI</label>
+        <input id="sc_rep_dni" class="form-control" value="${_esc(d.rep_dni||'50869839A')}"></div>
+      <div class="col-12"><label class="form-label">Domicilio del representante (a efectos de notificaciones)</label>
+        <input id="sc_rep_dom" class="form-control" value="${_esc(d.rep_domicilio||'Madrid, calle Naranjo 5 – 28500 Arganda del Rey')}"></div>
+    </div>
+    <hr class="my-3">
+    <details>
+      <summary class="text-muted" style="cursor:pointer;font-size:.85rem;">Datos registrales (opcional)</summary>
+      <div class="row g-3 mt-1">
+        <div class="col-md-6"><label class="form-label">Notario escritura</label>
+          <input id="sc_notario" class="form-control" value="${_esc(d.notario||'D. Domingo Paniagua Santamaria')}"></div>
+        <div class="col-md-6"><label class="form-label">Localidad notario</label>
+          <input id="sc_notario_loc" class="form-control" value="${_esc(d.notario_loc||'Arganda del Rey')}"></div>
+        <div class="col-md-4"><label class="form-label">Fecha escritura</label>
+          <input id="sc_fecha_esc" class="form-control" value="${_esc(d.fecha_escritura||'08/07/2013')}"></div>
+        <div class="col-md-4"><label class="form-label">Nº protocolo</label>
+          <input id="sc_protocolo" class="form-control" value="${_esc(d.protocolo||'908')}"></div>
+        <div class="col-md-4"><label class="form-label">Registro Mercantil</label>
+          <input id="sc_registro" class="form-control" value="${_esc(d.registro||'Tomo 31208, Folio 190, Hoja M-561719')}"></div>
+      </div>
+    </details>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <a href="#" style="font-size:.83rem;color:#8fa3b8;" onclick="step3();return false;">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </a>
+      <button class="btn btn-next" onclick="okContratoSubcDatos()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+
+function okContratoSubcDatos() {
+  const empresa = document.getElementById('sc_empresa').value.trim();
+  if (!empresa) { alert('El nombre de la empresa subcontratista es obligatorio.'); return; }
+  fd._subcDatos = {
+    empresa,
+    cif:            document.getElementById('sc_cif').value.trim(),
+    domicilio:      document.getElementById('sc_domicilio').value.trim(),
+    telefono:       document.getElementById('sc_tel').value.trim(),
+    email:          document.getElementById('sc_email').value.trim(),
+    rep_nombre:     document.getElementById('sc_rep_nombre').value.trim(),
+    rep_dni:        document.getElementById('sc_rep_dni').value.trim(),
+    rep_domicilio:  document.getElementById('sc_rep_dom').value.trim(),
+    notario:        document.getElementById('sc_notario').value.trim(),
+    notario_loc:    document.getElementById('sc_notario_loc').value.trim(),
+    fecha_escritura:document.getElementById('sc_fecha_esc').value.trim(),
+    protocolo:      document.getElementById('sc_protocolo').value.trim(),
+    registro:       document.getElementById('sc_registro').value.trim(),
+  };
+  // Store in fd for form submission
+  Object.assign(fd, {
+    subc_empresa:         fd._subcDatos.empresa,
+    subc_cif:             fd._subcDatos.cif,
+    subc_domicilio:       fd._subcDatos.domicilio,
+    subc_telefono:        fd._subcDatos.telefono,
+    subc_email:           fd._subcDatos.email,
+    subc_rep_nombre:      fd._subcDatos.rep_nombre,
+    subc_rep_dni:         fd._subcDatos.rep_dni,
+    subc_rep_domicilio:   fd._subcDatos.rep_domicilio,
+    subc_notario:         fd._subcDatos.notario,
+    subc_notario_loc:     fd._subcDatos.notario_loc,
+    subc_fecha_escritura: fd._subcDatos.fecha_escritura,
+    subc_protocolo:       fd._subcDatos.protocolo,
+    subc_registro:        fd._subcDatos.registro,
+  });
+  rmPanel();
+  userMsg(empresa);
+  stepContratoSubcPresupuesto();
+}
+
+// PASO B: Subir presupuesto de subcontrata y aplicar % descuento
+let _cscFiles = [];
+let _cscPartidas = [];
+
+function stepContratoSubcPresupuesto() {
+  prog(58);
+  botMsg('Sube el presupuesto de la subcontrata. La IA extrae las partidas y aplicas el margen que os quedas.');
+  panel(`
+    <div id="csc-drop" style="border:2px dashed #dce4ef;border-radius:12px;padding:28px;text-align:center;background:#f8fafc;cursor:pointer;transition:border-color .2s;"
+      ondragover="event.preventDefault();this.style.borderColor='#7c3aed'"
+      ondragleave="this.style.borderColor='#dce4ef'"
+      ondrop="_cscDrop(event)">
+      <i class="bi bi-file-earmark-arrow-up" style="font-size:2.5rem;color:#7c3aed;"></i>
+      <div style="font-weight:600;margin-top:8px;">Arrastra el presupuesto aqui</div>
+      <div style="font-size:.78rem;color:#8fa3b8;margin-top:4px;">PDF, imagen (JPG/PNG) - Haz clic para seleccionar</div>
+      <input id="csc-file-input" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt"
+        style="position:absolute;opacity:0;width:1px;height:1px;" onchange="_cscFilesSelected(this.files)">
+    </div>
+    <div id="csc-file-list" style="margin-top:10px;font-size:.82rem;display:none;"></div>
+    <div id="csc-error" style="color:#dc2626;margin-top:8px;font-size:.83rem;display:none;"></div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <a href="#" style="font-size:.83rem;color:#8fa3b8;" onclick="stepContratoSubcDatos();return false;">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </a>
+      <button id="csc-btn" class="btn btn-next" style="background:#7c3aed;" onclick="_cscAnalizar()" disabled>
+        <i class="bi bi-magic me-2"></i>Extraer partidas con IA
+      </button>
+    </div>`);
+  document.getElementById('csc-drop').addEventListener('click', () => document.getElementById('csc-file-input').click());
+}
+
+function _cscDrop(e) {
+  e.preventDefault();
+  document.getElementById('csc-drop').style.borderColor = '#dce4ef';
+  _cscFilesSelected(e.dataTransfer.files);
+}
+function _cscFilesSelected(files) {
+  _cscFiles = Array.from(files);
+  const el = document.getElementById('csc-file-list');
+  if (_cscFiles.length) {
+    el.style.display = 'block';
+    el.innerHTML = _cscFiles.map(f => `<span class="badge me-1" style="background:#7c3aed"><i class="bi bi-paperclip me-1"></i>${f.name}</span>`).join('');
+    document.getElementById('csc-btn').disabled = false;
+  }
+}
+async function _cscAnalizar() {
+  if (!_cscFiles.length) return;
+  {% if not api_key_set %}
+  let key = fd._api_key || localStorage.getItem('bg_apikey') || '';
+  if (!key) { key = prompt('Introduce tu API Key de Anthropic (sk-ant-...):') || ''; if (!key) return; fd._api_key = key; localStorage.setItem('bg_apikey', key); }
+  {% else %}const key = '';{% endif %}
+  const ov = document.getElementById('overlay');
+  const ovTxt = ov?.querySelector('#ov-txt,p');
+  if (ovTxt) ovTxt.textContent = 'Extrayendo partidas...';
+  if (ov) ov.classList.add('show');
+  const form = new FormData();
+  _cscFiles.forEach(f => form.append('archivos', f));
+  form.append('api_key', key);
+  try {
+    const res = await fetch('/api/importar_subcontrata', { method:'POST', body:form });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    _cscPartidas = data.partidas || [];
+    if (ov) ov.classList.remove('show');
+    _cscMostrarDescuento(data);
+  } catch(err) {
+    if (ov) ov.classList.remove('show');
+    document.getElementById('csc-error').style.display='';
+    document.getElementById('csc-error').textContent = 'Error: ' + err.message;
+  }
+}
+
+function _cscMostrarDescuento(data) {
+  rmPanel();
+  const n = _cscPartidas.length;
+  const total = _cscPartidas.reduce((s,p) => s + (p.importe||0), 0);
+  const rows = _cscPartidas.slice(0,8).map(p => `
+    <tr>
+      <td style="font-size:.78rem">${esc(p.descripcion||'')}</td>
+      <td style="font-size:.78rem;text-align:center">${p.cantidad||1}</td>
+      <td style="font-size:.78rem;text-align:right">${fmtE(p.precio_unitario||0)}</td>
+      <td style="font-size:.78rem;text-align:right;font-weight:700">${fmtE(p.importe||0)}</td>
+    </tr>`).join('');
+  const masRows = n > 8 ? `<tr><td colspan="4" class="text-muted" style="font-size:.75rem;text-align:center">... y ${n-8} partidas mas</td></tr>` : '';
+  botMsg(`<i class="bi bi-check-circle-fill me-1" style="color:#059669"></i><strong>${n} partidas extraidas</strong>. Indica el margen que os quedais.`);
+  panel(`
+    <div style="border:1px solid #dce4ef;border-radius:10px;overflow:hidden;margin-bottom:16px;">
+      <table class="table table-sm mb-0">
+        <thead><tr style="background:#7c3aed;color:white">
+          <th>Descripcion</th><th style="width:70px;text-align:center">Cant.</th>
+          <th style="width:90px;text-align:right">P.Unit.</th><th style="width:90px;text-align:right">Importe</th>
+        </tr></thead>
+        <tbody>${rows}${masRows}</tbody>
+        <tfoot><tr style="background:#f0f4f9">
+          <td colspan="3" style="font-weight:700;font-size:.82rem">TOTAL PRESUPUESTO SUBCONTRATA</td>
+          <td style="text-align:right;font-weight:800;color:#7c3aed">${fmtE(total)}</td>
+        </tr></tfoot>
+      </table>
+    </div>
+    <div class="row g-3 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label">% de margen que os quedais (se resta al precio)</label>
+        <div class="input-group">
+          <input id="csc-pct" type="number" class="form-control" value="20" min="0" max="99" step="0.5" oninput="_cscActualizarTotal()">
+          <span class="input-group-text">%</span>
+        </div>
+        <div class="text-muted mt-1" style="font-size:.75rem">
+          Precio subcontrata: <strong id="csc-total-subc">${fmtE(total)}</strong><br>
+          Precio contrato (subcontratista cobra): <strong id="csc-total-final">${fmtE(total*0.8)}</strong>
+        </div>
+      </div>
+      <div class="col-md-7">
+        <div style="background:#eff6ff;border:1px solid #dce4ef;border-radius:8px;padding:10px 14px;font-size:.82rem">
+          <i class="bi bi-info-circle me-1" style="color:#2563eb"></i>
+          Si vuestro presupuesto al cliente es de ${fmtE(total)} y quedais un 20%, la subcontrata cobra ${fmtE(total*0.8)}.
+        </div>
+      </div>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <a href="#" style="font-size:.83rem;color:#8fa3b8;" onclick="stepContratoSubcPresupuesto();return false;">
+        <i class="bi bi-arrow-left me-1"></i>Subir otro archivo
+      </a>
+      <button class="btn btn-next" style="background:#7c3aed;" onclick="_cscAplicarDescuento()">
+        Aplicar y continuar <i class="bi bi-arrow-right ms-2"></i>
+      </button>
+    </div>`);
+}
+
+function _cscActualizarTotal() {
+  const pct = parseFloat(document.getElementById('csc-pct')?.value) || 0;
+  const total = _cscPartidas.reduce((s,p) => s + (p.importe||0), 0);
+  const el = document.getElementById('csc-total-final');
+  if (el) el.textContent = fmtE(total * (1 - pct/100));
+}
+
+function _cscAplicarDescuento() {
+  const pct = parseFloat(document.getElementById('csc-pct')?.value) || 0;
+  const factor = 1 - pct / 100;
+  fd._cscPartidas = _cscPartidas.map(p => ({
+    descripcion:     p.descripcion || '',
+    unidad:          p.unidad || 'PA',
+    cantidad:        p.cantidad || 1,
+    precio_unitario: Math.round((p.precio_unitario || 0) * factor * 100) / 100,
+    importe:         Math.round((p.importe || 0) * factor * 100) / 100,
+  }));
+  fd._cscPct = pct;
+  rmPanel();
+  userMsg(`Margen ${pct}% · Subcontrata cobra ${fmtE(_cscPartidas.reduce((s,p) => s + (p.importe||0), 0) * factor)}`);
+  stepContratoSubcCondiciones();
+}
+
+// PASO C: Condiciones del contrato
+function stepContratoSubcCondiciones() {
+  prog(74);
+  botMsg('Condiciones economicas y plazos del contrato.');
+  panel(`
+    <div class="row g-3">
+      <div class="col-md-6"><label class="form-label">Fecha de inicio de los trabajos</label>
+        <input id="sc_fecha_inicio" type="date" class="form-control" value="${fd.fecha_contrato||''}"></div>
+      <div class="col-md-6"><label class="form-label">Plazo de ejecucion (dias laborales)</label>
+        <input id="sc_plazo" type="number" class="form-control" value="30" min="1"></div>
+      <div class="col-12"><label class="form-label">Forma de pago</label>
+        <textarea id="sc_forma_pago" class="form-control" rows="2">100% a la finalizacion de los trabajos mediante pagare a 90 dias</textarea>
+      </div>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <a href="#" style="font-size:.83rem;color:#8fa3b8;" onclick="stepContratoSubcPresupuesto();return false;">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </a>
+      <button class="btn btn-next" onclick="okContratoSubcCondiciones()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+
+function okContratoSubcCondiciones() {
+  fd.fecha_inicio_trabajos = document.getElementById('sc_fecha_inicio').value;
+  fd.plazo                 = document.getElementById('sc_plazo').value;
+  fd.forma_pago            = document.getElementById('sc_forma_pago').value.trim();
+  rmPanel();
+  userMsg(`Inicio: ${fd.fecha_inicio_trabajos} · Plazo: ${fd.plazo} dias`);
+  // Pre-fill item rows from _cscPartidas
+  fd._subcPartidas = fd._cscPartidas;  // reuse stepPartidas pre-fill mechanism
+  delete fd._cscPartidas;
+  stepPartidas('1');
+}
+
+
+function importarInformeRetorno() {
+  const raw = localStorage.getItem('ia_presupuesto_retorno');
+  if (!raw) { stepObraOrigenIA(); return; }
+  try {
+    const iap = JSON.parse(raw);
+    localStorage.removeItem('ia_presupuesto_retorno');
+    sessionStorage.setItem('ia_presupuesto', JSON.stringify(iap));
+    stepDescripcionIA();
+  } catch(e) {
+    stepDescripcionIA();
+  }
+}
+
+function stepDescripcionIA() {
+  prog(50);
+  const tieneInforme = !!sessionStorage.getItem('ia_presupuesto');
+  const checkInforme = tieneInforme
+    ? `<div class="form-check mt-2">
+        <input class="form-check-input" type="checkbox" id="usar_informe_ia" checked>
+        <label class="form-check-label" for="usar_informe_ia">
+          Usar informe IA adjunto como base <span class="badge bg-success ms-1">Recomendado</span>
+        </label>
+       </div>` : '';
+  botMsg('Describe el problema o trabajos a realizar. La IA generara el presupuesto a partir de tu descripcion.');
+  panel(`
+    <div class="mb-3">
+      <label class="form-label">Descripcion del caso / trabajos <span class="text-muted fw-normal" style="text-transform:none;letter-spacing:0">(cuanto mas detalle, mejor resultado)</span></label>
+      <textarea id="ia_desc" class="form-control" rows="5"
+        placeholder="Ej: Red de saneamiento de la comunidad con colector principal DN200 de 18 ml en mal estado. Se observan fisuras longitudinales y deposito sedimentario en toda su longitud. Se propone encamisado CIPP y limpieza previa robotizada..."></textarea>
+      ${checkInforme}
+    </div>
+    <div class="text-end">
+      <button class="btn btn-next" onclick="llamarGeneradorIA()">
+        <i class="bi bi-robot me-2"></i>Generar presupuesto con IA
+      </button>
+    </div>`);
+}
+
+async function llamarGeneradorIA() {
+  const desc = v('ia_desc');
+  const usarInforme = document.getElementById('usar_informe_ia')?.checked ?? false;
+  let informeData = null;
+  if (usarInforme) {
+    try {
+      const rawSS = sessionStorage.getItem('ia_presupuesto');
+      const rawLS = localStorage.getItem('ia_presupuesto_retorno');
+      const raw = rawSS || rawLS;
+      if (raw) informeData = JSON.parse(raw);
+    } catch(e) {}
+  }
+
+  {% if not api_key_set %}
+  const apiKey = fd._api_key || prompt('Introduce tu API Key de Anthropic (sk-ant-...):') || '';
+  if (!apiKey) return;
+  fd._api_key = apiKey;
+  {% else %}
+  const apiKey = '';
+  {% endif %}
+
+  rmPanel();
+  botMsg('<i class="bi bi-robot me-2"></i>Generando presupuesto con IA... <span class="spinner-border spinner-border-sm ms-2"></span>');
+  prog(60);
+
+  try {
+    const resp = await fetch('/api/generar_partidas_ia', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        descripcion: desc,
+        tipo: tipo,
+        api_key: apiKey,
+        informe: informeData,
+      })
+    });
+    const data = await resp.json();
+    if (data.error) {
+      botMsg(`<span class="text-danger"><i class="bi bi-exclamation-triangle me-2"></i>Error: ${esc(data.error)}</span>`);
+      panel(`<button class="btn btn-outline-secondary" onclick="rmPanel();stepObraOrigenIA()">Volver</button>`);
+      return;
+    }
+    stepRevisarIA(data);
+  } catch(e) {
+    botMsg(`<span class="text-danger">Error de conexion: ${esc(e.message)}</span>`);
+    panel(`<button class="btn btn-outline-secondary" onclick="rmPanel();stepObraOrigenIA()">Volver</button>`);
+  }
+}
+
+function stepRevisarIA(result) {
+  prog(72);
+  botMsg('<i class="bi bi-check2-circle me-2 text-success"></i>Presupuesto generado. Revisa los textos y las partidas, ajusta lo que necesites y confirma.');
+
+  const esObra2 = tipo === 'obra_2';
+  rc['item'] = 0; rc['item_a'] = 0; rc['item_b'] = 0;
+
+  function tblHtml(which, prefix) {
+    const bid = 'bar' + which;
+    const blabel = which === 'b' ? 'TOTAL B' : which === 'a' ? 'TOTAL A' : 'TOTAL';
+    return `
+      <div class="table-responsive">
+        <table class="table table-bordered tbl-part" id="tbl${which}">
+          <thead><tr>
+            <th style="width:110px">Codigo</th><th>Descripcion</th>
+            <th style="width:66px">Ud</th><th style="width:70px">Cant.</th>
+            <th style="width:92px">Precio &euro;</th><th style="width:92px">Total</th>
+            <th style="width:34px"></th>
+          </tr></thead>
+          <tbody id="tb${which}"></tbody>
+        </table>
+      </div>
+      <button type="button" class="btn btn-sm btn-outline-primary mb-2"
+        onclick="addRow('${prefix}','tb${which}','${bid}')">
+        <i class="bi bi-plus-circle"></i> Anadir partida
+      </button>
+      <div class="total-row d-flex justify-content-between align-items-center mb-3" id="${bid}">
+        <span class="text-muted small"><span class="nr">0</span> partida(s)</span>
+        <span class="total-val">${blabel}: <span class="tv">0,00 &euro;</span></span>
+      </div>`;
+  }
+
+  const textosExtra2 = esObra2 ? `
+    <div class="col-md-5"><label class="form-label">Tipo de opcion</label>
+      <input id="ia_topcion" type="text" class="form-control" value="${esc(result.tipo_opcion||'')}"></div>
+    <div class="col-12"><label class="form-label">Memoria Opcion A</label>
+      <textarea id="ia_mem_a" class="form-control" rows="2">${esc(result.memoria_tradicional||result.label_a||'')}</textarea></div>
+    <div class="col-12"><label class="form-label">Memoria Opcion B</label>
+      <textarea id="ia_mem_b" class="form-control" rows="2">${esc(result.memoria_multiliner||result.label_b||'')}</textarea></div>` : '';
+
+  const partidasSection = esObra2
+    ? `<div class="fw-bold small text-muted border-bottom pb-1 mb-2 mt-3">Partidas Opcion A &mdash; ${esc(result.label_a||'')}</div>
+       ${tblHtml('a','item_a')}
+       <div class="fw-bold small text-muted border-bottom pb-1 mb-2 mt-3">Partidas Opcion B &mdash; ${esc(result.label_b||'')}</div>
+       ${tblHtml('b','item_b')}`
+    : tblHtml('1','item');
+
+  panel(`
+    <div class="alert alert-success py-2 mb-3" style="font-size:.85rem">
+      <i class="bi bi-robot me-2"></i><strong>Generado por IA</strong> &mdash; Revisa y ajusta todo antes de confirmar. Los precios marcados con <span class="tbadge" style="display:inline">Tarifa</span> vienen de tu tabla de tarifas.
+    </div>
+    <div class="row g-3 mb-2">
+      <div class="col-12"><label class="form-label">Informe tecnico</label>
+        <textarea id="ia_inf" class="form-control" rows="3">${esc(result.informe_tecnico||'')}</textarea></div>
+      <div class="col-12"><label class="form-label">Solucion adoptada</label>
+        <textarea id="ia_sol" class="form-control" rows="2">${esc(result.solucion_adoptar||'')}</textarea></div>
+      <div class="col-12"><label class="form-label">Memoria tecnica</label>
+        <textarea id="ia_mem" class="form-control" rows="3">${esc(result.memoria_tecnica||'')}</textarea></div>
+      ${textosExtra2}
+    </div>
+    <div class="fw-bold small text-muted border-bottom pb-1 mb-2 mt-2">${esObra2 ? 'Partidas por opcion' : 'Partidas propuestas'}</div>
+    ${partidasSection}
+    <div class="text-end mt-3">
+      <button class="btn btn-next" onclick="okRevisarIA()">
+        Confirmar y continuar <i class="bi bi-arrow-right ms-1"></i>
+      </button>
+    </div>`);
+
+  setTimeout(() => {
+    function fillTable(partidas, prefix, tbId, barId) {
+      (partidas||[]).forEach(p => {
+        addRow(prefix, tbId, barId,
+          p.descripcion||'', p.unidad||'ud',
+          parseFloat(p.cantidad)||1,
+          parseFloat(p.precio_unitario)||0);
+        if (p.tarifa_encontrada && p.precio_unitario > 0) {
+          const i = rc[prefix] - 1;
+          const bg = document.getElementById(`${prefix}bg${i}`);
+          if (bg) bg.style.display = 'inline';
+        }
+      });
+    }
+    if (esObra2) {
+      fillTable(result.partidas_a, 'item_a', 'tba', 'bara');
+      fillTable(result.partidas_b, 'item_b', 'tbb', 'barb');
+    } else {
+      fillTable(result.partidas, 'item', 'tb1', 'bar1');
+    }
+  }, 80);
+}
+
+function okRevisarIA() {
+  fd.informe  = v('ia_inf');
+  fd.solucion = v('ia_sol');
+  fd.memoria  = v('ia_mem');
+  if (tipo === 'obra_2') {
+    fd.memoria_tradicional = v('ia_mem_a');
+    fd.memoria_multiliner  = v('ia_mem_b');
+    fd.tipo_opcion         = v('ia_topcion');
+  }
+
+  function savePartidas(which, prefix) {
+    document.querySelectorAll(`#tb${which} tr`).forEach(tr => {
+      const i = tr.id.replace(prefix+'-row-','');
+      ['desc','unit','qty','price'].forEach(field => {
+        const el = tr.querySelector(`[name="${prefix}_${field}_${i}"]`);
+        if (el) fd[`${prefix}_${field}_${i}`] = el.value;
+      });
+    });
+  }
+
+  if (tipo === 'obra_2') {
+    savePartidas('a', 'item_a');
+    savePartidas('b', 'item_b');
+  } else {
+    savePartidas('1', 'item');
+  }
+
+  rmPanel();
+  userMsg('Textos y partidas confirmados');
+  stepCondiciones();
+}
+
+// ─── STEP 4a - Obra: textos tecnicos
+function stepObraTextos() {
+  prog(50);
+  botMsg('Cuentame el problema tecnico y la solucion propuesta.');
+  const extra2 = tipo==='obra_2' ? `
+    <div class="col-12"><label class="form-label">Memoria Opcion A (Tradicional)</label>
+      <textarea id="f_mtrad" class="form-control" rows="2">${_esc(fd.memoria_tradicional||'')}</textarea></div>
+    <div class="col-12"><label class="form-label">Memoria Opcion B (Multiliner)</label>
+      <textarea id="f_mmulti" class="form-control" rows="2">${_esc(fd.memoria_multiliner||'')}</textarea></div>
+    <div class="col-md-5"><label class="form-label">Tipo de opcion</label>
+      <input id="f_topcion" type="text" class="form-control" placeholder="Multiliner"
+        value="${_esc(fd.tipo_opcion||'')}"></div>` : '';
+  panel(`
+    <div class="row g-3">
+      <div class="col-12"><label class="form-label">Informe tecnico</label>
+        <textarea id="f_inf" class="form-control" rows="2" placeholder="Se han detectado filtraciones...">${_esc(fd.informe||'')}</textarea></div>
+      <div class="col-12"><label class="form-label">Solucion adoptada</label>
+        <textarea id="f_sol" class="form-control" rows="2" placeholder="Sustitucion de los tramos afectados...">${_esc(fd.solucion||'')}</textarea></div>
+      <div class="col-12"><label class="form-label">Memoria tecnica</label>
+        <textarea id="f_mem" class="form-control" rows="3" placeholder="Los trabajos incluyen...">${_esc(fd.memoria||'')}</textarea></div>
+      ${extra2}
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <button class="btn btn-outline-secondary btn-sm" onclick="stepObraOrigenIA()">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </button>
+      <button class="btn btn-next" onclick="okObraTextos()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+function okObraTextos() {
+  fd.informe=v('f_inf'); fd.solucion=v('f_sol'); fd.memoria=v('f_mem');
+  if (tipo==='obra_2') { fd.memoria_tradicional=v('f_mtrad'); fd.memoria_multiliner=v('f_mmulti'); fd.tipo_opcion=v('f_topcion'); }
+  rmPanel(); userMsg('Textos tecnicos correctos');
+  if (tipo==='obra_2') stepPartidas('a'); else stepPartidas('1');
+}
+
+// ─── STEP 5 - Partidas
+function stepPartidas(which) {
+  prog(which==='b'?76:64);
+  const label = which==='b'?'las partidas de la <strong>Opcion B</strong>':
+                which==='a'?'las partidas de la <strong>Opcion A</strong>':
+                'las <strong>partidas de obra</strong>';
+  botMsg(`Anadir ${label}.`);
+  const prefix=which==='1'?'item':which==='a'?'item_a':'item_b';
+  const bid='bar'+which; const blabel=which==='b'?'TOTAL B':which==='a'?'TOTAL A':'TOTAL';
+  rc[prefix]=0;
+
+  // Boton Volver segun contexto
+  const backFn = which==='b' ? "_guardarPartidasDesdeDOM('b','item_b'); stepPartidas('a');"
+    : tipo==='contrato_subcontrata' ? 'stepContratoSubcCondiciones()'
+    : 'stepObraTextos()';
+
+  panel(`
+    <div class="table-responsive">
+      <table class="table table-bordered tbl-part" id="tbl${which}">
+        <thead><tr>
+          <th style="width:110px">Codigo</th><th>Descripcion *</th>
+          <th style="width:66px">Ud</th><th style="width:70px">Cant.</th>
+          <th style="width:92px">Precio &euro;</th><th style="width:92px">Total</th>
+          <th style="width:34px"></th>
+        </tr></thead>
+        <tbody id="tb${which}"></tbody>
+      </table>
+    </div>
+    <button type="button" class="btn btn-sm btn-outline-primary mb-3" onclick="addRow('${prefix}','tb${which}','${bid}')">
+      <i class="bi bi-plus-circle"></i> Anadir partida
+    </button>
+    <div class="total-row d-flex justify-content-between align-items-center mb-3" id="${bid}">
+      <span class="text-muted small"><span class="nr">0</span> partida(s)</span>
+      <span class="total-val">${blabel}: <span class="tv">0,00 &euro;</span></span>
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-1">
+      <button class="btn btn-outline-secondary btn-sm" onclick="${backFn}">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </button>
+      <button class="btn btn-next" onclick="okPartidas('${which}','${prefix}')">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+
+  // Prioridad: 1) importacion subcontrata 2) datos previos en fd 3) filas vacias
+  if (fd._subcPartidas && fd._subcPartidas.length) {
+    fd._subcPartidas.forEach(p => addRow(prefix,'tb'+which,bid, p.descripcion, p.unidad, p.cantidad, p.precio_unitario));
+    delete fd._subcPartidas;
+  } else {
+    const prev = _leerPartidasDeFd(prefix);
+    if (prev.length) {
+      prev.forEach(p => addRow(prefix,'tb'+which,bid, p.desc, p.unit, p.qty, p.price));
+    } else {
+      addRow(prefix,'tb'+which,bid); addRow(prefix,'tb'+which,bid);
+    }
+  }
+}
+function _guardarPartidasDesdeDOM(which, prefix) {
+  // Guarda las partidas del DOM al fd de forma secuencial (0,1,2...)
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^${escaped}_(desc|unit|qty|price|cod)_\\d+$`);
+  Object.keys(fd).filter(k => re.test(k)).forEach(k => delete fd[k]);
+  let n = 0;
+  document.querySelectorAll(`#tb${which} tr`).forEach(tr => {
+    const rawIdx = tr.id.replace(prefix + '-row-', '');
+    const descEl = tr.querySelector(`[name="${prefix}_desc_${rawIdx}"]`);
+    if (!descEl || !descEl.value.trim()) return;
+    ['desc','unit','qty','price'].forEach(f => {
+      const el = tr.querySelector(`[name="${prefix}_${f}_${rawIdx}"]`);
+      if (el) fd[`${prefix}_${f}_${n}`] = el.value;
+    });
+    n++;
+  });
+  return n;
+}
+
+function okPartidas(which, prefix) {
+  const n = _guardarPartidasDesdeDOM(which, prefix);
+  if (!n) { alert('Anadir al menos una partida.'); return; }
+  rmPanel(); userMsg(`${n} partida(s) correctas`);
+  if (which==='a') stepPartidas('b');
+  else if (tipo === 'contrato_subcontrata') stepGenerar();
+  else stepCondiciones();
+}
+
+// ─── STEP 6 - Condiciones economicas
+function stepCondiciones() {
+  prog(88);
+  botMsg('Condiciones economicas del presupuesto.');
+  const firm=tipo==='obra_2'?`
+    <div class="col-md-5"><label class="form-label">Nombre del firmante</label>
+      <input id="f_fnombre" type="text" class="form-control" value="${_esc(fd.firmante_nombre||'')}"></div>
+    <div class="col-md-4"><label class="form-label">Cargo</label>
+      <input id="f_fcargo" type="text" class="form-control" placeholder="Director Tecnico"
+        value="${_esc(fd.firmante_cargo||'')}"></div>
+    <div class="col-md-3"><label class="form-label">DNI</label>
+      <input id="f_fdni" type="text" class="form-control" value="${_esc(fd.firmante_dni||'')}"></div>`:'';
+  const vPlazo = fd.plazo || '30';
+  const vPago  = fd.forma_pago || '50% al inicio de los trabajos, 50% a la finalizacion';
+  const backFn = tipo==='obra_2' ? "stepPartidas('b')" : "stepPartidas('1')";
+  panel(`
+    <div class="row g-3">
+      <div class="col-md-3"><label class="form-label">Plazo (dias)</label>
+        <input id="f_plazo" type="number" class="form-control" value="${_esc(vPlazo)}" min="1"></div>
+      <div class="col-md-9"><label class="form-label">Forma de pago</label>
+        <input id="f_pago" type="text" class="form-control" value="${_esc(vPago)}"></div>
+      ${firm}
+    </div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <button class="btn btn-outline-secondary btn-sm" onclick="${backFn}">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </button>
+      <button class="btn btn-next" onclick="okCondiciones()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+function okCondiciones() {
+  fd.plazo=v('f_plazo')||'30'; fd.forma_pago=v('f_pago');
+  if (tipo==='obra_2') { fd.firmante_nombre=v('f_fnombre')||''; fd.firmante_cargo=v('f_fcargo')||''; fd.firmante_dni=v('f_fdni')||''; }
+  rmPanel(); userMsg(`Plazo: ${fd.plazo} dias`); stepGenerar();
+}
+
+// ─── STEP 4b - Servicios (tarifas)
+function stepSvc() {
+  prog(60);
+  botMsg('Introduce las unidades y precios del servicio.');
+  const rows=(SVC_ROWS[tipo]||[]).map(([key,label])=>`
+    <tr>
+      <td class="fw-semibold" style="font-size:.87rem">${label}</td>
+      <td><input type="number" id="s_${key.toLowerCase()}_u" class="form-control form-control-sm svc-u" value="1" min="0" step="any" oninput="cSvc()"></td>
+      <td><input type="number" id="s_${key.toLowerCase()}_p" class="form-control form-control-sm svc-p" value="0" min="0" step="any" oninput="cSvc()"></td>
+      <td class="fw-bold svc-i" id="s_${key.toLowerCase()}_i">0,00 &euro;</td>
+    </tr>`).join('');
+  const hasHoras=['limpieza_aerea','fresador','robot_limpieza'].includes(tipo);
+  const hasTiempo=['limpieza_aerea','robot_limpieza'].includes(tipo);
+  panel(`
+    <table class="table table-bordered tbl-svc mb-3">
+      <thead><tr>
+        <th style="min-width:160px">Servicio</th>
+        <th style="width:95px">Uds.</th><th style="width:110px">Precio/ud &euro;</th><th style="width:100px">Importe &euro;</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${hasHoras?`<div class="row g-2 mb-3">
+      <div class="col-4"><label class="form-label">Horas estimadas</label><input id="f_horas" type="text" class="form-control" placeholder="4"></div>
+      ${hasTiempo?`<div class="col-5"><label class="form-label">Tiempo estimado</label><input id="f_tiempo" type="text" class="form-control" placeholder="Medio dia"></div>`:''}
+    </div>`:''}
+    <div class="total-row d-flex justify-content-end mb-3">
+      <span class="total-val">TOTAL ESTIMADO: <span id="tsvc">0,00 &euro;</span></span>
+    </div>
+    ${_htmlPartAdicionales()}
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <a href="#" style="font-size:.83rem;color:#8fa3b8;" onclick="step3();return false;">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </a>
+      <button class="btn btn-next" onclick="okSvc()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+  // Pre-rellenar valores de SVC_ROWS guardados en fd (vuelta atras)
+  setTimeout(() => {
+    (SVC_ROWS[tipo]||[]).forEach(([key]) => {
+      const k = key.toLowerCase();
+      const u = document.getElementById(`s_${k}_u`);
+      const p = document.getElementById(`s_${k}_p`);
+      if (u && fd[k+'_uds']   !== undefined) u.value = fd[k+'_uds'];
+      if (p && fd[k+'_precio'] !== undefined) p.value = fd[k+'_precio'];
+    });
+    if (fd.horas_estimadas  && document.getElementById('f_horas'))  document.getElementById('f_horas').value  = fd.horas_estimadas;
+    if (fd.tiempo_estimado  && document.getElementById('f_tiempo')) document.getElementById('f_tiempo').value = fd.tiempo_estimado;
+    cSvc();
+    // Partidas adicionales guardadas
+    const prevItems = _leerPartidasDeFd('item');
+    if (fd._subcPartidasSvc && fd._subcPartidasSvc.length) {
+      fd._subcPartidasSvc.forEach(p => addRow('item','tbsvc','barsvc', p.descripcion, p.unidad, p.cantidad, p.precio_unitario));
+      delete fd._subcPartidasSvc;
+    } else if (prevItems.length) {
+      prevItems.forEach(p => addRow('item','tbsvc','barsvc', p.desc, p.unit, p.qty, p.price));
+    }
+  }, 60);
+}
+function _htmlPartAdicionales() {
+  return `
+    <hr class="my-2">
+    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+      <span class="cat-label mb-0">Partidas adicionales (opcional)</span>
+      <div class="d-flex gap-2">
+        <button type="button" class="btn btn-sm" style="background:#7c3aed;color:white;" onclick="_subcIniciarDesdeServ()">
+          <i class="bi bi-file-earmark-arrow-up me-1"></i>Importar de subcontrata
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addRow('item','tbsvc','barsvc')">
+          <i class="bi bi-plus-lg me-1"></i>Anadir partida
+        </button>
+      </div>
+    </div>
+    <table class="table table-sm tbl-part mb-1" style="display:none" id="tbl-svc-wrap">
+      <thead><tr>
+        <th style="width:130px">Codigo</th><th>Descripcion</th>
+        <th style="width:60px">Ud.</th><th style="width:70px">Cant.</th>
+        <th style="width:90px">Precio &euro;</th><th style="width:80px" class="text-end">Importe</th>
+        <th style="width:36px"></th>
+      </tr></thead>
+      <tbody id="tbsvc"></tbody>
+    </table>
+    <div id="barsvc" style="display:none;font-size:.8rem;color:#5a7184;margin-bottom:8px;">
+      <span class="nr">0</span> partida(s) &middot; Total c/IVA: <span class="tv">0,00 &euro;</span>
+    </div>`;
+}
+function cSvc() {
+  (SVC_ROWS[tipo]||[]).forEach(([key])=>{
+    const k=key.toLowerCase();
+    const u=parseFloat(document.getElementById(`s_${k}_u`)?.value)||0;
+    const p=parseFloat(document.getElementById(`s_${k}_p`)?.value)||0;
+    const iEl=document.getElementById(`s_${k}_i`); if(iEl) iEl.textContent=fmtE(u*p);
+  });
+  let tot=0;
+  document.querySelectorAll('.svc-u').forEach(u=>{
+    const p=u.closest('tr').querySelector('.svc-p');
+    tot+=(parseFloat(u.value)||0)*(parseFloat(p?.value)||0);
+  });
+  const el=document.getElementById('tsvc'); if(el) el.textContent=fmtE(tot);
+}
+function okSvc() {
+  (SVC_ROWS[tipo]||[]).forEach(([key])=>{
+    const k=key.toLowerCase();
+    fd[k+'_uds']   =document.getElementById(`s_${k}_u`)?.value||'0';
+    fd[k+'_precio']=document.getElementById(`s_${k}_p`)?.value||'0';
+  });
+  if(document.getElementById('f_horas'))  fd.horas_estimadas =v('f_horas');
+  if(document.getElementById('f_tiempo')) fd.tiempo_estimado =v('f_tiempo');
+  _guardarPartidasDesdeDOM('svc','item');
+  rmPanel(); userMsg('Tarifas del servicio correctas'); stepGenerar();
+}
+
+// ─── STEP 4c - Fuga agua
+function stepFuga() {
+  prog(60);
+  botMsg('Datos del servicio de localizacion de fuga de agua.');
+  panel(`
+    <div class="row g-3">
+      <div class="col-12"><label class="form-label">Localizacion del servicio</label>
+        <input id="f_loc" type="text" class="form-control" placeholder="Red horizontal bajo solera planta baja"
+          value="${_esc(fd.localizacion_servicio||'')}"></div>
+      <div class="col-md-4"><label class="form-label">Precio localizacion fuga (&euro;)</label>
+        <input id="f_ploc" type="number" class="form-control" value="${fd.precio_localizacion||'950'}" step="any"></div>
+      <div class="col-md-4"><label class="form-label">Precio hora adicional (&euro;)</label>
+        <input id="f_phora" type="number" class="form-control" value="${fd.precio_hora_adicional||'110'}" step="any"></div>
+      <div class="col-md-4"><label class="form-label">Precio bombona gas (&euro;)</label>
+        <input id="f_pbomb" type="number" class="form-control" value="${fd.precio_bombona||'160'}" step="any"></div>
+    </div>
+    ${_htmlPartAdicionales()}
+    <div class="d-flex justify-content-between align-items-center mt-2">
+      <button class="btn btn-outline-secondary btn-sm" onclick="step3()">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </button>
+      <button class="btn btn-next" onclick="okFuga()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+  setTimeout(() => {
+    if (fd._subcPartidasSvc && fd._subcPartidasSvc.length) {
+      fd._subcPartidasSvc.forEach(p => addRow('item','tbsvc','barsvc', p.descripcion, p.unidad, p.cantidad, p.precio_unitario));
+      delete fd._subcPartidasSvc;
+    } else {
+      _leerPartidasDeFd('item').forEach(p => addRow('item','tbsvc','barsvc', p.desc, p.unit, p.qty, p.price));
+    }
+  }, 60);
+}
+function okFuga() {
+  fd.localizacion_servicio=v('f_loc'); fd.precio_localizacion=v('f_ploc');
+  fd.precio_hora_adicional=v('f_phora'); fd.precio_bombona=v('f_pbomb');
+  _guardarPartidasDesdeDOM('svc','item');
+  rmPanel(); userMsg('Datos de fuga correctos'); stepGenerar();
+}
+
+// ─── STEP 4d - Vaciado fosa
+function stepVaciado() {
+  prog(60);
+  botMsg('Datos del servicio de vaciado de fosa.');
+  panel(`
+    <div class="row g-3">
+      <div class="col-md-4"><label class="form-label">Validez de la oferta</label>
+        <input id="f_val" type="text" class="form-control" value="${_esc(fd.validez_oferta||'30 dias')}"></div>
+      <div class="col-12"><div class="small fw-bold text-muted">Unidades de cada operacion:</div></div>
+      <div class="col-md-4"><label class="form-label">Ud. desplazamiento</label>
+        <input id="f_udesp" type="text" class="form-control" placeholder="1" value="${_esc(fd.ud_desplazamiento||'')}"></div>
+      <div class="col-md-4"><label class="form-label">Ud. succion</label>
+        <input id="f_usuc" type="text" class="form-control" placeholder="1" value="${_esc(fd.ud_succion||'')}"></div>
+      <div class="col-md-4"><label class="form-label">Ud. limpieza</label>
+        <input id="f_ulimp" type="text" class="form-control" placeholder="1" value="${_esc(fd.ud_limpieza||'')}"></div>
+      <div class="col-md-4"><label class="form-label">Ud. descarga</label>
+        <input id="f_udesc" type="text" class="form-control" placeholder="1" value="${_esc(fd.ud_descarga||'')}"></div>
+      <div class="col-md-4"><label class="form-label">Ud. residuo</label>
+        <input id="f_ures" type="text" class="form-control" placeholder="1" value="${_esc(fd.ud_residuo||'')}"></div>
+    </div>
+    ${_htmlPartAdicionales()}
+    <div class="d-flex justify-content-between align-items-center mt-2">
+      <button class="btn btn-outline-secondary btn-sm" onclick="step3()">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </button>
+      <button class="btn btn-next" onclick="okVaciado()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+  setTimeout(() => {
+    if (fd._subcPartidasSvc && fd._subcPartidasSvc.length) {
+      fd._subcPartidasSvc.forEach(p => addRow('item','tbsvc','barsvc', p.descripcion, p.unidad, p.cantidad, p.precio_unitario));
+      delete fd._subcPartidasSvc;
+    } else {
+      _leerPartidasDeFd('item').forEach(p => addRow('item','tbsvc','barsvc', p.desc, p.unit, p.qty, p.price));
+    }
+  }, 60);
+}
+function okVaciado() {
+  fd.validez_oferta=v('f_val'); fd.ud_desplazamiento=v('f_udesp');
+  fd.ud_succion=v('f_usuc'); fd.ud_limpieza=v('f_ulimp');
+  fd.ud_descarga=v('f_udesc'); fd.ud_residuo=v('f_ures');
+  _guardarPartidasDesdeDOM('svc','item');
+  rmPanel(); userMsg('Datos vaciado correctos'); stepGenerar();
+}
+
+// ─── STEP nuevo: Informe Desatasco
+function stepInformeDesatasco() {
+  prog(60);
+  botMsg('Describe los trabajos realizados y observaciones del informe.');
+  panel(`
+    <div class="row g-3">
+      <div class="col-12"><label class="form-label">Descripcion de los trabajos realizados / observaciones tecnicas *</label>
+        <textarea id="f_inf_desc" class="form-control" rows="5"
+          placeholder="Se ha procedido al desatasco de la red de saneamiento mediante equipo de alta presion..."></textarea></div>
+    </div>
+    ${_htmlPartAdicionales()}
+    <div class="text-end mt-2">
+      <button class="btn btn-next" onclick="okInformeDesatasco()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+function okInformeDesatasco() {
+  const txt=v('f_inf_desc');
+  if (!txt) { alert('Introduce la descripcion de los trabajos.'); return; }
+  fd.informe_tecnico=txt;
+  rmPanel(); userMsg('Informe tecnico correcto'); stepGenerar();
+}
+
+// ─── STEP nuevo: Certificado de Obra
+function stepCertificado() {
+  prog(70);
+  botMsg('Indica las fechas de inicio y fin de los trabajos certificados.');
+  panel(`
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">Fecha de inicio de los trabajos *</label>
+        <input id="f_finicio" type="date" class="form-control">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Fecha de finalizacion de los trabajos *</label>
+        <input id="f_ffin" type="date" class="form-control">
+      </div>
+    </div>
+    ${_htmlPartAdicionales()}
+    <div class="text-end mt-2">
+      <button class="btn btn-next" onclick="okCertificado()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+function okCertificado() {
+  const ini = v('f_finicio'), fin = v('f_ffin');
+  if (!ini || !fin) { alert('Introduce ambas fechas.'); return; }
+  fd.fecha_inicio_obra = ini;
+  fd.fecha_fin_obra    = fin;
+  rmPanel(); userMsg(`Inicio: ${ini}  -  Fin: ${fin}`); stepGenerar();
+}
+
+// ─── STEP nuevo: Bajantes Amianto
+function stepBajantesAmianto() {
+  prog(60);
+  botMsg('Introduce las unidades y precios para el presupuesto de bajantes con amianto.');
+  const rows = BA_ROWS.map(([key,label])=>`
+    <tr>
+      <td class="fw-semibold" style="font-size:.85rem">${label}</td>
+      <td><input type="number" id="ba_${key.toLowerCase()}_u" class="form-control form-control-sm" value="1" min="0" step="any" oninput="cBA()"></td>
+      <td><input type="number" id="ba_${key.toLowerCase()}_p" class="form-control form-control-sm" value="0" min="0" step="any" oninput="cBA()"></td>
+      <td class="fw-bold" id="ba_${key.toLowerCase()}_i">0,00 &euro;</td>
+    </tr>`).join('');
+  panel(`
+    <table class="table table-bordered tbl-svc mb-3">
+      <thead><tr>
+        <th style="min-width:200px">Concepto</th>
+        <th style="width:85px">Uds.</th><th style="width:110px">Precio/ud &euro;</th><th style="width:95px">Importe &euro;</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="row g-2 mb-3">
+      <div class="col-md-4"><label class="form-label">Precio muestreo control (&euro;)</label>
+        <input id="ba_mc_p" type="number" class="form-control" value="0" step="any"></div>
+      <div class="col-md-4"><label class="form-label">Precio muestreo finalizacion (&euro;)</label>
+        <input id="ba_mf_p" type="number" class="form-control" value="0" step="any"></div>
+      <div class="col-md-4"><label class="form-label">Validez de la oferta</label>
+        <input id="ba_val" type="text" class="form-control" value="30 dias"></div>
+      <div class="col-12"><label class="form-label">Forma de pago</label>
+        <input id="ba_pago" type="text" class="form-control" value="50% al inicio de los trabajos, 50% a la finalizacion"></div>
+    </div>
+    <div class="total-row d-flex justify-content-end mb-3">
+      <span class="total-val">TOTAL: <span id="tba">0,00 &euro;</span></span>
+    </div>
+    ${_htmlPartAdicionales()}
+    <div class="text-end mt-2">
+      <button class="btn btn-next" onclick="okBajantesAmianto()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+function cBA() {
+  let tot=0;
+  BA_ROWS.forEach(([key])=>{
+    const k=key.toLowerCase();
+    const u=parseFloat(document.getElementById(`ba_${k}_u`)?.value)||0;
+    const p=parseFloat(document.getElementById(`ba_${k}_p`)?.value)||0;
+    const iEl=document.getElementById(`ba_${k}_i`); if(iEl) iEl.textContent=fmtE(u*p);
+    tot+=u*p;
+  });
+  const el=document.getElementById('tba'); if(el) el.textContent=fmtE(tot);
+}
+function okBajantesAmianto() {
+  BA_ROWS.forEach(([key])=>{
+    const k=key.toLowerCase();
+    fd[`ba_${k}_ud`]    =document.getElementById(`ba_${k}_u`)?.value||'0';
+    fd[`ba_${k}_precio`]=document.getElementById(`ba_${k}_p`)?.value||'0';
+  });
+  fd.ba_muestreo_control_precio=document.getElementById('ba_mc_p')?.value||'0';
+  fd.ba_muestreo_fin_precio    =document.getElementById('ba_mf_p')?.value||'0';
+  fd.validez_oferta=v('ba_val')||'30 dias';
+  fd.forma_pago_ba=v('ba_pago')||'50% al inicio de los trabajos, 50% a la finalizacion';
+  rmPanel(); userMsg('Precios bajantes amianto correctos'); stepGenerar();
+}
+
+// ─── STEP nuevo: Contrato Saneamiento
+function stepContratoSaneamiento() {
+  prog(60);
+  botMsg('Datos del contrato de mantenimiento de saneamiento.');
+  panel(`
+    <div class="row g-3">
+      <div class="col-md-6"><label class="form-label">Importe anual del contrato (&euro;, sin IVA) *</label>
+        <input id="f_importe_anual" type="number" class="form-control" value="0" min="0" step="any"></div>
+      <div class="col-md-6"><label class="form-label">Forma de pago</label>
+        <input id="f_pago_cs" type="text" class="form-control" value="Trimestral"></div>
+    </div>
+    ${_htmlPartAdicionales()}
+    <div class="text-end mt-2">
+      <button class="btn btn-next" onclick="okContratoSaneamiento()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+function okContratoSaneamiento() {
+  fd.importe_anual=v('f_importe_anual'); fd.forma_pago=v('f_pago_cs');
+  rmPanel(); userMsg(`Importe anual: ${fmtE(parseFloat(fd.importe_anual)||0)}`); stepGenerar();
+}
+
+// ─── STEP nuevo: Plan de Seguridad
+function stepPlanSeguridad() {
+  prog(40);
+  botMsg('Datos de la empresa y la obra para el Plan de Seguridad y Salud.');
+  panel(`
+    <div class="row g-3">
+      <div class="col-md-8"><label class="form-label">Empresa contratista</label>
+        <input id="ps_empresa" type="text" class="form-control" value="Acometidas Europa S.L."></div>
+      <div class="col-md-4"><label class="form-label">CIF empresa</label>
+        <input id="ps_cif" type="text" class="form-control" value="B-12345678"></div>
+      <div class="col-md-8"><label class="form-label">Direccion empresa</label>
+        <input id="ps_dir_emp" type="text" class="form-control" value="C/ Alcala 567, Madrid"></div>
+      <div class="col-md-4"><label class="form-label">Telefono empresa</label>
+        <input id="ps_tel_emp" type="text" class="form-control" value="91 386 21 12"></div>
+      <div class="col-12 mt-2"><div class="fw-bold small text-muted border-bottom pb-1 mb-2">Tecnicos y promotor</div></div>
+      <div class="col-md-5"><label class="form-label">Autor del plan</label>
+        <input id="ps_autor" type="text" class="form-control"></div>
+      <div class="col-md-3"><label class="form-label">DNI autor</label>
+        <input id="ps_dni" type="text" class="form-control"></div>
+      <div class="col-md-4"><label class="form-label">Jefe de obra</label>
+        <input id="ps_jefe" type="text" class="form-control"></div>
+      <div class="col-md-6"><label class="form-label">Coordinador de seguridad</label>
+        <input id="ps_coord" type="text" class="form-control"></div>
+      <div class="col-md-6"><label class="form-label">Recurso preventivo</label>
+        <input id="ps_recurso" type="text" class="form-control"></div>
+      <div class="col-md-6"><label class="form-label">Promotor (nombre)</label>
+        <input id="ps_prom_nom" type="text" class="form-control"></div>
+      <div class="col-md-3"><label class="form-label">CIF promotor</label>
+        <input id="ps_prom_cif" type="text" class="form-control"></div>
+      <div class="col-md-3"><label class="form-label">Telefono promotor</label>
+        <input id="ps_prom_tel" type="text" class="form-control"></div>
+      <div class="col-12"><label class="form-label">Direccion promotor</label>
+        <input id="ps_prom_dir" type="text" class="form-control"></div>
+      <div class="col-12 mt-2"><div class="fw-bold small text-muted border-bottom pb-1 mb-2">Datos de obra</div></div>
+      <div class="col-md-3"><label class="form-label">Plazo ejecucion (dias)</label>
+        <input id="ps_plazo" type="number" class="form-control" value="30"></div>
+      <div class="col-md-3"><label class="form-label">N&ordm; max. trabajadores</label>
+        <input id="ps_ntrab" type="number" class="form-control" value="4"></div>
+      <div class="col-md-3"><label class="form-label">PEM (&euro;)</label>
+        <input id="ps_pem" type="number" class="form-control" value="0" step="any"></div>
+      <div class="col-md-3"><label class="form-label">Mes del plan</label>
+        <input id="ps_mes" type="text" class="form-control" placeholder="Mayo 2026"></div>
+      <div class="col-12"><label class="form-label">Descripcion tecnica de la obra</label>
+        <textarea id="ps_desc_obra" class="form-control" rows="2" placeholder="Trabajos de saneamiento..."></textarea></div>
+      <div class="col-12"><label class="form-label">Acceso a la obra</label>
+        <input id="ps_acceso" type="text" class="form-control" placeholder="Via publica, C/ Mayor 10"></div>
+      <div class="col-12 mt-2"><div class="fw-bold small text-muted border-bottom pb-1 mb-2">Centro asistencial</div></div>
+      <div class="col-md-6"><label class="form-label">Nombre centro medico</label>
+        <input id="ps_centro" type="text" class="form-control" placeholder="Hospital Universitario La Paz"></div>
+      <div class="col-md-3"><label class="form-label">Telefono centro</label>
+        <input id="ps_tel_centro" type="text" class="form-control" placeholder="91 727 70 00"></div>
+      <div class="col-md-3"><label class="form-label">Direccion centro medico</label>
+        <input id="ps_dir_centro" type="text" class="form-control"></div>
+    </div>
+    <div class="text-end mt-3">
+      <button class="btn btn-next" onclick="okPlanSeguridad()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+    </div>`);
+}
+function okPlanSeguridad() {
+  fd.empresa_contratista=v('ps_empresa'); fd.cif_empresa=v('ps_cif');
+  fd.direccion_empresa=v('ps_dir_emp'); fd.telefono_empresa=v('ps_tel_emp');
+  fd.autor_plan=v('ps_autor'); fd.dni_autor_plan=v('ps_dni');
+  fd.jefe_obra=v('ps_jefe'); fd.coordinador_seguridad=v('ps_coord');
+  fd.recurso_preventivo=v('ps_recurso');
+  fd.promotor_nombre=v('ps_prom_nom'); fd.promotor_cif=v('ps_prom_cif');
+  fd.promotor_telefono=v('ps_prom_tel'); fd.promotor_direccion=v('ps_prom_dir');
+  fd.plazo=v('ps_plazo')||'30'; fd.numero_max_trabajadores=v('ps_ntrab');
+  fd.presupuesto_ejecucion_material=v('ps_pem');
+  fd.mes_plan=v('ps_mes'); fd.descripcion_tecnica_obra=v('ps_desc_obra');
+  fd.acceso_obra=v('ps_acceso');
+  fd.centro_asistencial=v('ps_centro'); fd.telefono_centro_medico=v('ps_tel_centro');
+  fd.direccion_centro_medico=v('ps_dir_centro');
+  rmPanel(); userMsg('Plan de seguridad: datos correctos');
+  step3();
+}
+
+// ─── FINAL STEP - Generar
+const _TIPOS_CON_PARTIDAS_1 = ['obra_1','fontaneria','albanileria','contrato_subcontrata'];
+
+function _leerPartidasDeFd(prefix) {
+  const lista = [];
+  let i = 0;
+  while (true) {
+    const desc = fd[`${prefix}_desc_${i}`];
+    if (desc === undefined) break;
+    lista.push({
+      desc:  desc || '',
+      unit:  fd[`${prefix}_unit_${i}`] || 'PA',
+      qty:   parseFloat(fd[`${prefix}_qty_${i}`]) || 1,
+      price: parseFloat(fd[`${prefix}_price_${i}`]) || 0,
+    });
+    i++;
+  }
+  return lista;
+}
+
+function _tblRevHtml(prefix, tbId, barId, blabel) {
+  // El tbody ID debe seguir la convencion tb+sufijo para que calcR/delRow/updBar funcionen.
+  // barId = 'barRev1' -> sufijo = 'Rev1' -> tbodyId = 'tbRev1'
+  const sufijo = barId.replace('bar', '');
+  const tbodyId = 'tb' + sufijo;
+  return `
+    <div class="table-responsive">
+      <table class="table table-bordered tbl-part" id="${tbId}">
+        <thead><tr>
+          <th style="width:110px">Codigo</th><th>Descripcion</th>
+          <th style="width:66px">Ud</th><th style="width:70px">Cant.</th>
+          <th style="width:92px">Precio &euro;</th><th style="width:92px">Total</th>
+          <th style="width:34px"></th>
+        </tr></thead>
+        <tbody id="${tbodyId}"></tbody>
+      </table>
+    </div>
+    <button type="button" class="btn btn-sm btn-outline-primary mb-2"
+      onclick="addRow('${prefix}','${tbodyId}','${barId}')">
+      <i class="bi bi-plus-circle"></i> Anadir partida
+    </button>
+    <div class="total-row d-flex justify-content-between align-items-center mb-3" id="${barId}" data-noiva="1">
+      <span class="text-muted small"><span class="nr">0</span> partida(s) &mdash; sin IVA</span>
+      <span class="total-val">${blabel}: <span class="tv">0,00 &euro;</span></span>
+    </div>`;
+}
+
+function stepGenerar() {
+  prog(100);
+  const esObra2 = tipo === 'obra_2';
+  const tienePartidas = _TIPOS_CON_PARTIDAS_1.includes(tipo) || esObra2;
+
+  if (!tienePartidas) {
+    botMsg('Todo listo. Pulsa el boton para crear los documentos Word y PDF.');
+    panel(`
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <button class="btn btn-outline-secondary btn-sm" onclick="stepCondiciones()">
+          <i class="bi bi-arrow-left me-1"></i>Volver
+        </button>
+      </div>
+      <button class="btn btn-gen w-100" onclick="submit()">
+        <i class="bi bi-file-earmark-arrow-down me-2"></i>Generar documento
+      </button>
+      <p class="text-muted small text-center mt-2">Se generaran Word y PDF automaticamente</p>`);
+    return;
+  }
+
+  botMsg('<i class="bi bi-pencil-square me-2"></i>Revision final &mdash; modifica, elimina o añade partidas antes de generar.');
+
+  // Resetear contadores con prefijos unicos para esta tabla de revision
+  rc['rev1'] = 0; rc['revA'] = 0; rc['revB'] = 0;
+
+  const tblSection = esObra2
+    ? `<div class="fw-semibold small text-muted mb-1">Partidas Opcion A</div>
+       ${_tblRevHtml('revA','tblRevA','barRevA','TOTAL A')}
+       <div class="fw-semibold small text-muted mb-1 mt-2">Partidas Opcion B</div>
+       ${_tblRevHtml('revB','tblRevB','barRevB','TOTAL B')}`
+    : _tblRevHtml('rev1','tblRev1','barRev1','TOTAL');
+
+  const backFn = esObra2 ? "stepPartidas('b')"
+    : tipo === 'contrato_subcontrata' ? 'stepContratoSubcCondiciones()'
+    : 'stepCondiciones()';
+
+  panel(`
+    <div class="alert alert-info py-2 mb-3" style="font-size:.83rem">
+      <i class="bi bi-pencil-square me-2"></i>
+      <strong>Revision final</strong> &mdash; Modifica, elimina o añade partidas. Cuando estes conforme pulsa Generar.
+    </div>
+    ${tblSection}
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <button class="btn btn-outline-secondary btn-sm" onclick="${backFn}">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </button>
+      <button class="btn btn-gen" onclick="submitConPartidas()">
+        <i class="bi bi-file-earmark-arrow-down me-2"></i>Generar documento
+      </button>
+    </div>`);
+
+  // Rellenar tablas desde fd
+  setTimeout(() => {
+    if (esObra2) {
+      _leerPartidasDeFd('item_a').forEach(p => addRow('revA','tbRevA','barRevA', p.desc, p.unit, p.qty, p.price));
+      _leerPartidasDeFd('item_b').forEach(p => addRow('revB','tbRevB','barRevB', p.desc, p.unit, p.qty, p.price));
+    } else {
+      _leerPartidasDeFd('item').forEach(p => addRow('rev1','tbRev1','barRev1', p.desc, p.unit, p.qty, p.price));
+    }
+  }, 60);
+}
+
+function submitConPartidas() {
+  function saveRevTable(revPrefix, tbBodyId, fdPrefix) {
+    // Borrado preciso: solo claves con patron fdPrefix_(desc|unit|qty|price|cod)_N
+    const escaped = fdPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`^${escaped}_(desc|unit|qty|price|cod)_\\d+$`);
+    Object.keys(fd).filter(k => re.test(k)).forEach(k => delete fd[k]);
+
+    let n = 0;
+    document.querySelectorAll(`#${tbBodyId} tr`).forEach(tr => {
+      const rawIdx = tr.id.replace(revPrefix + '-row-', '');
+      const descEl = tr.querySelector(`[name="${revPrefix}_desc_${rawIdx}"]`);
+      if (!descEl || !descEl.value.trim()) return; // saltar filas vacias
+      ['desc','unit','qty','price'].forEach(f => {
+        const el = tr.querySelector(`[name="${revPrefix}_${f}_${rawIdx}"]`);
+        if (el) fd[`${fdPrefix}_${f}_${n}`] = el.value;
+      });
+      n++;
+    });
+  }
+
+  if (tipo === 'obra_2') {
+    saveRevTable('revA', 'tbRevA', 'item_a');
+    saveRevTable('revB', 'tbRevB', 'item_b');
+  } else if (_TIPOS_CON_PARTIDAS_1.includes(tipo)) {
+    saveRevTable('rev1', 'tbRev1', 'item');
+  }
+  submit();
+}
+
+function submit() {
+  const form = document.getElementById('ff');
+  form.innerHTML = '';
+  Object.entries(fd).forEach(([k, val]) => {
+    if (k.startsWith('_')) return; // ignorar claves privadas
+    const inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = k; inp.value = val || '';
+    form.appendChild(inp);
+  });
+  document.getElementById('overlay').classList.add('show');
+  form.submit();
+}
+
+// ─── Autocomplete de tarifas
+let _TARIFAS = null;
+async function _loadTarifas() {
+  if (_TARIFAS) return _TARIFAS;
+  try {
+    const r = await fetch('/api/tarifas_full');
+    _TARIFAS = await r.json();
+  } catch(e) { _TARIFAS = []; }
+  return _TARIFAS;
+}
+function _acFilter(query, items, max=12) {
+  const q = query.trim().toUpperCase();
+  if (!q) return [];
+  const words = q.split(/\s+/);
+  const byCode = [], byDesc = [];
+  for (const it of items) {
+    const cUp = it.codigo.toUpperCase();
+    const dUp = it.descripcion.toUpperCase();
+    const matchCode = words.every(w => cUp.includes(w));
+    const matchDesc = words.every(w => dUp.includes(w) || cUp.includes(w));
+    if (matchCode) byCode.push(it);
+    else if (matchDesc) byDesc.push(it);
+    if (byCode.length + byDesc.length >= max * 2) break;
+  }
+  return [...byCode, ...byDesc].slice(0, max);
+}
+function _acHighlight(text, query) {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  let out = esc(text);
+  words.forEach(w => {
+    const re = new RegExp('(' + w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'gi');
+    out = out.replace(re, '<mark>$1</mark>');
+  });
+  return out;
+}
+function _acBind(inp, prefix, i, barId) {
+  const wrap = inp.closest('.ac-wrap');
+  const drop = wrap.querySelector('.ac-drop');
+  let acIdx = -1;
+  let _items = [];
+
+  async function onInput() {
+    const q = inp.value;
+    const tarifas = await _loadTarifas();
+    _items = _acFilter(q, tarifas);
+    acIdx = -1;
+    if (!_items.length || !q.trim()) { drop.classList.remove('open'); return; }
+    drop.innerHTML = _items.map((it,idx) => `
+      <div class="ac-item" data-idx="${idx}">
+        <span class="ac-price">${fmtE(it.precio)}</span>
+        <span class="ac-code">${_acHighlight(it.codigo, q)}</span>
+        <span class="ac-desc"> &middot; ${_acHighlight(it.descripcion, q)}</span>
+      </div>`).join('');
+    drop.classList.add('open');
+    drop.querySelectorAll('.ac-item').forEach(el => {
+      el.addEventListener('mousedown', e => {
+        e.preventDefault();
+        _acSelect(_items[+el.dataset.idx], prefix, i, barId, inp, drop);
+      });
+    });
+  }
+
+  function onKey(e) {
+    if (!drop.classList.contains('open')) return;
+    const rows = drop.querySelectorAll('.ac-item');
+    if (e.key === 'ArrowDown') { e.preventDefault(); acIdx=Math.min(acIdx+1,rows.length-1); _acMark(rows,acIdx); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); acIdx=Math.max(acIdx-1,0); _acMark(rows,acIdx); }
+    else if (e.key === 'Enter' && acIdx >= 0) { e.preventDefault(); _acSelect(_items[acIdx], prefix, i, barId, inp, drop); }
+    else if (e.key === 'Escape') { drop.classList.remove('open'); }
+  }
+
+  inp.addEventListener('input', onInput);
+  inp.addEventListener('keydown', onKey);
+  inp.addEventListener('blur', () => setTimeout(() => drop.classList.remove('open'), 150));
+  inp.addEventListener('blur', () => { if (inp.dataset.acDone !== '1') ltarifa(inp, prefix, i, barId); inp.dataset.acDone='0'; });
+}
+function _acMark(rows, idx) {
+  rows.forEach((r,j) => r.classList.toggle('ac-active', j===idx));
+  if (rows[idx]) rows[idx].scrollIntoView({ block:'nearest' });
+}
+function _acSelect(it, prefix, i, barId, inp, drop) {
+  inp.value = it.codigo;
+  inp.dataset.acDone = '1';
+  drop.classList.remove('open');
+  const descEl = document.querySelector(`[name="${prefix}_desc_${i}"]`);
+  const priceEl = document.querySelector(`[name="${prefix}_price_${i}"]`);
+  const unitEl  = document.querySelector(`[name="${prefix}_unit_${i}"]`);
+  const bg = document.getElementById(`${prefix}bg${i}`);
+  if (descEl)  descEl.value  = it.descripcion;
+  if (priceEl) priceEl.value = it.precio;
+  if (unitEl)  [...unitEl.options].forEach(o => o.selected = (o.value === it.unidad));
+  if (bg)      bg.style.display = 'inline';
+  calcR(prefix, i, barId);
+}
+
+// ─── Partidas rows
+function addRow(prefix,tbId,barId,desc='',unit='PA',qty=1,price=0) {
+  if (!rc[prefix]) rc[prefix]=0;
+  const i=rc[prefix]++;
+  const tr=document.createElement('tr'); tr.id=`${prefix}-row-${i}`;
+  const tot=qty*price;
+  tr.innerHTML=`
+    <td>
+      <div class="ac-wrap">
+        <input type="text" class="form-control form-control-sm tc" placeholder="Codigo o descripcion..."
+               name="${prefix}_cod_${i}">
+        <div class="ac-drop"></div>
+      </div>
+    </td>
+    <td>
+      <input type="text" name="${prefix}_desc_${i}" class="form-control form-control-sm" placeholder="Descripcion" value="${esc(desc)}">
+      <span class="tbadge" id="${prefix}bg${i}">Tarifa</span>
+    </td>
+    <td><select name="${prefix}_unit_${i}" class="form-select form-select-sm">
+      ${['PA','ud','ml','m²','m³','kg','h'].map(u=>`<option${u===unit?' selected':''}>${u}</option>`).join('')}
+    </select></td>
+    <td><input type="number" name="${prefix}_qty_${i}" class="form-control form-control-sm" value="${qty}" min="0" step="any" oninput="calcR('${prefix}',${i},'${barId}')"></td>
+    <td><input type="number" name="${prefix}_price_${i}" class="form-control form-control-sm" value="${price}" min="0" step="any" oninput="calcR('${prefix}',${i},'${barId}')"></td>
+    <td class="total-cell text-end" id="${prefix}t${i}">${fmtE(tot)}</td>
+    <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="delRow('${prefix}',${i},'${barId}')"><i class="bi bi-trash3"></i></button></td>`;
+  document.getElementById(tbId).appendChild(tr);
+  const tblWrap = document.getElementById('tbl-svc-wrap');
+  if (tblWrap && tbId === 'tbsvc') { tblWrap.style.display = ''; }
+  const barEl = document.getElementById(barId);
+  if (barEl && tbId === 'tbsvc') { barEl.style.display = ''; }
+  const inp = tr.querySelector(`[name="${prefix}_cod_${i}"]`);
+  if (inp) {
+    _acBind(inp, prefix, i, barId);
+    _loadTarifas();
+  }
+  updBar(barId,prefix,tbId);
+}
+function delRow(prefix,i,barId) {
+  const which=barId.replace('bar',''); const tbId='tb'+which;
+  const r=document.getElementById(`${prefix}-row-${i}`); if(r) r.remove();
+  updBar(barId,prefix,tbId);
+}
+function calcR(prefix,i,barId) {
+  const q=parseFloat(document.querySelector(`[name="${prefix}_qty_${i}"]`).value)||0;
+  const p=parseFloat(document.querySelector(`[name="${prefix}_price_${i}"]`).value)||0;
+  document.getElementById(`${prefix}t${i}`).textContent=fmtE(q*p);
+  const which=barId.replace('bar','');
+  updBar(barId,prefix,'tb'+which);
+}
+function updBar(barId,prefix,tbId) {
+  const bar=document.getElementById(barId); if(!bar) return;
+  const tbody=document.getElementById(tbId); if(!tbody) return;
+  let sub=0,n=0;
+  tbody.querySelectorAll('tr').forEach(tr=>{
+    const i=tr.id.replace(prefix+'-row-','');
+    const q=parseFloat(tr.querySelector(`[name="${prefix}_qty_${i}"]`)?.value)||0;
+    const p=parseFloat(tr.querySelector(`[name="${prefix}_price_${i}"]`)?.value)||0;
+    sub+=q*p; n++;
+  });
+  const nr=bar.querySelector('.nr'); if(nr) nr.textContent=n;
+  const tv=bar.querySelector('.tv'); if(tv) tv.textContent=fmtE(bar.dataset.noiva ? sub : sub*1.21);
+}
+async function ltarifa(inp,prefix,i,barId) {
+  const code=inp.value.trim().toUpperCase(); if(!code) return;
+  try {
+    const r=await fetch(`/api/tarifa/${encodeURIComponent(code)}`);
+    if(!r.ok) return;
+    const d=await r.json();
+    if(d.descripcion){
+      document.querySelector(`[name="${prefix}_desc_${i}"]`).value=d.descripcion;
+      document.querySelector(`[name="${prefix}_price_${i}"]`).value=d.precio||0;
+      const uS=document.querySelector(`[name="${prefix}_unit_${i}"]`);
+      if(d.unidad)[...uS.options].forEach(o=>o.selected=(o.value===d.unidad));
+      const bg=document.getElementById(`${prefix}bg${i}`); if(bg) bg.style.display='inline';
+      const which=barId.replace('bar',''); calcR(prefix,i,barId);
+    }
+  } catch(e){}
+}
+
+// ─── Helpers
+function v(id) { return (document.getElementById(id)?.value||'').trim(); }
+function fmtE(n) { return parseFloat(n||0).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ─── IA Presupuesto integration
+(function() {
+  const raw = sessionStorage.getItem('ia_presupuesto');
+  if (!raw) return;
+  let iap;
+  try { iap = JSON.parse(raw); } catch(e) { return; }
+
+  // Banner above panel card
+  const banner = document.createElement('div');
+  banner.style.cssText = 'background:#d1fae5;border:1px solid #059669;border-radius:10px;padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:12px;font-size:.88rem';
+  banner.innerHTML = `
+    <i class="bi bi-robot" style="font-size:1.4rem;color:#059669"></i>
+    <div style="flex:1">
+      <div style="font-weight:700;color:#065f46">Informe IA vinculado</div>
+      <div style="color:#5a7184;font-size:.8rem">${esc(iap.titulo||'')}${iap.num_ref ? ' &middot; Ref: <strong>'+esc(iap.num_ref)+'</strong>' : ''}</div>
+    </div>
+    <button style="background:none;border:none;color:#888;cursor:pointer;font-size:1rem" onclick="this.parentElement.remove()"><i class="bi bi-x-lg"></i></button>`;
+  document.getElementById('panel-card').before(banner);
+
+  // Auto-fill known fields when panels render
+  const _origPanel = window.panel;
+  window.panel = function(html) {
+    _origPanel(html);
+    setTimeout(() => {
+      const g = id => document.getElementById(id);
+      if (g('f_obra')  && !g('f_obra').value)                       g('f_obra').value    = iap.titulo || iap.cliente || '';
+      if (iap.cliente  && g('f_cnombre') && !g('f_cnombre').value)  g('f_cnombre').value = iap.cliente;
+    }, 60);
+  };
+
+  // Inject "Importar mediciones" button in stepPartidas
+  const _origStepPartidas = window.stepPartidas;
+  window.stepPartidas = function(which) {
+    _origStepPartidas(which);
+    if (!iap.mediciones || !iap.mediciones.length) return;
+    setTimeout(() => {
+      const panelEl = document.getElementById('panel-card');
+      if (!panelEl) return;
+      const prefix = which === '1' ? 'item' : which === 'a' ? 'item_a' : 'item_b';
+      const barId  = 'bar' + which;
+      const tbId   = 'tb'  + which;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm btn-outline-success mb-3 ms-2';
+      btn.innerHTML = `<i class="bi bi-file-earmark-arrow-down me-1"></i>Importar ${iap.mediciones.length} medicion(es) del informe IA`;
+      btn.onclick = () => {
+        document.querySelectorAll(`#${tbId} tr`).forEach(tr => {
+          const desc = tr.querySelector(`[name^="${prefix}_desc_"]`);
+          if (desc && !desc.value.trim()) tr.remove();
+        });
+        iap.mediciones.forEach(m => {
+          const udMap = { 'm': 'ml', 'ml': 'ml', 'ud': 'ud', 'pa': 'PA', 'PA': 'PA', 'm2': 'm\xb2', 'm3': 'm\xb3' };
+          const ud = udMap[(m.ud||'ud').toLowerCase()] || 'ud';
+          const desc = (m.descripcion || '') + (m.diametro ? ' ' + m.diametro : '');
+          addRow(prefix, tbId, barId, desc, ud, parseFloat(m.cantidad)||1, 0);
+        });
+        btn.remove();
+      };
+      const addBtn = panelEl.querySelector('button.btn-outline-primary');
+      if (addBtn) addBtn.after(btn);
+    }, 80);
+  };
+})();
+
+// ─── Recuperacion de estado tras vuelta del analizador IA
+(function() {
+  const retorno = localStorage.getItem('ia_presupuesto_retorno');
+  const savedFdRaw = localStorage.getItem('bg_fd_saved');
+  if (!retorno || !savedFdRaw) return;
+
+  let savedFd;
+  try { savedFd = JSON.parse(savedFdRaw); } catch(e) { return; }
+
+  const tipoGuardado = savedFd._tipo || 'obra_1';
+  delete savedFd._tipo;
+  tipo = tipoGuardado;
+  Object.assign(fd, savedFd);
+
+  const _origStep1 = window.step1;
+  window.step1 = function() {
+    prog(44);
+    botMsg(`<i class="bi bi-arrow-return-left text-success me-2"></i>Bienvenido de vuelta. Tienes un <strong>informe IA pendiente de importar</strong> del analizador de videos/fotos.`);
+    panel(`
+      <div class="warn-box mb-3" style="background:#d1fae5;border-color:#059669">
+        <i class="bi bi-check-circle-fill text-success me-2"></i>
+        <strong>Informe IA listo.</strong> El tipo de documento guardado es <strong>${tipoGuardado.replace('_',' ').toUpperCase()}</strong>.
+        ${savedFd.f_cnombre ? `<br><small class="text-muted">Cliente: ${esc(savedFd.f_cnombre)}${savedFd.f_num ? ' &middot; Ref: '+esc(savedFd.f_num) : ''}</small>` : ''}
+      </div>
+      <div class="d-grid gap-2">
+        <button class="btn btn-next" onclick="recuperarYContinuar()">
+          <i class="bi bi-play-circle me-2"></i>Continuar e importar informe IA
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="descartarRecuperacion()">
+          Descartar e iniciar desde cero
+        </button>
+      </div>`);
+  };
+})();
+
+function recuperarYContinuar() {
+  const retorno = localStorage.getItem('ia_presupuesto_retorno');
+  if (retorno) {
+    sessionStorage.setItem('ia_presupuesto', retorno);
+    localStorage.removeItem('ia_presupuesto_retorno');
+  }
+  localStorage.removeItem('bg_fd_saved');
+  localStorage.removeItem('bg_retorno_analisis');
+  rmPanel();
+  userMsg('Continuar con informe IA importado');
+  stepObraOrigenIA();
+}
+
+function descartarRecuperacion() {
+  localStorage.removeItem('ia_presupuesto_retorno');
+  localStorage.removeItem('bg_fd_saved');
+  localStorage.removeItem('bg_retorno_analisis');
+  Object.keys(fd).forEach(k => delete fd[k]);
+  tipo = '';
+  rmPanel();
+  location.reload();
+}
+
+// ─── Boot
+step1();
+
+// ── Estado disco externo ─────────────────────────────────────────────────────
+(async function checkDisco() {
+  try {
+    const r = await fetch('/api/estado_disco');
+    const d = await r.json();
+    const badge = document.getElementById('sb-disco-badge');
+    if (!badge) return;
+    if (!d.configurado || !d.conectado) {
+      badge.style.display = 'inline';
+      badge.title = !d.configurado
+        ? 'Disco externo no configurado - click en Configuracion'
+        : 'Disco externo no detectado: ' + d.ruta;
+    }
+  } catch(e) {}
+})();
+</script>
+</body>
+</html>

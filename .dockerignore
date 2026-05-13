@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+salidas/
+uploads_ia/
+config/google_credentials.json
+config/app_config.json
+*.log
+.env
+.env.*

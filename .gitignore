@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+salidas/
+uploads_ia/
+config/google_credentials.json
+*.log
+.env
+.env.*
+CLAUDE.md

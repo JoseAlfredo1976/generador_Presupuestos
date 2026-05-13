@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Presupuesto generado – Grupo Europa</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<style>
+  :root { --blue:#4F84B5; --blue-dark:#3a6a96; --blue-light:#e8f0f8; }
+  body  { background:#f0f4f8; font-family:'Segoe UI',Calibri,sans-serif; }
+
+  .app-header {
+    background:linear-gradient(135deg,var(--blue-dark) 0%,var(--blue) 100%);
+    color:white; padding:20px 0; box-shadow:0 2px 8px rgba(0,0,0,.2);
+  }
+  .app-header h1 { font-size:1.5rem; font-weight:700; margin:0; }
+  .app-header p  { margin:4px 0 0; opacity:.85; font-size:.9rem; }
+
+  .success-banner {
+    background:linear-gradient(135deg,#d4edda,#c3e6cb);
+    border:1px solid #b1dfbb; border-radius:12px;
+    padding:20px 24px; margin-bottom:24px;
+    display:flex; align-items:center; gap:16px;
+  }
+  .success-icon { font-size:2.5rem; color:#28a745; }
+
+  .card-doc { border-radius:12px; border:none; box-shadow:0 1px 6px rgba(0,0,0,.1); transition:transform .15s,box-shadow .15s; height:100%; }
+  .card-doc:hover { transform:translateY(-3px); box-shadow:0 4px 16px rgba(0,0,0,.15); }
+  .card-doc .card-body { padding:20px; text-align:center; }
+  .card-doc .doc-icon  { font-size:2.8rem; margin-bottom:10px; }
+  .card-doc .doc-name  { font-weight:700; font-size:1rem; margin-bottom:4px; }
+  .card-doc .doc-desc  { font-size:.8rem; color:#666; margin-bottom:16px; }
+
+  .btn-download { display:block; width:100%; border-radius:8px; font-weight:600; padding:10px; font-size:.9rem; }
+  .btn-word  { background:#185ABD; color:white; border:none; }
+  .btn-word:hover  { background:#1249a0; color:white; }
+  .btn-excel { background:#1E7145; color:white; border:none; }
+  .btn-excel:hover { background:#165a37; color:white; }
+  .btn-html  { background:#e56000; color:white; border:none; }
+  .btn-html:hover  { background:#c45200; color:white; }
+  .btn-pdf   { background:#B22222; color:white; border:none; }
+  .btn-pdf:hover   { background:#8b1a1a; color:white; }
+
+  .info-card { background:white; border-radius:12px; box-shadow:0 1px 6px rgba(0,0,0,.08); padding:20px; margin-bottom:20px; }
+  .info-card h3 { color:var(--blue); font-size:1rem; font-weight:700; margin-bottom:12px; }
+
+  .partidas-table thead th { background:var(--blue); color:white; }
+
+  .total-box { background:var(--blue); color:white; border-radius:8px; padding:12px 20px; text-align:right; }
+  .total-box .label  { font-size:.85rem; opacity:.85; }
+  .total-box .amount { font-size:1.5rem; font-weight:800; }
+
+  .btn-new { background:var(--blue); color:white; border:none; border-radius:10px; padding:12px 32px; font-size:1rem; font-weight:600; }
+  .btn-new:hover { background:var(--blue-dark); color:white; }
+
+  .error-item { background:#fff3cd; border:1px solid #ffc107; border-radius:6px; padding:8px 12px; font-size:.85rem; }
+
+  .type-badge { display:inline-block; background:var(--blue-light); color:var(--blue-dark); border-radius:6px; padding:3px 10px; font-size:.8rem; font-weight:700; margin-left:8px; }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div class="container">
+    <div class="d-flex align-items-center gap-3">
+      <i class="bi bi-file-earmark-check-fill" style="font-size:2rem"></i>
+      <div>
+        <h1>Generador de Presupuestos – Grupo Europa</h1>
+        <p>Acometidas Europa S.L.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="container py-4" style="max-width:900px">
+
+  <!-- Success banner -->
+  <div class="success-banner">
+    <i class="bi bi-check-circle-fill success-icon"></i>
+    <div>
+      <h4 class="mb-1">
+        ¡Presupuesto generado!
+        <span class="type-badge">{{ tipo_modelo | replace('_',' ') | upper }}</span>
+      </h4>
+      <p class="mb-0 text-muted">
+        <strong>{{ num_contrato }}</strong> &nbsp;·&nbsp;
+        {{ obra }} &nbsp;·&nbsp;
+        {{ fecha }}
+      </p>
+    </div>
+  </div>
+
+  {% if errors %}
+  <div class="mb-3">
+    {% for err in errors %}
+    <div class="error-item mb-2"><i class="bi bi-exclamation-triangle text-warning me-2"></i>{{ err }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Download cards -->
+  <h5 class="mb-3 fw-bold"><i class="bi bi-download me-2 text-primary"></i>Descargar documentos</h5>
+  <div class="row g-3 mb-4">
+
+    <div class="col-sm-6 col-md-3">
+      <div class="card card-doc">
+        <div class="card-body">
+          <div class="doc-icon">📄</div>
+          <div class="doc-name">Word</div>
+          <div class="doc-desc">Presupuesto<br>completo editable</div>
+          {% if generated.docx %}
+          <a href="/descargar/{{ generated.docx }}" class="btn btn-download btn-word">
+            <i class="bi bi-download me-1"></i> Descargar .docx
+          </a>
+          {% else %}
+          <button class="btn btn-download btn-secondary" disabled>No generado</button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-sm-6 col-md-3">
+      <div class="card card-doc">
+        <div class="card-body">
+          <div class="doc-icon">📊</div>
+          <div class="doc-name">Excel</div>
+          <div class="doc-desc">Valoración<br>con IVA</div>
+          {% if generated.xlsx %}
+          <a href="/descargar/{{ generated.xlsx }}" class="btn btn-download btn-excel">
+            <i class="bi bi-download me-1"></i> Descargar .xlsx
+          </a>
+          {% else %}
+          <button class="btn btn-download btn-secondary" disabled>Solo en obra</button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-sm-6 col-md-3">
+      <div class="card card-doc">
+        <div class="card-body">
+          <div class="doc-icon">🌐</div>
+          <div class="doc-name">Visor HTML</div>
+          <div class="doc-desc">Vista previa<br>en navegador</div>
+          {% if generated.html %}
+          <a href="/descargar/{{ generated.html }}" class="btn btn-download btn-html" target="_blank">
+            <i class="bi bi-eye me-1"></i> Ver / Descargar
+          </a>
+          {% else %}
+          <button class="btn btn-download btn-secondary" disabled>Solo en obra</button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-sm-6 col-md-3">
+      <div class="card card-doc">
+        <div class="card-body">
+          <div class="doc-icon">📋</div>
+          <div class="doc-name">PDF</div>
+          <div class="doc-desc">Listo para<br>enviar por email</div>
+          {% if generated.pdf %}
+          <a href="/descargar/{{ generated.pdf }}" class="btn btn-download btn-pdf">
+            <i class="bi bi-download me-1"></i> Descargar .pdf
+          </a>
+          {% else %}
+          <button class="btn btn-download btn-secondary" disabled>No generado</button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Summary -->
+  <div class="info-card">
+    <h3><i class="bi bi-info-circle me-2"></i>Resumen del presupuesto</h3>
+    <div class="row g-3 mb-3">
+      <div class="col-md-4"><div class="text-muted small">Cliente</div><strong>{{ cliente }}</strong></div>
+      <div class="col-md-4"><div class="text-muted small">Nº Contrato</div><strong>{{ num_contrato }}</strong></div>
+      <div class="col-md-4"><div class="text-muted small">Fecha</div><strong>{{ fecha }}</strong></div>
+    </div>
+
+    {# ── OBRA 1 OPCION ──────────────────────────────────────────────────── #}
+    {% if tipo_modelo == 'obra_1' and items %}
+    <table class="table table-sm partidas-table">
+      <thead>
+        <tr>
+          <th>Descripción</th><th class="text-center">Ud</th>
+          <th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Importe</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.descripcion[:80] }}{% if item.descripcion|length > 80 %}…{% endif %}</td>
+          <td class="text-center">{{ item.unidad }}</td>
+          <td class="text-end">{{ item.cantidad }}</td>
+          <td class="text-end">{{ "%.2f"|format(item.precio_unitario)|replace(".",",") }} €</td>
+          <td class="text-end fw-bold">{{ "%.2f"|format(item.importe)|replace(".",",") }} €</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="d-flex justify-content-end">
+      <div style="min-width:280px">
+        <table class="table table-sm mb-2">
+          <tr><td class="text-end text-muted">Total sin IVA</td><td class="text-end fw-bold">{{ total_sin_iva }}</td></tr>
+          <tr><td class="text-end text-muted">IVA (21%)</td><td class="text-end">incl. en factura</td></tr>
+        </table>
+        <div class="total-box">
+          <div class="label">TOTAL CON IVA</div>
+          <div class="amount">{{ total_con_iva }}</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── OBRA 2 OPCIONES ────────────────────────────────────────────────── #}
+    {% if tipo_modelo == 'obra_2' %}
+      {% if items_a %}
+      <h6 class="mt-2 text-primary">Opción A</h6>
+      <table class="table table-sm partidas-table">
+        <thead>
+          <tr><th>Descripción</th><th class="text-center">Ud</th><th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Importe</th></tr>
+        </thead>
+        <tbody>
+          {% for item in items_a %}
+          <tr>
+            <td>{{ item.descripcion[:80] }}{% if item.descripcion|length > 80 %}…{% endif %}</td>
+            <td class="text-center">{{ item.unidad }}</td>
+            <td class="text-end">{{ item.cantidad }}</td>
+            <td class="text-end">{{ "%.2f"|format(item.precio_unitario)|replace(".",",") }} €</td>
+            <td class="text-end fw-bold">{{ "%.2f"|format(item.importe)|replace(".",",") }} €</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="d-flex justify-content-end mb-3">
+        <div class="total-box" style="min-width:220px">
+          <div class="label">TOTAL OPCIÓN A</div>
+          <div class="amount">{{ total_a }}</div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if items_b %}
+      <h6 class="mt-2 text-primary">Opción B</h6>
+      <table class="table table-sm partidas-table">
+        <thead>
+          <tr><th>Descripción</th><th class="text-center">Ud</th><th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Importe</th></tr>
+        </thead>
+        <tbody>
+          {% for item in items_b %}
+          <tr>
+            <td>{{ item.descripcion[:80] }}{% if item.descripcion|length > 80 %}…{% endif %}</td>
+            <td class="text-center">{{ item.unidad }}</td>
+            <td class="text-end">{{ item.cantidad }}</td>
+            <td class="text-end">{{ "%.2f"|format(item.precio_unitario)|replace(".",",") }} €</td>
+            <td class="text-end fw-bold">{{ "%.2f"|format(item.importe)|replace(".",",") }} €</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="d-flex justify-content-end">
+        <div class="total-box" style="min-width:220px">
+          <div class="label">TOTAL OPCIÓN B</div>
+          <div class="amount">{{ total_b }}</div>
+        </div>
+      </div>
+      {% endif %}
+    {% endif %}
+
+    {# ── SERVICE TYPES ──────────────────────────────────────────────────── #}
+    {% if tipo_modelo not in ('obra_1','obra_2') %}
+    <div class="d-flex justify-content-end">
+      <div class="total-box" style="min-width:260px">
+        <div class="label">IMPORTE TOTAL ESTIMADO</div>
+        <div class="amount">{{ total_estimado }}</div>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+
+  <!-- Informe IA adjunto (si viene del analisis IA) -->
+  <div id="informe-ia-section" style="display:none" class="info-card mb-4">
+    <h3><i class="bi bi-robot me-2"></i>Informe IA adjunto</h3>
+    <p class="text-muted small mb-3" id="informe-ia-titulo"></p>
+    <div class="d-flex gap-2 flex-wrap" id="informe-ia-links"></div>
+  </div>
+
+  <!-- New budget button -->
+  <div class="text-center pb-4">
+    <a href="/" class="btn btn-new">
+      <i class="bi bi-plus-circle me-2"></i>Nuevo presupuesto
+    </a>
+    <p class="text-muted small mt-2">
+      Archivos guardados en: <code>salidas/{{ folder_name }}/</code>
+    </p>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(function() {
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  const raw = sessionStorage.getItem('ia_presupuesto');
+  if (!raw) return;
+  let iap;
+  try { iap = JSON.parse(raw); } catch(e) { return; }
+  const hasDocs = iap.informe_docx || iap.informe_pdf || iap.informe_wincam;
+  if (!hasDocs) return;
+
+  const sec = document.getElementById('informe-ia-section');
+  document.getElementById('informe-ia-titulo').innerHTML =
+    'Este presupuesto se genero a partir del informe: <strong>' + esc(iap.titulo||'Informe IA') + '</strong>';
+
+  const links = document.getElementById('informe-ia-links');
+  if (iap.informe_docx)
+    links.innerHTML += `<a href="/descargar/${esc(iap.informe_docx)}" class="btn btn-download btn-word" style="width:auto;display:inline-flex;align-items:center;gap:6px"><i class="bi bi-file-earmark-word"></i>Informe Word</a>`;
+  if (iap.informe_pdf)
+    links.innerHTML += `<a href="/descargar/${esc(iap.informe_pdf)}" class="btn btn-download btn-pdf" style="width:auto;display:inline-flex;align-items:center;gap:6px"><i class="bi bi-file-earmark-pdf"></i>Informe PDF</a>`;
+  if (iap.informe_wincam)
+    links.innerHTML += `<a href="/descargar/${esc(iap.informe_wincam)}" class="btn btn-download" style="background:#2E74B5;color:white;border:none;width:auto;display:inline-flex;align-items:center;gap:6px"><i class="bi bi-table"></i>Informe WinCam</a>`;
+
+  sec.style.display = 'block';
+  // Insert before the "Nuevo presupuesto" button area
+  const newBtn = document.querySelector('.text-center.pb-4');
+  if (newBtn) newBtn.parentNode.insertBefore(sec, newBtn);
+
+  // Clear so next time it doesn't show
+  sessionStorage.removeItem('ia_presupuesto');
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analisis IA - Grupo Europa</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<style>
+  :root { --blue:#4F84B5; --blue-dark:#3a6a96; --blue-light:#e8f0f8; }
+  body { background:#f0f4f8; font-family:'Segoe UI',Calibri,sans-serif; margin:0; }
+
+  .app-header {
+    background:linear-gradient(135deg,var(--blue-dark),var(--blue));
+    color:white; padding:14px 0; box-shadow:0 2px 8px rgba(0,0,0,.2); position:sticky; top:0; z-index:100;
+  }
+  .app-header h1 { font-size:1.2rem; font-weight:700; margin:0; }
+  .app-header p  { margin:2px 0 0; opacity:.85; font-size:.8rem; }
+  .nav-pill {
+    background:rgba(255,255,255,.15); color:white; border:1px solid rgba(255,255,255,.3);
+    border-radius:20px; padding:5px 14px; font-size:.82rem; text-decoration:none;
+    transition:background .2s;
+  }
+  .nav-pill:hover { background:rgba(255,255,255,.25); color:white; }
+  .nav-pill.active { background:white; color:var(--blue-dark); }
+
+  .main-wrap { max-width:800px; margin:0 auto; padding:28px 16px 80px; }
+
+  /* Upload zone */
+  .drop-zone {
+    border:2px dashed #90afe0; border-radius:14px; padding:36px 20px;
+    text-align:center; background:white; cursor:pointer; transition:all .2s;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color:var(--blue); background:var(--blue-light);
+  }
+  .drop-zone .dz-icon { font-size:2.8rem; color:var(--blue); margin-bottom:8px; }
+  .drop-zone p { margin:0; font-size:.9rem; color:#555; }
+  .drop-zone small { color:#888; font-size:.78rem; }
+
+  /* File list */
+  .file-item {
+    display:flex; align-items:center; gap:10px;
+    background:white; border:1px solid #cdd8e8; border-radius:8px;
+    padding:8px 12px; margin-top:8px; font-size:.85rem;
+  }
+  .file-item .fi-icon { font-size:1.3rem; }
+  .file-item .fi-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .file-item .fi-size { color:#888; white-space:nowrap; }
+  .file-item .fi-del  { background:none; border:none; color:#cc3333; cursor:pointer; padding:0 4px; }
+
+  /* Type cards */
+  .tipo-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(115px,1fr)); gap:10px; }
+  .tipo-card {
+    border:2px solid #cdd8e8; border-radius:10px; padding:12px 8px;
+    cursor:pointer; text-align:center; background:white; transition:all .2s; user-select:none;
+  }
+  .tipo-card:hover { border-color:var(--blue); transform:translateY(-2px); box-shadow:0 3px 10px rgba(79,132,181,.2); }
+  .tipo-card.selected { border-color:var(--blue); background:var(--blue-light); }
+  .tipo-card .tc-icon { font-size:1.8rem; }
+  .tipo-card .tc-name { font-size:.72rem; font-weight:700; color:var(--blue-dark); margin-top:5px; line-height:1.2; }
+
+  /* Form */
+  .form-label { font-size:.83rem; font-weight:600; color:#555; margin-bottom:3px; }
+  .form-control, .form-select { border-radius:8px; border-color:#cdd8e8; font-size:.88rem; }
+  .form-control:focus, .form-select:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(79,132,181,.15); }
+
+  /* Analyze button */
+  .btn-analyze {
+    width:100%; padding:14px; font-size:1.05rem; font-weight:700;
+    background:linear-gradient(135deg,var(--blue),var(--blue-dark));
+    color:white; border:none; border-radius:12px;
+    box-shadow:0 4px 14px rgba(79,132,181,.4); transition:all .2s;
+  }
+  .btn-analyze:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(79,132,181,.5); }
+  .btn-analyze:disabled { opacity:.6; transform:none; }
+
+  /* Progress */
+  #progress-wrap { display:none; }
+  .progress-anim { height:6px; background:#e0e8f0; border-radius:3px; overflow:hidden; }
+  .progress-bar-anim {
+    height:100%; width:60%; background:linear-gradient(90deg,var(--blue),var(--blue-dark));
+    border-radius:3px; animation:slide 1.5s ease-in-out infinite;
+  }
+  @keyframes slide { 0%{transform:translateX(-100%)} 100%{transform:translateX(250%)} }
+
+  /* Result */
+  #result-wrap { display:none; }
+  .urgencia-badge {
+    display:inline-block; border-radius:6px; padding:3px 12px;
+    font-weight:700; font-size:.9rem; color:white;
+  }
+  .urg-Critico  { background:#C00000; }
+  .urg-Alto     { background:#FF6000; }
+  .urg-Medio    { background:#B88600; }
+  .urg-Bajo     { background:#377A3B; }
+
+  .hallazgo-card { border-radius:10px; border:1px solid #cdd8e8; padding:14px 16px; margin-bottom:10px; background:white; }
+  .hallazgo-card .h-grav { font-size:.75rem; font-weight:700; border-radius:4px; padding:2px 8px; color:white; }
+  .grav-Critico  { background:#C00000; }
+  .grav-Alto     { background:#FF6000; }
+  .grav-Medio    { background:#B88600; }
+  .grav-Bajo     { background:#377A3B; }
+
+  .rec-card { border-radius:10px; border:1px solid #cdd8e8; padding:14px 16px; margin-bottom:10px; background:white; }
+  .prio-Urgente      { border-left:4px solid #C00000; }
+  .prio-Recomendado  { border-left:4px solid #FF6000; }
+  .prio-Preventivo   { border-left:4px solid #377A3B; }
+
+  .section-title { font-size:1rem; font-weight:700; color:var(--blue-dark); margin:24px 0 12px; border-bottom:2px solid var(--blue-light); padding-bottom:6px; }
+
+  .btn-dl { border-radius:8px; font-weight:600; padding:9px 20px; font-size:.88rem; }
+  .btn-word { background:#185ABD; color:white; border:none; }
+  .btn-word:hover { background:#1249a0; color:white; }
+  .btn-pdf  { background:#B22222; color:white; border:none; }
+  .btn-pdf:hover  { background:#8b1a1a; color:white; }
+  .btn-new-analysis { background:var(--blue); color:white; border:none; border-radius:8px; padding:9px 20px; font-size:.88rem; font-weight:600; }
+  .btn-new-analysis:hover { background:var(--blue-dark); color:white; }
+
+  .key-note { background:#fff3cd; border:1px solid #ffc107; border-radius:8px; padding:10px 14px; font-size:.82rem; }
+
+  /* Chat perito */
+  #chat-wrap { margin-top:28px; border:2px solid var(--blue-light); border-radius:14px; overflow:hidden; }
+  .chat-header { background:var(--blue-dark); color:white; padding:12px 18px; font-weight:700; font-size:.92rem; display:flex; align-items:center; gap:8px; }
+  .chat-messages { padding:14px 16px; max-height:340px; overflow-y:auto; background:#f8fbff; }
+  .chat-msg { display:flex; gap:10px; margin-bottom:12px; }
+  .chat-msg.user { flex-direction:row-reverse; }
+  .chat-bubble { max-width:80%; padding:10px 14px; border-radius:12px; font-size:.85rem; line-height:1.5; }
+  .chat-msg.user   .chat-bubble { background:var(--blue); color:white; border-radius:12px 4px 12px 12px; }
+  .chat-msg.assistant .chat-bubble { background:white; border:1px solid #cdd8e8; border-radius:4px 12px 12px 12px; }
+  .chat-avatar { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1rem; flex-shrink:0; }
+  .chat-msg.user      .chat-avatar { background:var(--blue-dark); color:white; }
+  .chat-msg.assistant .chat-avatar { background:#e8f0f8; color:var(--blue-dark); }
+  .chat-input-row { display:flex; gap:8px; padding:12px 14px; border-top:1px solid #e0e8f0; background:white; }
+  .chat-input { flex:1; border:1px solid #cdd8e8; border-radius:8px; padding:9px 12px; font-size:.88rem; resize:none; }
+  .chat-input:focus { outline:none; border-color:var(--blue); }
+  .btn-chat-send { background:var(--blue); color:white; border:none; border-radius:8px; padding:9px 18px; font-weight:600; font-size:.88rem; cursor:pointer; }
+  .btn-chat-send:hover { background:var(--blue-dark); }
+  .btn-chat-send:disabled { opacity:.5; cursor:not-allowed; }
+  .chat-thinking { display:flex; gap:5px; align-items:center; padding:6px 0; }
+  .chat-thinking span { width:8px; height:8px; border-radius:50%; background:var(--blue); animation:bounce .8s infinite; }
+  .chat-thinking span:nth-child(2) { animation-delay:.15s; }
+  .chat-thinking span:nth-child(3) { animation-delay:.3s; }
+  @keyframes bounce { 0%,80%,100%{transform:scale(.8);opacity:.6} 40%{transform:scale(1.2);opacity:1} }
+
+  .drop-zone.has-file { border-color:#28a745; background:#f0fff4; }
+  .drop-zone.has-file .dz-icon { color:#28a745; }
+  .croquis-badge { background:#d4edda; border:1px solid #28a745; border-radius:8px; padding:8px 14px; margin-top:8px; font-size:.85rem; display:flex; align-items:center; gap:10px; }
+  .croquis-badge .cb-icon { font-size:1.3rem; }
+  .croquis-badge .cb-name { flex:1; }
+  .croquis-badge .cb-del { background:none; border:none; color:#cc3333; cursor:pointer; padding:0 4px; }
+
+  /* Dictado por voz */
+  .mic-wrap { position:relative; display:block; }
+  .mic-btn {
+    position:absolute; top:6px; right:6px; z-index:10;
+    width:28px; height:28px; border-radius:50%;
+    border:none; background:rgba(79,132,181,.12); color:#4F84B5;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer; font-size:.85rem; transition:all .2s; padding:0;
+  }
+  .mic-btn:hover { background:rgba(79,132,181,.25); }
+  .mic-btn.recording { background:#dc3545; color:white; animation:pulse-mic 1s infinite; }
+  @keyframes pulse-mic {
+    0%,100% { box-shadow:0 0 0 0 rgba(220,53,69,.4); }
+    50%      { box-shadow:0 0 0 6px rgba(220,53,69,.0); }
+  }
+  .mic-wrap textarea, .mic-wrap input[type="text"] { padding-right:36px; }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div class="container">
+    <div class="d-flex align-items-center gap-3">
+      <i class="bi bi-robot" style="font-size:1.8rem"></i>
+      <div class="flex-grow-1">
+        <h1>Analisis IA - Perito Tecnico</h1>
+        <p>Acometidas Europa S.L. &nbsp;&middot;&nbsp; Powered by Claude claude-sonnet-4-6</p>
+      </div>
+      <div class="d-flex gap-2">
+        <a href="/" class="nav-pill"><i class="bi bi-file-earmark-text me-1"></i>Presupuestos</a>
+        <a href="/analizar" class="nav-pill active"><i class="bi bi-robot me-1"></i>Analisis IA</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="main-wrap">
+
+  <!-- Upload + config form -->
+  <div id="form-wrap">
+
+    <!-- Drop zone - Videos e imagenes CCTV -->
+    <div class="mb-3">
+      <div class="section-title"><i class="bi bi-camera-video me-2"></i>Videos e imagenes CCTV</div>
+      <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+        <div class="dz-icon"><i class="bi bi-camera-video"></i></div>
+        <p><strong>Arrastra los videos aqui</strong> o haz clic para seleccionar</p>
+        <small>Puedes subir <strong>varios videos a la vez</strong> &middot; MP4, AVI, MOV, MKV &middot; Tambien imagenes JPG/PNG y PDFs</small>
+      </div>
+      <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.mp4,.avi,.mov,.mkv,.webm,.m4v" style="display:none" onchange="addFiles(this.files)">
+      <div id="file-list"></div>
+    </div>
+
+    <!-- Croquis / Plano de la red -->
+    <div class="mb-4">
+      <div class="section-title"><i class="bi bi-map me-2"></i>Croquis o plano de la red <span class="text-muted fw-normal" style="font-size:.8rem">(opcional - el perito lo usara para ubicar cada video en la red)</span></div>
+      <div class="drop-zone" id="croquis-zone" style="padding:20px" onclick="document.getElementById('croquis-input').click()">
+        <div class="dz-icon" style="font-size:2rem"><i class="bi bi-map" id="croquis-dz-icon"></i></div>
+        <p id="croquis-dz-text"><strong>Arrastra el croquis aqui</strong> o haz clic para seleccionar</p>
+        <small>Imagen (JPG, PNG) o PDF &middot; 1 solo archivo</small>
+      </div>
+      <input type="file" id="croquis-input" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf" style="display:none" onchange="setCroquis(this.files[0])">
+      <div id="croquis-item"></div>
+    </div>
+
+    <!-- Type of analysis -->
+    <div class="mb-4">
+      <div class="section-title"><i class="bi bi-search me-2"></i>Tipo de analisis</div>
+      <div class="tipo-grid">
+        <div class="tipo-card selected" onclick="selTipo('cctv',this)" data-tipo="cctv">
+          <div class="tc-icon">📷</div><div class="tc-name">Inspeccion CCTV</div>
+        </div>
+        <div class="tipo-card" onclick="selTipo('humedades',this)" data-tipo="humedades">
+          <div class="tc-icon">💧</div><div class="tc-name">Humedades y Fugas</div>
+        </div>
+        <div class="tipo-card" onclick="selTipo('bajantes',this)" data-tipo="bajantes">
+          <div class="tc-icon">🏗️</div><div class="tc-name">Bajantes y Desague</div>
+        </div>
+        <div class="tipo-card" onclick="selTipo('obra',this)" data-tipo="obra">
+          <div class="tc-icon">⚙️</div><div class="tc-name">Control de Obra</div>
+        </div>
+        <div class="tipo-card" onclick="selTipo('fosa',this)" data-tipo="fosa">
+          <div class="tc-icon">🪣</div><div class="tc-name">Fosa Septica</div>
+        </div>
+        <div class="tipo-card" onclick="selTipo('general',this)" data-tipo="general">
+          <div class="tc-icon">🔍</div><div class="tc-name">Analisis General</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Context + meta -->
+    <div class="mb-4">
+      <div class="section-title"><i class="bi bi-card-text me-2"></i>Datos del caso</div>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Num. de referencia</label>
+          <input type="text" id="f-num-ref" class="form-control" placeholder="Ej: 4680/26">
+        </div>
+        <div class="col-md-8">
+          <label class="form-label">Cliente / Comunidad</label>
+          <input type="text" id="f-cliente" class="form-control" placeholder="C.P. C/ Mayor 10, Madrid">
+        </div>
+        <div class="col-12">
+          <label class="form-label">Contexto del caso <span class="text-muted fw-normal">(opcional: describe el problema, sintomas observados, historial)</span></label>
+          <textarea id="f-contexto" class="form-control" rows="3" placeholder="Ej: Comunidad de vecinos con humedad persistente en planta baja desde hace 6 meses. Se han realizado reparaciones previas sin resultado. El fontanero sospecha rotura en colector horizontal bajo solera..."></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Formato de informe -->
+    <div class="mb-4">
+      <div class="section-title"><i class="bi bi-file-earmark-text me-2"></i>Formato del informe</div>
+      <div class="d-flex gap-3 flex-wrap">
+        <label class="d-flex align-items-center gap-2 cursor-pointer" style="cursor:pointer">
+          <input type="radio" name="formato" id="fmt-descriptivo" value="descriptivo" checked onchange="onFormatoChange(this.value)">
+          <span><strong>Descriptivo</strong> &mdash; informe narrativo 10 secciones (Word profesional)</span>
+        </label>
+        <label class="d-flex align-items-center gap-2" style="cursor:pointer">
+          <input type="radio" name="formato" id="fmt-wincam" value="wincam" onchange="onFormatoChange(this.value)">
+          <span><strong>WinCam</strong> &mdash; ficha por tramo con codigos EN 13508-2 (estilo software CCTV)</span>
+        </label>
+        <label class="d-flex align-items-center gap-2" style="cursor:pointer">
+          <input type="radio" name="formato" id="fmt-ambos" value="ambos" onchange="onFormatoChange(this.value)">
+          <span><strong>Ambos</strong> &mdash; genera los dos formatos</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Campos WinCam (solo visibles si wincam o ambos) -->
+    <div id="wincam-fields" class="mb-4" style="display:none">
+      <div class="section-title"><i class="bi bi-geo-alt me-2"></i>Datos del proyecto (WinCam)</div>
+      <div class="row g-2">
+        <div class="col-md-4">
+          <label class="form-label">Nombre del proyecto</label>
+          <input type="text" id="f-proyecto" class="form-control" placeholder="Ej: RIBADAVIA Nº 15">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Calle / Ubicacion</label>
+          <input type="text" id="f-calle" class="form-control" placeholder="Ej: C/ Ribadavia, 15">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Poblacion</label>
+          <input type="text" id="f-poblacion" class="form-control" placeholder="Ej: MADRID">
+        </div>
+      </div>
+    </div>
+
+    <!-- API key (if not set in env) -->
+    {% if not api_key_set %}
+    <div class="mb-4">
+      <div class="key-note">
+        <i class="bi bi-key me-2"></i>
+        <strong>Clave API de Anthropic requerida.</strong>
+        Introducela aqui (no se guarda) o configura la variable de entorno <code>ANTHROPIC_API_KEY</code>.
+      </div>
+      <div class="mt-2">
+        <label class="form-label">Anthropic API Key</label>
+        <input type="password" id="f-apikey" class="form-control" placeholder="sk-ant-...">
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Analyze button -->
+    <button class="btn btn-analyze" onclick="startAnalysis()">
+      <i class="bi bi-robot me-2"></i>Analizar con IA
+    </button>
+  </div>
+
+  <!-- Progress -->
+  <div id="progress-wrap" class="mt-4">
+    <div class="text-center mb-3">
+      <i class="bi bi-robot" style="font-size:2.5rem; color:var(--blue)"></i>
+      <h5 class="mt-2 mb-1">Analizando archivos...</h5>
+      <p class="text-muted small" id="progress-msg">El perito tecnico IA esta procesando los archivos. Esto puede tardar entre 15 y 60 segundos segun el volumen.</p>
+    </div>
+    <div class="progress-anim"><div class="progress-bar-anim"></div></div>
+  </div>
+
+  <!-- Result -->
+  <div id="result-wrap" class="mt-2"></div>
+
+  <!-- Chat perito (visible tras generar informe) -->
+  <div id="chat-wrap" style="display:none">
+    <div class="chat-header">
+      <i class="bi bi-robot"></i> Perito IA - Modificar informe
+      <span class="ms-auto" style="font-size:.78rem;opacity:.8">Indica cualquier cambio o consulta tecnica</span>
+    </div>
+    <div class="chat-messages" id="chat-messages"></div>
+    <div class="chat-input-row">
+      <textarea class="chat-input" id="chat-input" rows="2"
+        placeholder="Ej: Cambia la longitud del tramo V1 a 18.40 m. Añade patologia de raices en metro 12. Modifica la solucion del tramo V2 a encamisado CIPP DN200..."
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+      <button class="btn-chat-send" id="chat-send-btn" onclick="sendChat()">
+        <i class="bi bi-send"></i>
+      </button>
+    </div>
+  </div>
+
+</div><!-- main-wrap -->
+
+<script>
+// ── State
+let selectedTipo = 'cctv';
+const files = new Map();
+let croquis = null;  // single File for sketch/plan
+let currentReport = null;
+let chatHistory = [];
+let currentApiKey = '';
+let currentNumRef = '';
+let currentCliente = '';
+
+// ── Croquis handling
+function setCroquis(file) {
+  if (!file) return;
+  croquis = file;
+  const zone = document.getElementById('croquis-zone');
+  zone.classList.add('has-file');
+  document.getElementById('croquis-dz-icon').className = 'bi bi-check-circle-fill';
+  document.getElementById('croquis-dz-text').innerHTML = '<strong>Croquis cargado</strong> (haz clic para cambiar)';
+  const size = file.size < 1024*1024 ? `${(file.size/1024).toFixed(0)} KB` : `${(file.size/1024/1024).toFixed(1)} MB`;
+  const ext = file.name.split('.').pop().toLowerCase();
+  const icon = ext === 'pdf' ? '📄' : '🗺️';
+  document.getElementById('croquis-item').innerHTML = `
+    <div class="croquis-badge">
+      <span class="cb-icon">${icon}</span>
+      <span class="cb-name"><strong>${esc(file.name)}</strong> &mdash; ${size}</span>
+      <button class="cb-del" onclick="removeCroquis()"><i class="bi bi-x-circle"></i> Quitar</button>
+    </div>`;
+}
+
+function removeCroquis() {
+  croquis = null;
+  document.getElementById('croquis-input').value = '';
+  const zone = document.getElementById('croquis-zone');
+  zone.classList.remove('has-file');
+  document.getElementById('croquis-dz-icon').className = 'bi bi-map';
+  document.getElementById('croquis-dz-text').innerHTML = '<strong>Arrastra el croquis aqui</strong> o haz clic para seleccionar';
+  document.getElementById('croquis-item').innerHTML = '';
+}
+
+// Drag & drop for croquis zone
+const cz = document.getElementById('croquis-zone');
+cz.addEventListener('dragover', e => { e.preventDefault(); cz.classList.add('drag-over'); });
+cz.addEventListener('dragleave', () => cz.classList.remove('drag-over'));
+cz.addEventListener('drop', e => {
+  e.preventDefault(); cz.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) setCroquis(f);
+});
+
+function onFormatoChange(val) {
+  document.getElementById('wincam-fields').style.display =
+    (val === 'wincam' || val === 'ambos') ? 'block' : 'none';
+}
+
+// ── Tipo selection
+function selTipo(tipo, el) {
+  selectedTipo = tipo;
+  document.querySelectorAll('.tipo-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+// ── File handling
+function addFiles(fileList) {
+  for (const f of fileList) {
+    if (!files.has(f.name)) files.set(f.name, f);
+  }
+  renderFileList();
+}
+
+function removeFile(name) {
+  files.delete(name);
+  renderFileList();
+}
+
+function renderFileList() {
+  const ICONS = { pdf:'📄', jpg:'🖼️', jpeg:'🖼️', png:'🖼️', webp:'🖼️', gif:'🖼️',
+    mp4:'🎬', avi:'🎬', mov:'🎬', mkv:'🎬', webm:'🎬', m4v:'🎬' };
+  const list = document.getElementById('file-list');
+  list.innerHTML = '';
+  for (const [name, f] of files) {
+    const ext = name.split('.').pop().toLowerCase();
+    const icon = ICONS[ext] || '📁';
+    const size = f.size < 1024*1024 ? `${(f.size/1024).toFixed(0)} KB` : `${(f.size/1024/1024).toFixed(1)} MB`;
+    const div = document.createElement('div');
+    div.className = 'file-item';
+    div.innerHTML = `<span class="fi-icon">${icon}</span>
+      <span class="fi-name">${esc(name)}</span>
+      <span class="fi-size">${size}</span>
+      <button class="fi-del" onclick="removeFile('${esc(name)}')"><i class="bi bi-x-circle"></i></button>`;
+    list.appendChild(div);
+  }
+}
+
+// ── Drag & drop
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  addFiles(e.dataTransfer.files);
+});
+
+// ── Start analysis
+async function startAnalysis() {
+  if (files.size === 0) { alert('Sube al menos un archivo para analizar.'); return; }
+
+  currentApiKey = document.getElementById('f-apikey')?.value.trim() || '';
+  currentNumRef = document.getElementById('f-num-ref').value.trim();
+  currentCliente = document.getElementById('f-cliente').value.trim();
+
+  {% if not api_key_set %}
+  if (!currentApiKey) { alert('Introduce la clave API de Anthropic.'); return; }
+  {% endif %}
+
+  document.getElementById('form-wrap').style.display = 'none';
+  document.getElementById('progress-wrap').style.display = 'block';
+  document.getElementById('result-wrap').style.display = 'none';
+  document.getElementById('chat-wrap').style.display = 'none';
+
+  const formato = document.querySelector('input[name="formato"]:checked')?.value || 'descriptivo';
+
+  const fd = new FormData();
+  fd.append('tipo_analisis', selectedTipo);
+  fd.append('formato', formato);
+  fd.append('contexto', document.getElementById('f-contexto').value);
+  fd.append('num_ref', currentNumRef);
+  fd.append('cliente', currentCliente);
+  fd.append('proyecto', document.getElementById('f-proyecto')?.value.trim() || currentNumRef);
+  fd.append('calle', document.getElementById('f-calle')?.value.trim() || '');
+  fd.append('poblacion', document.getElementById('f-poblacion')?.value.trim() || '');
+  if (currentApiKey) fd.append('api_key', currentApiKey);
+  for (const [, f] of files) fd.append('archivos', f);
+  if (croquis) fd.append('croquis', croquis);
+
+  try {
+    const resp = await fetch('/api/analizar', { method:'POST', body:fd });
+    const data = await resp.json();
+    document.getElementById('progress-wrap').style.display = 'none';
+    if (data.error) {
+      showError(data.error, data.traceback);
+    } else {
+      currentReport = data;
+      chatHistory = [];
+      showResult(data);
+      initChat();
+    }
+  } catch(e) {
+    document.getElementById('progress-wrap').style.display = 'none';
+    showError('Error de conexion: ' + e.message);
+  }
+}
+
+// ── Render result
+function showResult(r) {
+  const urgencia = r.nivel_urgencia_global || 'Medio';
+  const inmediata = r.requiere_intervencion_inmediata;
+
+  let html = `
+    <div class="d-flex align-items-center gap-3 mb-4">
+      <div>
+        <h3 class="mb-1">${esc(r.titulo || 'Informe Tecnico')}</h3>
+        <div>
+          <span class="urgencia-badge urg-${urgencia}">${urgencia.toUpperCase()}</span>
+          ${inmediata ? '<span class="ms-2 badge bg-danger">Intervencion Inmediata</span>' : ''}
+        </div>
+      </div>
+    </div>`;
+
+  // Downloads
+  const hasDl = r._docx || r._pdf || r._docx_wincam;
+  if (hasDl) {
+    html += `<div class="d-flex gap-2 mb-4 flex-wrap">`;
+    if (r._docx)       html += `<a href="/descargar/${esc(r._docx)}" class="btn btn-dl btn-word"><i class="bi bi-file-earmark-word me-1"></i>Word Descriptivo</a>`;
+    if (r._pdf)        html += `<a href="/descargar/${esc(r._pdf)}"  class="btn btn-dl btn-pdf"><i class="bi bi-file-earmark-pdf me-1"></i>PDF Descriptivo</a>`;
+    if (r._docx_wincam) html += `<a href="/descargar/${esc(r._docx_wincam)}" class="btn btn-dl" style="background:#2E74B5;color:white;border:none"><i class="bi bi-table me-1"></i>Word WinCam</a>`;
+    html += `</div>`;
+  }
+
+  // Seccion 1: Objeto
+  if (r.objeto) {
+    html += `<div class="section-title"><i class="bi bi-file-text me-2"></i>1. Objeto del Informe</div>`;
+    html += r.objeto.split('\n').filter(l=>l.trim()).map(p=>`<p>${esc(p)}</p>`).join('');
+  }
+
+  // Seccion 2: Antecedentes
+  if (r.antecedentes) {
+    html += `<div class="section-title"><i class="bi bi-clock-history me-2"></i>2. Antecedentes</div>`;
+    html += r.antecedentes.split('\n').filter(l=>l.trim()).map(p=>`<p>${esc(p)}</p>`).join('');
+  }
+
+  // Seccion 3: Metodologia
+  if (r.metodologia) {
+    html += `<div class="section-title"><i class="bi bi-camera-video me-2"></i>3. Metodologia de Inspeccion</div>`;
+    html += r.metodologia.split('\n').filter(l=>l.trim()).map(p=>`<p>${esc(p)}</p>`).join('');
+  }
+
+  // Seccion 4: Descripcion red
+  if (r.descripcion_red) {
+    html += `<div class="section-title"><i class="bi bi-diagram-3 me-2"></i>4. Descripcion de la Red</div>`;
+    html += r.descripcion_red.split('\n').filter(l=>l.trim()).map(p=>`<p>${esc(p)}</p>`).join('');
+  }
+
+  // Seccion 5: Tramos
+  const tramos = r.tramos || [];
+  if (tramos.length > 0) {
+    html += `<div class="section-title"><i class="bi bi-arrow-left-right me-2"></i>5. Analisis de Tramos (${tramos.length})</div>`;
+    html += `<div class="table-responsive mb-3"><table class="table table-sm table-bordered" style="font-size:.82rem">
+      <thead class="table-dark"><tr>
+        <th>Tramo</th><th>Inicio</th><th>Fin</th><th>Long.</th><th>Diam.</th><th>Material</th><th>Estado</th><th>Observaciones</th>
+      </tr></thead><tbody>`;
+    tramos.forEach((t,i) => {
+      const est = t.estado || '';
+      const estColor = est.includes('Muy') || est.includes('Critico') ? 'table-danger'
+                     : est.includes('Deficiente') ? 'table-warning'
+                     : est.includes('Regular') ? 'table-warning' : '';
+      html += `<tr class="${i%2===0?'table-light':''}">
+        <td class="fw-bold">${esc(t.id||'')}</td>
+        <td>${esc(t.inicio||'')}</td><td>${esc(t.fin||'')}</td>
+        <td>${esc(t.longitud||'')}</td><td>${esc(t.diametro||'')}</td>
+        <td>${esc(t.material||'')}</td>
+        <td class="${estColor} fw-semibold">${esc(est)}</td>
+        <td>${esc(t.observaciones||'')}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+
+  // Seccion 6: Patologias
+  const patologias = r.patologias || [];
+  if (patologias.length > 0) {
+    html += `<div class="section-title"><i class="bi bi-exclamation-triangle me-2"></i>6. Patologias Detectadas (${patologias.length})</div>`;
+    patologias.forEach((pat, i) => {
+      const g = pat.gravedad || 'Medio';
+      html += `<div class="hallazgo-card">
+        <div class="d-flex align-items-start gap-2 mb-1">
+          <span class="h-grav grav-${g}">${g.toUpperCase()}</span>
+          <span class="fw-semibold flex-grow-1">${esc(pat.tipo||'')}</span>
+        </div>
+        ${pat.ubicacion ? `<div class="text-muted small mb-1"><i class="bi bi-geo-alt me-1"></i>${esc(pat.ubicacion)}</div>` : ''}
+        ${pat.descripcion ? `<p class="mb-1 small">${esc(pat.descripcion)}</p>` : ''}
+        ${pat.consecuencias ? `<p class="mb-0 small fst-italic text-secondary"><strong>Consecuencias:</strong> ${esc(pat.consecuencias)}</p>` : ''}
+      </div>`;
+    });
+  }
+
+  // Seccion 7: Conclusiones
+  if (r.conclusiones) {
+    html += `<div class="section-title"><i class="bi bi-check2-circle me-2"></i>7. Conclusiones Tecnicas</div>`;
+    html += r.conclusiones.split('\n').filter(l=>l.trim()).map(p=>`<p>${esc(p)}</p>`).join('');
+  }
+
+  // Seccion 8: Propuesta solucion
+  const soluciones = r.propuesta_solucion || [];
+  if (soluciones.length > 0) {
+    html += `<div class="section-title"><i class="bi bi-tools me-2"></i>8. Propuesta de Solucion (${soluciones.length})</div>`;
+    soluciones.forEach((sol, i) => {
+      const prio = sol.prioridad || 'Recomendado';
+      html += `<div class="rec-card prio-${prio}">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <span class="badge ${prio==='Urgente'?'bg-danger':prio==='Recomendado'?'bg-warning text-dark':'bg-success'}">${prio.toUpperCase()}</span>
+          <span class="fw-semibold">${esc(sol.intervencion||'')}</span>
+        </div>
+        ${sol.metodo ? `<p class="small mb-1"><strong>Metodo:</strong> ${esc(sol.metodo)}</p>` : ''}
+        ${sol.justificacion ? `<p class="small mb-0 text-muted">${esc(sol.justificacion)}</p>` : ''}
+      </div>`;
+    });
+  }
+
+  // Seccion 9: Mediciones
+  const mediciones = r.mediciones || [];
+  if (mediciones.length > 0) {
+    html += `<div class="section-title"><i class="bi bi-rulers me-2"></i>9. Tablas de Mediciones</div>`;
+    html += `<div class="table-responsive mb-3"><table class="table table-sm table-bordered" style="font-size:.82rem">
+      <thead class="table-dark"><tr><th>Descripcion</th><th>Ud</th><th>Cantidad</th><th>Diametro</th></tr></thead><tbody>`;
+    mediciones.forEach((m,i) => {
+      html += `<tr class="${i%2===0?'table-light':''}">
+        <td>${esc(m.descripcion||'')}</td>
+        <td class="text-center">${esc(m.ud||'')}</td>
+        <td class="text-center fw-bold">${esc(String(m.cantidad||''))}</td>
+        <td class="text-center">${esc(m.diametro||'-')}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+
+  // Seccion 10: Limitaciones
+  if (r.observaciones_limitaciones) {
+    html += `<div class="section-title"><i class="bi bi-info-circle me-2"></i>10. Observaciones y Limitaciones</div>`;
+    html += `<p class="fst-italic text-muted small">${esc(r.observaciones_limitaciones)}</p>`;
+  }
+
+  // Preguntas pendientes
+  const preguntas = r.preguntas_pendientes || (r._wincam && r._wincam.preguntas_pendientes) || [];
+  const preguntasActivas = preguntas.filter(p => p && p.trim());
+  if (preguntasActivas.length > 0) {
+    html += `<div class="alert alert-warning mt-4" style="border-left:4px solid #ffc107">
+      <div class="fw-bold mb-2"><i class="bi bi-question-circle me-2"></i>El perito necesita confirmar ${preguntasActivas.length} dato(s) que no pudo leer en los archivos:</div>
+      <ol class="mb-2 ps-3">`;
+    preguntasActivas.forEach(q => { html += `<li class="mb-1">${esc(q)}</li>`; });
+    html += `</ol>
+      <div class="small text-muted">Responde en el chat del perito (abajo) para completar el informe.</div>
+    </div>`;
+  }
+
+  // Buttons
+  html += `<div class="d-flex gap-2 mt-4 flex-wrap">
+    <button class="btn btn-new-analysis" onclick="newAnalysis()"><i class="bi bi-arrow-left me-1"></i>Nuevo Analisis</button>
+    ${r._docx ? `<a href="/descargar/${esc(r._docx)}" class="btn btn-dl btn-word"><i class="bi bi-download me-1"></i>Descargar Word</a>` : ''}
+    ${r._pdf  ? `<a href="/descargar/${esc(r._pdf)}"  class="btn btn-dl btn-pdf"><i class="bi bi-download me-1"></i>Descargar PDF</a>` : ''}
+  </div>`;
+
+  // CTA presupuesto
+  html += `
+  <div id="presupuesto-cta" class="mt-4" style="border:2px solid #28a745;border-radius:14px;background:white;overflow:hidden">
+    <div style="background:#28a745;padding:12px 20px;display:flex;align-items:center;gap:10px">
+      <i class="bi bi-cash-coin" style="color:white;font-size:1.4rem"></i>
+      <span style="color:white;font-weight:700;font-size:.95rem">Generamos presupuesto a partir de este informe?</span>
+    </div>
+    <div style="padding:14px 20px">
+      <p class="text-muted small mb-3">Las <strong>${(r.mediciones||[]).length} mediciones</strong> del informe se importaran como partidas base. Solo tendras que añadir los precios unitarios.</p>
+      <div class="d-flex gap-2 flex-wrap">
+        <button class="btn btn-success fw-bold" onclick="goToPresupuesto()">
+          <i class="bi bi-arrow-right-circle me-1"></i>Si, generar presupuesto
+        </button>
+        <button class="btn btn-outline-secondary" onclick="document.getElementById('presupuesto-cta').remove()">
+          Ahora no
+        </button>
+      </div>
+    </div>
+  </div>`;
+
+  const wrap = document.getElementById('result-wrap');
+  wrap.innerHTML = html;
+  wrap.style.display = 'block';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function showError(msg, tb) {
+  const wrap = document.getElementById('result-wrap');
+  wrap.innerHTML = `
+    <div class="alert alert-danger">
+      <i class="bi bi-exclamation-triangle me-2"></i><strong>Error:</strong>
+      <pre style="margin-top:8px;margin-bottom:0;background:transparent;border:none;padding:0;font-size:.8rem;white-space:pre-wrap">${esc(msg)}</pre>
+    </div>
+    ${tb ? `<pre style="background:#f8f8f8;border:1px solid #ccc;padding:12px;font-size:.75rem;border-radius:8px;overflow-x:auto;white-space:pre-wrap">${esc(tb)}</pre>` : ''}
+    <button class="btn btn-new-analysis" onclick="newAnalysis()"><i class="bi bi-arrow-left me-1"></i>Volver</button>`;
+  wrap.style.display = 'block';
+}
+
+function newAnalysis() {
+  document.getElementById('form-wrap').style.display = 'block';
+  document.getElementById('result-wrap').style.display = 'none';
+  document.getElementById('progress-wrap').style.display = 'none';
+  document.getElementById('chat-wrap').style.display = 'none';
+  currentReport = null;
+  chatHistory = [];
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function goToPresupuesto() {
+  if (!currentReport) return;
+  const r = currentReport;
+  const payload = {
+    num_ref: currentNumRef || '',
+    cliente: currentCliente || '',
+    titulo: r.titulo || '',
+    conclusiones: r.conclusiones || '',
+    mediciones: (r.mediciones || []).map(m => ({
+      descripcion: m.descripcion || '',
+      ud: m.ud || 'ud',
+      cantidad: m.cantidad || 0,
+      diametro: m.diametro || '',
+    })),
+    informe_docx:   r._docx        || '',
+    informe_pdf:    r._pdf         || '',
+    informe_wincam: r._docx_wincam || '',
+  };
+  // Si se abrio desde el generador de presupuestos, retornar via localStorage
+  if (localStorage.getItem('bg_retorno_analisis')) {
+    localStorage.setItem('ia_presupuesto_retorno', JSON.stringify(payload));
+    localStorage.removeItem('bg_retorno_analisis');
+    const cta = document.getElementById('presupuesto-cta');
+    if (cta) cta.innerHTML = `
+      <div class="alert alert-success m-3" style="border-radius:10px">
+        <div class="fw-bold mb-2"><i class="bi bi-check-circle-fill me-2"></i>Informe guardado correctamente</div>
+        <p class="mb-2 small">Ahora tienes dos opciones, ambas funcionan:</p>
+        <ul class="small mb-2">
+          <li><strong>Opcion A</strong> &mdash; Cambia a la <strong>otra pestana del navegador</strong> donde tienes el presupuesto abierto y pulsa <em>"Actualizar - Ya termine el analisis"</em>.</li>
+          <li><strong>Opcion B</strong> &mdash; Pulsa el boton de abajo para ir al presupuesto directamente. El informe se recupera solo.</li>
+        </ul>
+        <a href="/" class="btn btn-success btn-sm">
+          <i class="bi bi-arrow-left-circle me-1"></i>Ir al generador de presupuestos
+        </a>
+      </div>`;
+  } else {
+    sessionStorage.setItem('ia_presupuesto', JSON.stringify(payload));
+    window.location.href = '/';
+  }
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Chat perito ──────────────────────────────────────────
+function initChat() {
+  const wrap = document.getElementById('chat-wrap');
+  const msgs = document.getElementById('chat-messages');
+  msgs.innerHTML = '';
+  chatHistory = [];
+  wrap.style.display = 'block';
+  addChatMsg('assistant', 'Informe generado. Puedes pedirme cualquier modificacion: cambiar datos de tramos, añadir patologias, ajustar mediciones, reformular conclusiones o cualquier otra consulta tecnica.');
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function addChatMsg(role, text) {
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}`;
+  const avatar = role === 'user' ? '<i class="bi bi-person"></i>' : '<i class="bi bi-robot"></i>';
+  div.innerHTML = `
+    <div class="chat-avatar">${avatar}</div>
+    <div class="chat-bubble">${esc(text).replace(/\n/g,'<br>')}</div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function showChatThinking() {
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'chat-msg assistant';
+  div.id = 'chat-thinking';
+  div.innerHTML = `
+    <div class="chat-avatar"><i class="bi bi-robot"></i></div>
+    <div class="chat-bubble">
+      <div class="chat-thinking"><span></span><span></span><span></span></div>
+    </div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const btn = document.getElementById('chat-send-btn');
+  const msg = input.value.trim();
+  if (!msg || !currentReport) return;
+
+  addChatMsg('user', msg);
+  input.value = '';
+  btn.disabled = true;
+  showChatThinking();
+
+  // Guardar en historial (solo texto del usuario para el contexto)
+  chatHistory.push({ role: 'user', content: msg });
+
+  try {
+    const resp = await fetch('/api/chat_informe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        report: currentReport,
+        historial: chatHistory.slice(-6), // ultimas 6 rondas
+        mensaje: msg,
+        api_key: currentApiKey,
+        num_ref: currentNumRef,
+        cliente: currentCliente,
+      })
+    });
+    const data = await resp.json();
+    document.getElementById('chat-thinking')?.remove();
+
+    if (data.error) {
+      addChatMsg('assistant', 'Error: ' + data.error);
+      btn.disabled = false;
+      return;
+    }
+
+    const assistantMsg = data.report?._assistant_msg || data.assistant_msg || 'Informe actualizado correctamente.';
+    chatHistory.push({ role: 'assistant', content: assistantMsg });
+    addChatMsg('assistant', assistantMsg);
+
+    if (data.report) {
+      currentReport = data.report;
+      showResult(currentReport);
+    }
+  } catch(e) {
+    document.getElementById('chat-thinking')?.remove();
+    addChatMsg('assistant', 'Error de conexion: ' + e.message);
+  }
+
+  btn.disabled = false;
+  input.focus();
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ─── Dictado por voz (analizar.html) ──────────────────────────────────────
+(function() {
+  const _SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!_SR) return;
+  let _activeRec = null;
+
+  function addMic(el) {
+    if (el.dataset.micAdded) return;
+    el.dataset.micAdded = '1';
+    let wrap = el.parentElement;
+    if (!wrap.classList.contains('mic-wrap')) {
+      const w = document.createElement('div');
+      w.className = 'mic-wrap';
+      el.parentElement.insertBefore(w, el);
+      w.appendChild(el);
+      wrap = w;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'mic-btn'; btn.title = 'Dictar';
+    btn.innerHTML = '<i class="bi bi-mic-fill"></i>';
+    btn.addEventListener('click', () => toggle(el, btn));
+    wrap.appendChild(btn);
+  }
+
+  function toggle(el, btn) {
+    if (_activeRec) { _activeRec.stop(); return; }
+    const rec = new _SR();
+    rec.lang = 'es-ES'; rec.continuous = true; rec.interimResults = true;
+    _activeRec = rec;
+    btn.classList.add('recording'); btn.title = 'Parar dictado';
+    rec.onresult = e => {
+      let fin = '', inter = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) fin += e.results[i][0].transcript;
+        else inter += e.results[i][0].transcript;
+      }
+      if (fin) el.value = el.value + (el.value && !el.value.endsWith(' ') ? ' ' : '') + fin.trim();
+      el.placeholder = inter ? ('...' + inter) : el.defaultPlaceholder || '';
+    };
+    rec.onerror = rec.onend = () => {
+      _activeRec = null;
+      btn.classList.remove('recording'); btn.title = 'Dictar';
+      el.placeholder = el.defaultPlaceholder || '';
+    };
+    rec.start();
+  }
+
+  const NO_MIC_IDS = new Set(['f-num-ref','f-proyecto']);
+  const NO_MIC_PH  = /^(ej:|n[º°]|cod|ref|tel[eé]|email|dni|cif|\d)/i;
+
+  // Guardar placeholder original y añadir mic a todos los campos de texto apropiados
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('textarea, input[type="text"]').forEach(el => {
+      if (NO_MIC_IDS.has(el.id)) return;
+      if (NO_MIC_PH.test(el.placeholder || '')) return;
+      el.defaultPlaceholder = el.placeholder;
+      addMic(el);
+    });
+  });
+})();
+</script>
+</body>
+</html>

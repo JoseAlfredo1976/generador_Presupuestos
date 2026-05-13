@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configuracion - Grupo Europa</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <style>
+    body { background: #f0f4f8; font-family: 'Segoe UI', sans-serif; }
+    .card { border-radius: 12px; border: none; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+    .header-bar { background: #1a2a3a; color: white; padding: 14px 24px; border-radius: 0 0 0 0; }
+    .badge-ok  { background: #16a34a; }
+    .badge-err { background: #dc2626; }
+    .badge-off { background: #6b7280; }
+    .disco-status { border-radius: 8px; padding: 14px 18px; font-size: .9rem; }
+    .disco-ok   { background: #dcfce7; border: 1px solid #86efac; }
+    .disco-warn { background: #fef9c3; border: 1px solid #fde047; }
+    .disco-err  { background: #fee2e2; border: 1px solid #fca5a5; }
+  </style>
+</head>
+<body>
+<div class="header-bar d-flex align-items-center gap-3">
+  <i class="bi bi-gear-fill fs-4"></i>
+  <span class="fw-semibold fs-5">Configuracion - Generador de Presupuestos</span>
+  <a href="/" class="btn btn-sm btn-outline-light ms-auto">
+    <i class="bi bi-arrow-left me-1"></i>Volver a la app
+  </a>
+</div>
+
+<div class="container py-4" style="max-width:680px">
+
+  {% if msg %}
+  <div class="alert alert-success alert-dismissible fade show" role="alert">
+    <i class="bi bi-check-circle me-2"></i>{{ msg }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+  {% endif %}
+
+  <!-- ── Estado del disco ─────────────────────────────────────────── -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <h5 class="card-title mb-3"><i class="bi bi-hdd-fill me-2 text-primary"></i>Disco externo de salida</h5>
+
+      {% if not disco.configurado %}
+      <div class="disco-status disco-warn">
+        <i class="bi bi-exclamation-triangle me-2"></i>
+        <strong>No configurado.</strong> Los documentos generados se guardan solo en la carpeta temporal del servidor.
+        Configura la ruta del disco externo abajo.
+      </div>
+
+      {% elif disco.conectado %}
+      <div class="disco-status disco-ok">
+        <i class="bi bi-check-circle-fill me-2 text-success"></i>
+        <strong>Disco conectado y accesible.</strong><br>
+        <span class="text-muted small">Los documentos se guardan en: <code>{{ disco.ruta_completa }}</code></span>
+      </div>
+
+      {% else %}
+      <div class="disco-status disco-err">
+        <i class="bi bi-x-circle-fill me-2 text-danger"></i>
+        <strong>Disco NO detectado.</strong> La ruta configurada <code>{{ disco.ruta }}</code> no esta accesible ahora mismo.<br>
+        <span class="text-muted small">Conecta el disco externo o actualiza la ruta si cambio de letra.</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Formulario de configuracion ─────────────────────────────── -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <h5 class="card-title mb-3"><i class="bi bi-folder2-open me-2 text-primary"></i>Ruta de almacenamiento</h5>
+
+      <form method="POST">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Unidad / ruta raiz del disco externo</label>
+          <input type="text" name="output_base_path" class="form-control font-monospace"
+            value="{{ cfg.output_base_path }}"
+            placeholder="Ej: E:\ o F:\Grupo Europa o D:\Presupuestos">
+          <div class="form-text">
+            Introduce solo la letra de unidad del disco externo (ej: <code>E:\</code>)
+            o una ruta concreta dentro de el.<br>
+            Puedes verla en el Explorador de Windows cuando lo conectas.
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label fw-semibold">Subcarpeta dentro del disco</label>
+          <input type="text" name="output_subfolder" class="form-control"
+            value="{{ cfg.output_subfolder }}"
+            placeholder="PRESUPUESTOS GRUPO EUROPA">
+          <div class="form-text">
+            Se creara automaticamente si no existe.
+            Dentro se organizara por categoria: <code>POCERIA\</code>, <code>FONTANERIA\</code>, etc.
+          </div>
+        </div>
+
+        {% set base_ex = cfg.output_base_path if cfg.output_base_path else 'E:' %}
+        {% set sub_ex  = cfg.output_subfolder if cfg.output_subfolder else 'PRESUPUESTOS GRUPO EUROPA' %}
+        <div class="alert alert-info py-2" style="font-size:.84rem">
+          <i class="bi bi-info-circle me-1"></i>
+          Estructura final: <code>{{ base_ex }}\{{ sub_ex }}\POCERIA\4353-NOMBRE OBRA\</code>
+        </div>
+
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-save me-2"></i>Guardar configuracion
+        </button>
+        <button type="button" class="btn btn-outline-secondary ms-2" onclick="testDisco()">
+          <i class="bi bi-plug me-1"></i>Comprobar disco ahora
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Google Sheets ────────────────────────────────────────────── -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <h5 class="card-title mb-3"><i class="bi bi-table me-2 text-success"></i>Google Sheets - Registro de presupuestos</h5>
+      {% set creds_ok = true %}
+      {% set creds_path = "budget_generator/config/google_credentials.json" %}
+
+      <div class="disco-status {{ 'disco-ok' if creds_ok else 'disco-err' }}">
+        <i class="bi bi-{{ 'check-circle-fill text-success' if creds_ok else 'x-circle-fill text-danger' }} me-2"></i>
+        <strong>Credenciales:</strong>
+        Coloca el archivo <code>google_credentials.json</code> en la carpeta
+        <code>budget_generator/config/</code> y comparte la hoja con el email de la cuenta de servicio.<br>
+        <a href="#" class="small" onclick="alert('Ver el archivo README_GOOGLE_SETUP.md en la carpeta config/')">
+          Ver instrucciones detalladas
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Info red local ───────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-body">
+      <h5 class="card-title mb-3"><i class="bi bi-wifi me-2 text-info"></i>Acceso desde otros puestos</h5>
+      <p class="mb-2">La app esta disponible en la red local en:</p>
+      <div class="bg-dark text-light rounded p-3 font-monospace">
+        http://192.168.1.165:5000
+      </div>
+      <p class="text-muted small mt-2">
+        Cualquier PC conectado a la misma red WiFi puede acceder desde el navegador.
+        Recomendamos fijar esta IP en el router (reserva DHCP) para que no cambie.
+      </p>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function testDisco() {
+  fetch('/api/estado_disco')
+    .then(r => r.json())
+    .then(d => {
+      if (d.conectado) {
+        alert('Disco accesible en: ' + d.ruta_completa);
+      } else if (d.configurado) {
+        alert('Disco NO detectado. Comprueba que esta conectado y la letra de unidad es correcta.');
+      } else {
+        alert('No hay ruta configurada. Introduce la ruta del disco externo y guarda.');
+      }
+    })
+    .catch(() => alert('Error al comprobar el disco.'));
+}
+</script>
+</body>
+</html>
