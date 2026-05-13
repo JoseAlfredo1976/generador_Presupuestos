@@ -121,8 +121,14 @@ def siguiente_numero(tipo: str, num_base: int | None = None) -> str:
                           y añade sufijo revision: '4353A/26', '4353B/26'...
 
     Devuelve la cadena formateada lista para mostrar en el formulario.
+    Si el tipo no tiene contador propio devuelve '' (el usuario introduce manual).
     Si no hay conexion con Sheets devuelve '' (el usuario introduce manual).
     """
+    # Tipos sin contador propio: el usuario introduce el numero manualmente
+    from utils.base_datos import TIPOS_SIN_CONTADOR
+    if tipo in TIPOS_SIN_CONTADOR:
+        return ""
+
     try:
         tab = TIPO_A_PESTAÑA.get(tipo, "VARIOS")
         ws = _get_worksheet(tab)

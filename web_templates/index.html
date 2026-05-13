@@ -1069,7 +1069,10 @@ async function _sugerirNumero() {
   try {
     const r = await fetch(`/api/siguiente_numero?tipo=${encodeURIComponent(tipo)}`);
     const d = await r.json();
-    if (d.numero) {
+    if (d.sin_contador) {
+      inp.placeholder = 'Mismo numero que el presupuesto asociado';
+      if (hint) hint.textContent = 'Este documento comparte numero con el presupuesto asociado. Introduce el mismo numero.';
+    } else if (d.numero) {
       inp.value = d.numero;
       inp.placeholder = 'Ej: 4680/26';
       if (hint) {
@@ -1077,7 +1080,7 @@ async function _sugerirNumero() {
       }
     } else {
       inp.placeholder = 'Ej: 4680/26';
-      if (hint) hint.textContent = 'Introduce el numero manualmente (sin conexion a Google Sheets).';
+      if (hint) hint.textContent = 'Introduce el numero manualmente.';
     }
   } catch(e) {
     inp.placeholder = 'Ej: 4680/26';

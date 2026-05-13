@@ -682,15 +682,19 @@ def api_tarifa(code: str):
 def api_siguiente_numero():
     """Devuelve el siguiente numero de presupuesto para un tipo dado.
     Parametros GET: tipo, num_base (opcional, para revision)
+    Responde: {numero, sin_contador} donde sin_contador=True indica que el usuario
+    debe introducir el mismo numero que el presupuesto asociado.
     """
+    from utils.base_datos import TIPOS_SIN_CONTADOR
     tipo = request.args.get("tipo", "")
     num_base_str = request.args.get("num_base", "")
     num_base = int(num_base_str) if num_base_str.isdigit() else None
+    sin_contador = tipo in TIPOS_SIN_CONTADOR
     try:
         numero = siguiente_numero(tipo, num_base)
     except Exception as e:
-        return jsonify({"numero": "", "error": str(e)})
-    return jsonify({"numero": numero})
+        return jsonify({"numero": "", "sin_contador": sin_contador, "error": str(e)})
+    return jsonify({"numero": numero, "sin_contador": sin_contador})
 
 
 @app.route("/api/clientes")
