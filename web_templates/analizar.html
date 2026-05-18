@@ -323,7 +323,7 @@
     <div class="text-center mb-3">
       <i class="bi bi-robot" style="font-size:2.5rem; color:var(--blue)"></i>
       <h5 class="mt-2 mb-1">Analizando archivos...</h5>
-      <p class="text-muted small" id="progress-msg">El perito tecnico IA esta procesando los archivos. Esto puede tardar entre 15 y 60 segundos segun el volumen.</p>
+      <p class="text-muted small" id="progress-msg">El perito tecnico IA esta procesando los archivos. Esto puede tardar entre 30 y 120 segundos segun el volumen.</p>
     </div>
     <div class="progress-anim"><div class="progress-bar-anim"></div></div>
   </div>
@@ -488,16 +488,59 @@ async function startAnalysis() {
 
   try {
     const resp = await fetch('/api/analizar', { method:'POST', body:fd });
-    const data = await resp.json();
-    document.getElementById('progress-wrap').style.display = 'none';
-    if (data.error) {
-      showError(data.error, data.traceback);
-    } else {
-      currentReport = data;
-      chatHistory = [];
-      showResult(data);
-      initChat();
+    if (!resp.ok) {
+      // Respuesta de error HTTP normal (400, 500, etc.)
+      let errData = {};
+      try { errData = await resp.json(); } catch {}
+      document.getElementById('progress-wrap').style.display = 'none';
+      showError(errData.error || `Error HTTP ${resp.status}`);
+      return;
     }
+
+    // Leer stream SSE
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let elapsed = 0;
+    const progressMsg = document.getElementById('progress-msg');
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+        if (evt._ping) {
+          // Keep-alive ping: actualizar contador de tiempo
+          elapsed += 8;
+          if (progressMsg) progressMsg.textContent =
+            `Analizando con IA... (${elapsed}s) El procesamiento de PDFs puede tardar hasta 2 minutos.`;
+          continue;
+        }
+
+        // Evento final (resultado o error)
+        document.getElementById('progress-wrap').style.display = 'none';
+        if (evt.error) {
+          showError(evt.error, evt.traceback);
+        } else {
+          currentReport = evt;
+          chatHistory = [];
+          showResult(evt);
+          initChat();
+        }
+        return;
+      }
+    }
+
+    // Stream cerrado sin evento final (caso raro)
+    document.getElementById('progress-wrap').style.display = 'none';
+    showError('La conexion se cerro sin respuesta. Vuelve a intentarlo.');
+
   } catch(e) {
     document.getElementById('progress-wrap').style.display = 'none';
     showError('Error de conexion: ' + e.message);
