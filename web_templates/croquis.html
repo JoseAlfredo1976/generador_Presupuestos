@@ -151,6 +151,18 @@ input[type=number].tb-num {
   font-size:.7rem; background:#555; color:white; border-radius:10px;
   padding:1px 6px; margin-left:3px;
 }
+
+/* SVG Editor */
+#svg-el-toolbar {
+  position:fixed; background:white; border:1px solid #c8daf0; border-radius:8px;
+  padding:5px 8px; box-shadow:0 4px 16px rgba(0,0,0,.18); z-index:1000;
+  display:none; gap:6px; align-items:center;
+}
+#svg-sel-box {
+  pointer-events:none; fill:none; stroke:#4F84B5; stroke-width:2;
+  stroke-dasharray:6,3; display:none;
+}
+[data-svg-el]:hover { cursor:move; }
 </style>
 </head>
 <body>
@@ -338,6 +350,9 @@ input[type=number].tb-num {
       <button class="btn btn-sm btn-success fw-bold" onclick="usarPlanoIA()">
         <i class="bi bi-check-circle me-1"></i>Usar este plano en el PDF
       </button>
+      <button class="btn btn-sm btn-outline-dark" id="btn-svg-edit" onclick="toggleSvgEdit()">
+        <i class="bi bi-cursor me-1"></i>Editar elementos
+      </button>
       <button class="btn btn-sm btn-outline-primary" onclick="descargarSVG()">
         <i class="bi bi-download me-1"></i>Descargar SVG
       </button>
@@ -423,6 +438,20 @@ input[type=number].tb-num {
   </div>
 
 </div><!-- /main-wrap -->
+
+<!-- Floating toolbar for selected SVG element -->
+<div id="svg-el-toolbar" class="d-flex">
+  <span id="svg-el-label" class="text-muted small me-2" style="align-self:center;font-size:.75rem"></span>
+  <button class="tb-btn" id="svg-el-edit-text" onclick="svgEditText()" style="display:none;font-size:.78rem;padding:4px 8px" title="Editar texto">
+    <i class="bi bi-pencil me-1"></i>Texto
+  </button>
+  <button class="tb-btn" onclick="svgDuplicate()" style="font-size:.78rem;padding:4px 8px" title="Duplicar">
+    <i class="bi bi-copy"></i>
+  </button>
+  <button class="tb-btn danger" onclick="svgDeleteEl()" style="font-size:.78rem;padding:4px 8px" title="Borrar (Del)">
+    <i class="bi bi-trash"></i>
+  </button>
+</div>
 
 <script>
 // ── Fecha hoy
@@ -1056,7 +1085,249 @@ function esc(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// Redraw when window resizes
+// ── SVG Interactive Editor ──────────────────────────────────────────────────
+let svgEditMode  = false;
+let svgSelected  = null;
+let svgDragData  = null;   // {el, startX, startY, tx, ty}
+
+function _getSvg() { return document.querySelector('#plano-ia-content svg'); }
+
+function _screenToSvg(svg, ex, ey) {
+  const pt = svg.createSVGPoint();
+  pt.x = ex; pt.y = ey;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+function _getTranslate(el) {
+  const m = (el.getAttribute('transform') || '')
+    .match(/translate\(\s*([+-]?\d*\.?\d+)[,\s]+([+-]?\d*\.?\d+)/);
+  return m ? [parseFloat(m[1]), parseFloat(m[2])] : [0, 0];
+}
+
+function _setTranslate(el, x, y) {
+  const rest = (el.getAttribute('transform') || '')
+    .replace(/translate\([^)]*\)/g, '').trim();
+  el.setAttribute('transform',
+    `translate(${x.toFixed(1)},${y.toFixed(1)})${rest ? ' '+rest : ''}`);
+}
+
+function _updateSelBox() {
+  const svg = _getSvg();
+  const box = document.getElementById('svg-sel-box');
+  if (!svg || !box || !svgSelected) { if (box) box.style.display='none'; return; }
+  try {
+    const bb = svgSelected.getBBox();
+    const p  = 5;
+    box.setAttribute('x',      bb.x - p);
+    box.setAttribute('y',      bb.y - p);
+    box.setAttribute('width',  bb.width  + p*2);
+    box.setAttribute('height', bb.height + p*2);
+    box.style.display = '';
+  } catch(e) { box.style.display='none'; }
+}
+
+function _posToolbar() {
+  if (!svgSelected) return;
+  const tb = document.getElementById('svg-el-toolbar');
+  try {
+    const bb = svgSelected.getBoundingClientRect();
+    const top = bb.top + window.scrollY - tb.offsetHeight - 10;
+    tb.style.left = Math.max(4, bb.left + window.scrollX) + 'px';
+    tb.style.top  = Math.max(4, top) + 'px';
+  } catch(e) {}
+}
+
+function _svgSelect(el) {
+  _svgDeselect();
+  svgSelected = el;
+  _updateSelBox();
+  const tb = document.getElementById('svg-el-toolbar');
+  const tag = el.tagName.toLowerCase();
+  const hasText = tag === 'text' || !!el.querySelector('text');
+  document.getElementById('svg-el-edit-text').style.display = hasText ? 'inline-flex' : 'none';
+  document.getElementById('svg-el-label').textContent =
+    tag === 'g' ? 'Grupo' : tag === 'text' ? 'Texto' :
+    tag === 'line' || tag === 'polyline' ? 'Linea' :
+    tag === 'rect' ? 'Rectangulo' : tag === 'path' ? 'Trazo' : tag.toUpperCase();
+  tb.style.display = 'flex';
+  // defer so offsetHeight is computed
+  requestAnimationFrame(_posToolbar);
+}
+
+function _svgDeselect() {
+  svgSelected = null;
+  const box = document.getElementById('svg-sel-box');
+  if (box) box.style.display = 'none';
+  document.getElementById('svg-el-toolbar').style.display = 'none';
+}
+
+function _getTarget(e) {
+  let el = e.target;
+  while (el && el.tagName !== 'svg') {
+    if (el.id === 'svg-sel-box') return null;
+    if (el.dataset && el.dataset.svgEl) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+// ─ event handlers
+function _svgMD(e) {
+  if (e.button !== 0) return;
+  const el = _getTarget(e);
+  if (!el) { _svgDeselect(); return; }
+  e.preventDefault();
+  e.stopPropagation();
+  _svgSelect(el);
+  const svg = _getSvg();
+  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  const [tx, ty] = _getTranslate(el);
+  svgDragData = { el, startX: sp.x, startY: sp.y, tx, ty };
+}
+
+function _svgMV(e) {
+  if (!svgDragData) return;
+  e.preventDefault();
+  const svg = _getSvg();
+  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  _setTranslate(svgDragData.el,
+    svgDragData.tx + sp.x - svgDragData.startX,
+    svgDragData.ty + sp.y - svgDragData.startY);
+  _updateSelBox();
+  _posToolbar();
+}
+
+function _svgMU() {
+  if (svgDragData) svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+  svgDragData = null;
+}
+
+function _svgDbl(e) {
+  const el = _getTarget(e);
+  if (!el) return;
+  const textEl = el.tagName.toLowerCase() === 'text' ? el : el.querySelector('text');
+  if (!textEl) return;
+  e.preventDefault();
+  const val = prompt('Editar texto:', textEl.textContent);
+  if (val !== null) {
+    textEl.textContent = val;
+    svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+    _updateSelBox();
+  }
+}
+
+function _svgKey(e) {
+  if (!svgEditMode) return;
+  if (document.activeElement && ['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') { svgDeleteEl(); return; }
+  if (e.key === 'Escape') { _svgDeselect(); return; }
+  if (!svgSelected) return;
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    const [tx, ty] = _getTranslate(svgSelected);
+    _setTranslate(svgSelected,
+      tx + (e.key==='ArrowLeft' ? -step : e.key==='ArrowRight' ? step : 0),
+      ty + (e.key==='ArrowUp'   ? -step : e.key==='ArrowDown'  ? step : 0));
+    _updateSelBox();
+    svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+  }
+}
+
+// ─ public API
+function toggleSvgEdit() {
+  svgEditMode = !svgEditMode;
+  const btn = document.getElementById('btn-svg-edit');
+  if (svgEditMode) {
+    btn.classList.add('btn-primary');
+    btn.classList.remove('btn-outline-dark');
+    btn.innerHTML = '<i class="bi bi-cursor-fill me-1"></i>Editando...';
+    _enableSvgEdit();
+  } else {
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-outline-dark');
+    btn.innerHTML = '<i class="bi bi-cursor me-1"></i>Editar elementos';
+    _disableSvgEdit();
+  }
+}
+
+function _enableSvgEdit() {
+  const svg = _getSvg();
+  if (!svg) return;
+
+  // Inject selection-box element
+  if (!document.getElementById('svg-sel-box')) {
+    const r = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    r.id = 'svg-sel-box';
+    svg.appendChild(r);
+  }
+
+  // Mark selectable elements: direct children + second-level inside top <g>
+  const mark = el => {
+    if (el.id === 'svg-sel-box') return;
+    el.dataset.svgEl = '1';
+  };
+  [...svg.children].forEach(el => {
+    if (el.tagName === 'defs' || el.tagName === 'style') return;
+    // Prefer top-level groups; but also allow individual shapes
+    mark(el);
+  });
+
+  svg.addEventListener('mousedown',  _svgMD);
+  svg.addEventListener('mousemove',  _svgMV);
+  svg.addEventListener('mouseup',    _svgMU);
+  svg.addEventListener('mouseleave', _svgMU);
+  svg.addEventListener('dblclick',   _svgDbl);
+  document.addEventListener('keydown', _svgKey);
+  svg.style.cursor = 'default';
+}
+
+function _disableSvgEdit() {
+  _svgDeselect();
+  const svg = _getSvg();
+  if (!svg) return;
+  svg.removeEventListener('mousedown',  _svgMD);
+  svg.removeEventListener('mousemove',  _svgMV);
+  svg.removeEventListener('mouseup',    _svgMU);
+  svg.removeEventListener('mouseleave', _svgMU);
+  svg.removeEventListener('dblclick',   _svgDbl);
+  document.removeEventListener('keydown', _svgKey);
+  svg.querySelectorAll('[data-svg-el]').forEach(el => {
+    delete el.dataset.svgEl;
+    el.style.cursor = '';
+  });
+  document.getElementById('svg-sel-box')?.remove();
+  svg.style.cursor = '';
+  svgGenerado = svg.outerHTML;
+}
+
+function svgDeleteEl() {
+  if (!svgSelected) return;
+  const el = svgSelected;
+  _svgDeselect();
+  el.remove();
+  svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+}
+
+function svgEditText() {
+  if (!svgSelected) return;
+  _svgDbl({ target: svgSelected, preventDefault: ()=>{}, stopPropagation: ()=>{} });
+}
+
+function svgDuplicate() {
+  if (!svgSelected) return;
+  const svg = _getSvg();
+  const clone = svgSelected.cloneNode(true);
+  // Offset the clone slightly so it's visible
+  const [tx, ty] = _getTranslate(clone);
+  _setTranslate(clone, tx + 15, ty + 15);
+  svg.appendChild(clone);
+  clone.dataset.svgEl = '1';
+  svgGenerado = svg.outerHTML;
+  _svgSelect(clone);
+}
+
+// ── Redraw when window resizes
 window.addEventListener('resize', () => {
   if (!baseCanvas) return;
   const maxW = wrap.clientWidth || 860;
