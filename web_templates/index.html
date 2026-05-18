@@ -1741,6 +1741,14 @@ function stepDescripcionIA() {
       <input id="ia-file-input" type="file" multiple accept=".pdf,.docx,.doc,.txt,.md" style="display:none" onchange="_iaFilesSelected(this.files)">
       <div id="ia-file-list" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;"></div>
     </div>
+    {% if not api_key_set %}
+    <div class="mb-3">
+      <label class="form-label" style="font-size:.82rem">Clave API Anthropic <span class="text-danger">*</span></label>
+      <input id="ia_apikey" type="password" class="form-control form-control-sm"
+        placeholder="sk-ant-..." value="${fd._api_key||''}">
+      <div class="form-text" style="font-size:.75rem">Necesaria para generar con IA. No se guarda en el servidor.</div>
+    </div>
+    {% endif %}
     <div class="text-end">
       <button class="btn btn-next" onclick="llamarGeneradorIA()">
         <i class="bi bi-robot me-2"></i>Generar presupuesto con IA
@@ -1783,8 +1791,11 @@ async function llamarGeneradorIA() {
   }
 
   {% if not api_key_set %}
-  const apiKey = fd._api_key || prompt('Introduce tu API Key de Anthropic (sk-ant-...):') || '';
-  if (!apiKey) return;
+  const apiKey = (document.getElementById('ia_apikey')?.value || '').trim() || fd._api_key || '';
+  if (!apiKey) {
+    alert('Introduce tu clave API de Anthropic en el campo de arriba.');
+    return;
+  }
   fd._api_key = apiKey;
   {% else %}
   const apiKey = '';
