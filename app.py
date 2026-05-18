@@ -424,7 +424,92 @@ def analizar():
 
 @app.route("/croquis")
 def croquis():
-    return render_template("croquis.html")
+    api_key_set = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    return render_template("croquis.html", api_key_set=api_key_set)
+
+
+@app.route("/api/generar_plano_ia", methods=["POST"])
+def api_generar_plano_ia():
+    """Analiza un boceto/croquis con IA y genera un plano tecnico SVG limpio."""
+    import base64
+    import re
+    import traceback as _tb
+    tmp_dir = None
+    try:
+        import anthropic as _ant
+
+        img_file = request.files.get("imagen")
+        contexto = request.form.get("contexto", "").strip()
+        api_key  = request.form.get("api_key", "").strip()
+
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        if not key:
+            return jsonify({"error": "API Key no configurada."}), 400
+        if not img_file or not img_file.filename:
+            return jsonify({"error": "No se recibio ninguna imagen."}), 400
+
+        suffix = Path(img_file.filename).suffix.lower()
+        mime_map = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
+                    ".gif":"image/gif",".webp":"image/webp",".bmp":"image/bmp"}
+        mime = mime_map.get(suffix, "image/jpeg")
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="plano_ia_"))
+        dest = tmp_dir / f"boceto{suffix}"
+        img_file.save(str(dest))
+        img_b64 = base64.b64encode(dest.read_bytes()).decode()
+
+        ctx_extra = f"\nInformacion adicional del usuario: {contexto}" if contexto else ""
+
+        prompt = f"""Analiza este croquis a mano alzada de una instalacion de saneamiento y genera un plano tecnico limpio en formato SVG.
+
+REQUISITOS DEL SVG:
+- viewBox="0 0 900 660", width="900", height="660", fondo blanco (#ffffff)
+- TUBERIAS Y COLECTORES: lineas rectas con stroke="#1a2a3a", stroke-width="2.5" para principales, "1.5" para ramales. Usa <line> o <polyline>.
+- POZOS DE REGISTRO: circulo exterior <circle r="13" fill="none" stroke="#1a2a3a" stroke-width="2"/> + circulo interior <circle r="4" fill="#555"/>
+- BAJANTES: cuadrado <rect width="14" height="14" fill="none" stroke="#1a2a3a" stroke-width="2"/> con aspa <line> interior
+- FLECHAS DE FLUJO: usar <marker> con flecha y colocarlas en mitad de cada tramo con marker-mid
+- COTAS/DIMENSIONES: lineas finas (#888, stroke-width="0.8") con texto de medida encima
+- ETIQUETAS: <text font-family="Arial,sans-serif" font-size="11" fill="#1a2a3a"> con fondo blanco <rect> detras si hace falta legibilidad
+- DIAMETROS: texto junto a la tuberia "DN150", "DN200", etc.
+- CAJETIN esquina inferior derecha (180x90px): rectangulo con lineas divisorias, "Red de Saneamiento", escala "S/E", fecha actual
+- LEYENDA esquina inferior izquierda: muestra simbolos usados con su descripcion
+
+Extrae del boceto toda la informacion visible: trazado exacto de tuberias, numero y posicion de pozos, bajantes, diametros, materiales, longitudes, cotas de nivel, orientacion del flujo, referencias a plantas o niveles. Si algo es ilegible usa "?".{ctx_extra}
+
+IMPORTANTE: Devuelve UNICAMENTE el codigo SVG completo. Empieza directamente con <svg y termina con </svg>. Sin markdown, sin texto adicional."""
+
+        client = _ant.Anthropic(api_key=key)
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=16000,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": mime,
+                        "data": img_b64,
+                    }},
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+
+        raw = response.content[0].text.strip()
+        # Extraer SVG limpio
+        svg_match = re.search(r"<svg[\s\S]*?</svg>", raw, re.IGNORECASE)
+        if not svg_match:
+            return jsonify({"error": "La IA no genero un SVG valido.", "_raw": raw[:1000]}), 500
+
+        svg = svg_match.group(0)
+        return jsonify({"svg": svg})
+
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
+    finally:
+        if tmp_dir and tmp_dir.exists():
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @app.route("/api/generar_croquis", methods=["POST"])
@@ -435,23 +520,17 @@ def api_generar_croquis():
     tmp_dir = None
     try:
         img_file  = request.files.get("imagen")
+        svg_data  = request.form.get("svg_data", "").strip()   # plano IA generado
         titulo    = request.form.get("titulo", "Croquis de Red").strip()
         num_ref   = request.form.get("num_ref", "").strip()
         direccion = request.form.get("direccion", "").strip()
         fecha_raw = request.form.get("fecha", datetime.now().strftime("%Y-%m-%d")).strip()
         notas     = request.form.get("notas", "").strip()
 
-        if not img_file or not img_file.filename:
+        if not svg_data and (not img_file or not img_file.filename):
             return jsonify({"error": "No se recibio ninguna imagen."}), 400
 
-        suffix = Path(img_file.filename).suffix.lower()
-        ALLOWED = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
-        if suffix not in ALLOWED:
-            return jsonify({"error": "Formato no soportado. Usa JPG, PNG, WEBP o BMP."}), 400
-
         tmp_dir = Path(tempfile.mkdtemp(prefix="croquis_"))
-        img_path = tmp_dir / f"imagen{suffix}"
-        img_file.save(str(img_path))
 
         # Fecha en formato largo
         try:
@@ -462,12 +541,21 @@ def api_generar_croquis():
         except ValueError:
             fecha_display = fecha_raw
 
-        # Imagen como base64
-        mime = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
-                ".gif":"image/gif",".webp":"image/webp",".bmp":"image/bmp",
-                ".tiff":"image/tiff",".tif":"image/tiff"}.get(suffix, "image/jpeg")
-        img_b64 = base64.b64encode(img_path.read_bytes()).decode()
-        img_src = f"data:{mime};base64,{img_b64}"
+        # Contenido de imagen: SVG inline o foto base64
+        if svg_data:
+            img_content = f'<div style="width:100%">{svg_data}</div>'
+        else:
+            suffix = Path(img_file.filename).suffix.lower()
+            ALLOWED = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
+            if suffix not in ALLOWED:
+                return jsonify({"error": "Formato no soportado. Usa JPG, PNG, WEBP o BMP."}), 400
+            img_path = tmp_dir / f"imagen{suffix}"
+            img_file.save(str(img_path))
+            mime = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
+                    ".gif":"image/gif",".webp":"image/webp",".bmp":"image/bmp",
+                    ".tiff":"image/tiff",".tif":"image/tiff"}.get(suffix, "image/jpeg")
+            img_b64 = base64.b64encode(img_path.read_bytes()).decode()
+            img_content = f'<img src="data:{mime};base64,{img_b64}" alt="{titulo}" style="max-width:100%;max-height:480px;object-fit:contain">'
 
         # HTML del documento
         notas_html = ""
@@ -561,7 +649,7 @@ def api_generar_croquis():
 </table>
 
 <div class="img-frame">
-  <img src="{img_src}" alt="{titulo}">
+  {img_content}
   <div class="img-caption">{titulo}{' &mdash; ' + direccion if direccion else ''}</div>
 </div>
 

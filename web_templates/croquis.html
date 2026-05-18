@@ -249,6 +249,14 @@ input[type=number].tb-num {
       <button class="tb-btn danger" onclick="clearAnnotations()" title="Borrar anotaciones">
         <i class="bi bi-eraser"></i>
       </button>
+
+      <!-- Generar plano IA -->
+      <div class="tb-sep"></div>
+      <button class="tb-btn" id="btn-ia-plano" onclick="generarPlanoIA()"
+        style="background:linear-gradient(135deg,#4F84B5,#3a6a96);color:white;border-color:#3a6a96;font-weight:600"
+        title="Generar plano tecnico limpio con IA">
+        <i class="bi bi-stars"></i> Generar plano con IA
+      </button>
     </div>
 
     <!-- Canvas -->
@@ -273,6 +281,63 @@ input[type=number].tb-num {
       <button class="tb-btn" onclick="resetAdj()"><i class="bi bi-sliders me-1"></i>Restablecer ajustes</button>
     </div>
   </div>
+
+  <!-- Panel plano IA -->
+  <div id="plano-ia-wrap" style="display:none">
+    <div class="section-title mt-3">
+      <i class="bi bi-stars me-2"></i>Plano tecnico generado por IA
+      <button class="tb-btn ms-3" style="display:inline-flex;font-size:.75rem;padding:3px 9px" onclick="regenerarPlanoIA()">
+        <i class="bi bi-arrow-repeat me-1"></i>Regenerar
+      </button>
+      <button class="tb-btn danger ms-2" style="display:inline-flex;font-size:.75rem;padding:3px 9px" onclick="descartarPlanoIA()">
+        <i class="bi bi-x me-1"></i>Descartar
+      </button>
+    </div>
+
+    <!-- Contexto extra para regenerar -->
+    <div id="plano-ia-ctx-wrap" class="mb-2" style="display:none">
+      <div class="input-group input-group-sm">
+        <input type="text" id="plano-ia-ctx" class="form-control" placeholder="Describe correcciones: añade pozo en el tramo 2, el colector va a DN200...">
+        <button class="btn btn-primary btn-sm" onclick="regenerarPlanoIA()"><i class="bi bi-arrow-repeat"></i> Aplicar</button>
+      </div>
+    </div>
+
+    <div id="plano-ia-loading" style="display:none" class="text-center py-4">
+      <div class="spinner-border text-primary mb-2" style="width:2rem;height:2rem"></div>
+      <p class="text-muted small mb-0">La IA esta analizando el boceto y generando el plano...</p>
+    </div>
+
+    <div id="plano-ia-content" style="background:white;border:2px solid #c8daf0;border-radius:10px;padding:12px;overflow:auto"></div>
+
+    <div id="plano-ia-actions" class="d-flex gap-2 mt-2 flex-wrap" style="display:none!important">
+      <button class="btn btn-sm btn-success fw-bold" onclick="usarPlanoIA()">
+        <i class="bi bi-check-circle me-1"></i>Usar este plano en el PDF
+      </button>
+      <button class="btn btn-sm btn-outline-primary" onclick="descargarSVG()">
+        <i class="bi bi-download me-1"></i>Descargar SVG
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="toggleCtxInput()">
+        <i class="bi bi-chat-left-text me-1"></i>Pedir correcciones
+      </button>
+    </div>
+
+    <div id="plano-ia-modo" class="mt-2" style="display:none">
+      <div class="alert alert-success py-2 px-3 mb-0" style="font-size:.85rem">
+        <i class="bi bi-check-circle-fill me-2"></i>
+        <strong>Plano IA activado</strong> - el PDF se generara con el plano limpio en lugar de la foto original.
+        <button class="btn btn-sm btn-outline-success ms-2 py-0" onclick="usarFotoOriginal()">Volver a foto original</button>
+      </div>
+    </div>
+  </div>
+
+  {% if not api_key_set %}
+  <div id="apikey-plano-wrap" style="display:none" class="mb-3">
+    <div class="alert alert-warning py-2 px-3" style="font-size:.83rem">
+      <i class="bi bi-key me-2"></i>Introduce la clave API de Anthropic para generar el plano con IA.
+    </div>
+    <input type="password" id="f-apikey-plano" class="form-control" placeholder="sk-ant-...">
+  </div>
+  {% endif %}
 
   <!-- Datos del documento (siempre visible) -->
   <div class="section-title mt-3"><i class="bi bi-card-text me-2"></i>Datos del documento</div>
@@ -764,6 +829,105 @@ function exportBlob(callback) {
   expCanvas.toBlob(callback, 'image/jpeg', 0.92);
 }
 
+// ── Plano IA ─────────────────────────────────────────────────────────────────
+let svgGenerado  = null;   // SVG string del plano IA
+let usandoSvg    = false;  // true = PDF usara SVG en lugar de foto
+
+async function generarPlanoIA() {
+  if (!baseCanvas) { alert('Carga una imagen primero.'); return; }
+
+  {% if not api_key_set %}
+  const apiKeyWrap = document.getElementById('apikey-plano-wrap');
+  apiKeyWrap.style.display = 'block';
+  const apiKey = document.getElementById('f-apikey-plano').value.trim();
+  if (!apiKey) { document.getElementById('f-apikey-plano').focus(); return; }
+  {% endif %}
+
+  document.getElementById('plano-ia-wrap').style.display    = 'block';
+  document.getElementById('plano-ia-loading').style.display = 'block';
+  document.getElementById('plano-ia-content').innerHTML     = '';
+  document.getElementById('plano-ia-actions').style.display = 'none';
+  document.getElementById('plano-ia-actions').style.removeProperty('display'); // reset the !important
+  document.getElementById('plano-ia-actions').style.display = 'none';
+  document.getElementById('plano-ia-modo').style.display    = 'none';
+
+  exportBlob(async blob => {
+    const fd = new FormData();
+    fd.append('imagen', blob, 'boceto.jpg');
+    const ctx = document.getElementById('plano-ia-ctx')?.value.trim() || '';
+    if (ctx) fd.append('contexto', ctx);
+    {% if not api_key_set %}
+    fd.append('api_key', document.getElementById('f-apikey-plano').value.trim());
+    {% endif %}
+
+    try {
+      const resp = await fetch('/api/generar_plano_ia', { method:'POST', body:fd });
+      const data = await resp.json();
+      document.getElementById('plano-ia-loading').style.display = 'none';
+
+      if (data.error) {
+        document.getElementById('plano-ia-content').innerHTML =
+          `<div class="alert alert-danger m-2">${esc(data.error)}</div>`;
+        return;
+      }
+
+      svgGenerado = data.svg;
+      document.getElementById('plano-ia-content').innerHTML = svgGenerado;
+      // Hacer el SVG responsive
+      const svgEl = document.getElementById('plano-ia-content').querySelector('svg');
+      if (svgEl) { svgEl.style.maxWidth='100%'; svgEl.style.height='auto'; }
+
+      document.getElementById('plano-ia-actions').style.display = 'flex';
+      document.getElementById('plano-ia-ctx-wrap').style.display = 'none';
+      window.scrollTo({top: document.getElementById('plano-ia-wrap').offsetTop - 20, behavior:'smooth'});
+
+    } catch(e) {
+      document.getElementById('plano-ia-loading').style.display = 'none';
+      document.getElementById('plano-ia-content').innerHTML =
+        `<div class="alert alert-danger m-2">Error: ${esc(e.message)}</div>`;
+    }
+  });
+}
+
+function regenerarPlanoIA() {
+  document.getElementById('plano-ia-ctx-wrap').style.display = 'none';
+  generarPlanoIA();
+}
+
+function descartarPlanoIA() {
+  svgGenerado = null; usandoSvg = false;
+  document.getElementById('plano-ia-wrap').style.display = 'none';
+  document.getElementById('plano-ia-modo').style.display = 'none';
+}
+
+function usarPlanoIA() {
+  if (!svgGenerado) return;
+  usandoSvg = true;
+  document.getElementById('plano-ia-modo').style.display    = 'block';
+  document.getElementById('plano-ia-actions').style.display = 'none';
+}
+
+function usarFotoOriginal() {
+  usandoSvg = false;
+  document.getElementById('plano-ia-modo').style.display    = 'none';
+  document.getElementById('plano-ia-actions').style.display = 'flex';
+}
+
+function toggleCtxInput() {
+  const w = document.getElementById('plano-ia-ctx-wrap');
+  w.style.display = w.style.display === 'none' ? 'block' : 'none';
+  if (w.style.display === 'block') document.getElementById('plano-ia-ctx').focus();
+}
+
+function descargarSVG() {
+  if (!svgGenerado) return;
+  const blob = new Blob([svgGenerado], {type:'image/svg+xml'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (document.getElementById('f-numref').value.trim() || 'plano') + '_IA.svg';
+  a.click();
+}
+
 // ── Generate PDF
 async function generarPDF() {
   if (!baseCanvas) { alert('Selecciona primero una imagen del croquis o plano.'); return; }
@@ -772,9 +936,13 @@ async function generarPDF() {
   document.getElementById('progress-wrap').style.display = 'block';
   document.getElementById('result-wrap').style.display   = 'none';
 
-  exportBlob(async blob => {
+  const doSend = async blob => {
     const fd = new FormData();
-    fd.append('imagen',    blob, 'croquis.jpg');
+    if (usandoSvg && svgGenerado) {
+      fd.append('svg_data', svgGenerado);
+    } else {
+      fd.append('imagen', blob, 'croquis.jpg');
+    }
     fd.append('titulo',    document.getElementById('f-titulo').value.trim());
     fd.append('num_ref',   document.getElementById('f-numref').value.trim());
     fd.append('fecha',     document.getElementById('f-fecha').value);
@@ -799,7 +967,13 @@ async function generarPDF() {
       document.getElementById('btn-generar').disabled = false;
       alert('Error de conexion: ' + e.message);
     }
-  });
+  };
+
+  if (usandoSvg && svgGenerado) {
+    doSend(null);
+  } else {
+    exportBlob(doSend);
+  }
 }
 
 function nuevo() {
