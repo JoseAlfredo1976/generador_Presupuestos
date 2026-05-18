@@ -191,6 +191,35 @@
   <!-- Upload + config form -->
   <div id="form-wrap">
 
+    <!-- Toggle de modo -->
+    <div class="mb-4">
+      <div class="btn-group w-100" role="group">
+        <button type="button" class="btn btn-primary" id="mode-btn-nuevo" onclick="setMode('nuevo')">
+          <i class="bi bi-plus-circle me-2"></i>Nuevo analisis desde archivos
+        </button>
+        <button type="button" class="btn btn-outline-primary" id="mode-btn-importar" onclick="setMode('importar')">
+          <i class="bi bi-pencil-square me-2"></i>Modificar informe existente
+        </button>
+      </div>
+    </div>
+
+    <!-- Seccion: importar informe existente -->
+    <div id="importar-wrap" style="display:none">
+      <div class="mb-4">
+        <div class="section-title"><i class="bi bi-file-earmark-arrow-up me-2"></i>Informe existente a modificar</div>
+        <div class="drop-zone" id="importar-zone" onclick="document.getElementById('importar-input').click()">
+          <div class="dz-icon"><i class="bi bi-file-earmark-text"></i></div>
+          <p><strong>Arrastra el informe aqui</strong> o haz clic para seleccionar</p>
+          <small>PDF o Word (.docx) &middot; 1 solo archivo</small>
+        </div>
+        <input type="file" id="importar-input" accept=".pdf,.docx,.doc,.txt" style="display:none" onchange="setImportarFile(this.files[0])">
+        <div id="importar-item"></div>
+      </div>
+    </div>
+
+    <!-- Seccion: nuevas fuentes (solo en modo nuevo) -->
+    <div id="nuevo-wrap">
+
     <!-- Drop zone - Videos e imagenes CCTV -->
     <div class="mb-3">
       <div class="section-title"><i class="bi bi-camera-video me-2"></i>Videos e imagenes CCTV</div>
@@ -239,6 +268,8 @@
         </div>
       </div>
     </div>
+
+    </div><!-- /nuevo-wrap -->
 
     <!-- Context + meta -->
     <div class="mb-4">
@@ -313,7 +344,7 @@
     {% endif %}
 
     <!-- Analyze button -->
-    <button class="btn btn-analyze" onclick="startAnalysis()">
+    <button class="btn btn-analyze" id="btn-analizar" onclick="startAnalysis()">
       <i class="bi bi-robot me-2"></i>Analizar con IA
     </button>
   </div>
@@ -360,6 +391,112 @@ let chatHistory = [];
 let currentApiKey = '';
 let currentNumRef = '';
 let currentCliente = '';
+let currentMode = 'nuevo';  // 'nuevo' | 'importar'
+let importarFile = null;    // File del informe existente a importar
+
+// ── Modo toggle
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById('nuevo-wrap').style.display      = mode === 'nuevo'    ? 'block' : 'none';
+  document.getElementById('importar-wrap').style.display   = mode === 'importar' ? 'block' : 'none';
+  document.getElementById('mode-btn-nuevo').className      = 'btn ' + (mode === 'nuevo'    ? 'btn-primary'         : 'btn-outline-primary');
+  document.getElementById('mode-btn-importar').className   = 'btn ' + (mode === 'importar' ? 'btn-primary'         : 'btn-outline-primary');
+  const btn = document.getElementById('btn-analizar');
+  if (mode === 'importar') {
+    btn.innerHTML = '<i class="bi bi-pencil-square me-2"></i>Cargar y modificar informe';
+    btn.onclick = importarInforme;
+  } else {
+    btn.innerHTML = '<i class="bi bi-robot me-2"></i>Analizar con IA';
+    btn.onclick = startAnalysis;
+  }
+}
+
+// ── Importar informe existente
+function setImportarFile(file) {
+  if (!file) return;
+  importarFile = file;
+  const zone = document.getElementById('importar-zone');
+  zone.classList.add('has-file');
+  zone.querySelector('.dz-icon i').className = 'bi bi-check-circle-fill';
+  zone.querySelector('p').innerHTML = `<strong>${esc(file.name)}</strong> listo para importar (haz clic para cambiar)`;
+  const size = file.size < 1024*1024 ? `${(file.size/1024).toFixed(0)} KB` : `${(file.size/1024/1024).toFixed(1)} MB`;
+  const ext = file.name.split('.').pop().toLowerCase();
+  const icon = ext === 'pdf' ? '📄' : '📝';
+  document.getElementById('importar-item').innerHTML = `
+    <div class="croquis-badge">
+      <span class="cb-icon">${icon}</span>
+      <span class="cb-name"><strong>${esc(file.name)}</strong> &mdash; ${size}</span>
+      <button class="cb-del" onclick="clearImportarFile()"><i class="bi bi-x-circle"></i> Quitar</button>
+    </div>`;
+}
+
+function clearImportarFile() {
+  importarFile = null;
+  document.getElementById('importar-input').value = '';
+  const zone = document.getElementById('importar-zone');
+  zone.classList.remove('has-file');
+  zone.querySelector('.dz-icon i').className = 'bi bi-file-earmark-text';
+  zone.querySelector('p').innerHTML = '<strong>Arrastra el informe aqui</strong> o haz clic para seleccionar';
+  document.getElementById('importar-item').innerHTML = '';
+}
+
+async function importarInforme() {
+  if (!importarFile) { alert('Selecciona primero el informe a importar (PDF o DOCX).'); return; }
+
+  currentApiKey  = document.getElementById('f-apikey')?.value.trim() || '';
+  currentNumRef  = document.getElementById('f-num-ref').value.trim();
+  currentCliente = document.getElementById('f-cliente').value.trim();
+
+  {% if not api_key_set %}
+  if (!currentApiKey) { alert('Introduce la clave API de Anthropic.'); return; }
+  {% endif %}
+
+  document.getElementById('form-wrap').style.display    = 'none';
+  document.getElementById('progress-wrap').style.display = 'block';
+  document.getElementById('result-wrap').style.display  = 'none';
+  document.getElementById('chat-wrap').style.display    = 'none';
+
+  const pm = document.getElementById('progress-msg');
+  if (pm) pm.textContent = 'Importando y estructurando el informe existente...';
+
+  const fd = new FormData();
+  fd.append('archivo', importarFile);
+  if (currentApiKey) fd.append('api_key', currentApiKey);
+
+  try {
+    const resp = await fetch('/api/importar_informe', { method:'POST', body:fd });
+    const data = await resp.json();
+    document.getElementById('progress-wrap').style.display = 'none';
+    if (data.error) {
+      showError(data.error, data.traceback);
+    } else {
+      currentReport = data;
+      chatHistory   = [];
+      showResult(data);
+      initChat();
+      // Indicar al chat que el informe fue importado para edicion
+      setTimeout(() => addChatMsg('assistant',
+        'Informe importado correctamente. Indica los cambios que quieres realizar y los aplicare de inmediato. ' +
+        'Puedes pedirme: modificar tramos, cambiar mediciones, reformular conclusiones, añadir o quitar patologias, actualizar propuestas de solucion, etc.'
+      ), 200);
+    }
+  } catch(e) {
+    document.getElementById('progress-wrap').style.display = 'none';
+    showError('Error de conexion: ' + e.message);
+  }
+}
+
+// ── Drag & drop para zona de importar
+document.addEventListener('DOMContentLoaded', () => {
+  const iz = document.getElementById('importar-zone');
+  iz.addEventListener('dragover', e => { e.preventDefault(); iz.classList.add('drag-over'); });
+  iz.addEventListener('dragleave', () => iz.classList.remove('drag-over'));
+  iz.addEventListener('drop', e => {
+    e.preventDefault(); iz.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f) setImportarFile(f);
+  });
+});
 
 // ── Croquis handling
 function setCroquis(file) {
@@ -711,6 +848,37 @@ function newAnalysis() {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+// Construye el texto para [[INFORME_TECNICO]] a partir del JSON del informe
+function buildInformeTecnico(r) {
+  const parts = [];
+  if (r.titulo)           parts.push(r.titulo);
+  if (r.objeto)           parts.push('\nOBJETO DE LA INSPECCION:\n' + r.objeto);
+  if (r.descripcion_red)  parts.push('\nDESCRIPCION DE LA RED:\n' + r.descripcion_red);
+  const tramos = r.tramos || [];
+  if (tramos.length) {
+    parts.push('\nANALISIS DE TRAMOS:');
+    tramos.forEach(t => {
+      const linea = [t.id, t.inicio && t.fin ? `${t.inicio} - ${t.fin}` : '', t.longitud, t.diametro, t.material, t.estado, t.observaciones]
+        .filter(Boolean).join(' | ');
+      parts.push('- ' + linea);
+    });
+  }
+  const pats = r.patologias || [];
+  if (pats.length) {
+    parts.push('\nPATOLOGIAS DETECTADAS:');
+    pats.forEach(p => {
+      parts.push(`- [${p.gravedad||''}] ${p.tipo||''}: ${p.descripcion||''}${p.ubicacion?' ('+p.ubicacion+')':''}`);
+    });
+  }
+  if (r.conclusiones) parts.push('\nCONCLUSIONES TECNICAS:\n' + r.conclusiones);
+  const sols = r.propuesta_solucion || [];
+  if (sols.length) {
+    parts.push('\nPROPUESTA DE SOLUCION:');
+    sols.forEach(s => parts.push(`- [${s.prioridad||''}] ${s.intervencion||''}: ${s.metodo||''}`));
+  }
+  return parts.join('\n').trim();
+}
+
 function goToPresupuesto() {
   if (!currentReport) return;
   const r = currentReport;
@@ -719,6 +887,7 @@ function goToPresupuesto() {
     cliente: currentCliente || '',
     titulo: r.titulo || '',
     conclusiones: r.conclusiones || '',
+    informe_tecnico: buildInformeTecnico(r),
     mediciones: (r.mediciones || []).map(m => ({
       descripcion: m.descripcion || '',
       ud: m.ud || 'ud',

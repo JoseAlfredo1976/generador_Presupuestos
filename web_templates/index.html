@@ -2872,8 +2872,9 @@ function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
     _origPanel(html);
     setTimeout(() => {
       const g = id => document.getElementById(id);
-      if (g('f_obra')  && !g('f_obra').value)                       g('f_obra').value    = iap.titulo || iap.cliente || '';
-      if (iap.cliente  && g('f_cnombre') && !g('f_cnombre').value)  g('f_cnombre').value = iap.cliente;
+      if (g('f_obra')  && !g('f_obra').value)                             g('f_obra').value    = iap.titulo || iap.cliente || '';
+      if (iap.cliente  && g('f_cnombre') && !g('f_cnombre').value)       g('f_cnombre').value = iap.cliente;
+      if (iap.informe_tecnico && g('f_inf') && !g('f_inf').value)        g('f_inf').value     = iap.informe_tecnico;
     }, 60);
   };
 

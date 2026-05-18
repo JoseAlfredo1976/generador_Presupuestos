@@ -699,6 +699,91 @@ def api_chat_informe():
         return jsonify({"error": str(e), "traceback": tb}), 500
 
 
+@app.route("/api/importar_informe", methods=["POST"])
+def api_importar_informe():
+    """Importa un informe existente (DOCX/PDF/TXT) y lo convierte al schema JSON para edicion via chat."""
+    import traceback as _tb
+    import base64
+    import re
+    tmp_dir = None
+    try:
+        from core.ai_analyst import SYSTEM_PROMPT, REPORT_SCHEMA
+        import anthropic as _ant
+
+        archivo = request.files.get("archivo")
+        api_key = request.form.get("api_key", "").strip()
+
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        if not key:
+            return jsonify({"error": "API Key no configurada."}), 400
+        if not archivo or not archivo.filename:
+            return jsonify({"error": "No se recibio ningun archivo."}), 400
+
+        suffix = Path(archivo.filename).suffix.lower()
+        if suffix not in {".pdf", ".docx", ".doc", ".txt", ".md"}:
+            return jsonify({"error": "Formato no soportado. Usa PDF, DOCX o TXT."}), 400
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="importar_"))
+        dest = tmp_dir / f"informe{suffix}"
+        archivo.save(str(dest))
+
+        client = _ant.Anthropic(api_key=key)
+        instruccion = (
+            "Extrae toda la informacion de este informe tecnico y estructurala en el siguiente "
+            "esquema JSON. Si algun campo no aparece en el documento usa null o [] segun el tipo. "
+            "Devuelve UNICAMENTE el JSON sin ningun texto adicional.\n\n"
+            f"Esquema requerido:\n{REPORT_SCHEMA}"
+        )
+
+        if suffix == ".pdf":
+            pdf_data = dest.read_bytes()
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "document", "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": base64.b64encode(pdf_data).decode(),
+                    }},
+                    {"type": "text", "text": instruccion},
+                ],
+            }]
+        else:
+            if suffix in (".docx", ".doc"):
+                try:
+                    from docx import Document as _DocxDoc
+                    doc = _DocxDoc(str(dest))
+                    text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                except Exception:
+                    text = dest.read_text(encoding="utf-8", errors="replace")
+            else:
+                text = dest.read_text(encoding="utf-8", errors="replace")
+            messages = [{"role": "user", "content": f"INFORME:\n{text}\n\n{instruccion}"}]
+
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=8192,
+            system=SYSTEM_PROMPT,
+            messages=messages,
+        )
+        raw = response.content[0].text.strip()
+        match = re.search(r"\{[\s\S]*\}", raw)
+        if match:
+            try:
+                report = json.loads(match.group())
+                return jsonify(report)
+            except json.JSONDecodeError:
+                pass
+        return jsonify({"error": "No se pudo extraer JSON del informe.", "_raw": raw[:2000]}), 500
+
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
+    finally:
+        if tmp_dir and tmp_dir.exists():
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 @app.route("/api/tarifa/<code>")
 def api_tarifa(code: str):
     item = get_tarifas().lookup(code)
