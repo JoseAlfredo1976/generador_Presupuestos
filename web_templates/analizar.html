@@ -487,59 +487,47 @@ async function startAnalysis() {
   if (croquis) fd.append('croquis', croquis);
 
   try {
-    const resp = await fetch('/api/analizar', { method:'POST', body:fd });
-    if (!resp.ok) {
-      // Respuesta de error HTTP normal (400, 500, etc.)
-      let errData = {};
-      try { errData = await resp.json(); } catch {}
+    // Enviar archivos y obtener job_id de inmediato
+    const startResp = await fetch('/api/analizar', { method:'POST', body:fd });
+    const startData = await startResp.json();
+    if (startData.error || !startData.job_id) {
       document.getElementById('progress-wrap').style.display = 'none';
-      showError(errData.error || `Error HTTP ${resp.status}`);
+      showError(startData.error || 'Error al iniciar el analisis.');
       return;
     }
 
-    // Leer stream SSE
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+    // Polling cada 3 segundos hasta que el job termine
+    const jobId = startData.job_id;
     let elapsed = 0;
     const progressMsg = document.getElementById('progress-msg');
 
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        let evt;
-        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
-
-        if (evt._ping) {
-          // Keep-alive ping: actualizar contador de tiempo
-          elapsed += 8;
-          if (progressMsg) progressMsg.textContent =
-            `Analizando con IA... (${elapsed}s) El procesamiento de PDFs puede tardar hasta 2 minutos.`;
-          continue;
-        }
-
-        // Evento final (resultado o error)
-        document.getElementById('progress-wrap').style.display = 'none';
-        if (evt.error) {
-          showError(evt.error, evt.traceback);
-        } else {
-          currentReport = evt;
-          chatHistory = [];
-          showResult(evt);
-          initChat();
-        }
-        return;
+      await new Promise(r => setTimeout(r, 3000));
+      elapsed += 3;
+      if (progressMsg) {
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        progressMsg.textContent = `Analizando con IA... (${timeStr}) PDFs grandes pueden tardar hasta 2 minutos.`;
       }
-    }
 
-    // Stream cerrado sin evento final (caso raro)
-    document.getElementById('progress-wrap').style.display = 'none';
-    showError('La conexion se cerro sin respuesta. Vuelve a intentarlo.');
+      const pollResp = await fetch(`/api/analizar_result/${jobId}`);
+      const pollData = await pollResp.json();
+
+      if (pollData.status === 'processing') continue;
+
+      // Terminado (exito o error)
+      document.getElementById('progress-wrap').style.display = 'none';
+      if (pollData.error) {
+        showError(pollData.error, pollData.traceback);
+      } else {
+        currentReport = pollData;
+        chatHistory = [];
+        showResult(pollData);
+        initChat();
+      }
+      return;
+    }
 
   } catch(e) {
     document.getElementById('progress-wrap').style.display = 'none';

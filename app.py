@@ -71,6 +71,11 @@ app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
 
 _tarifas: TarifaLoader | None = None
 
+# ── Job store para analisis IA (polling) ────────────────────────────────────
+import threading as _threading
+_jobs: dict[str, dict] = {}
+_jobs_lock = _threading.Lock()
+
 
 def get_tarifas() -> TarifaLoader:
     global _tarifas
@@ -425,35 +430,27 @@ def analizar():
 @app.route("/api/analizar", methods=["POST"])
 def api_analizar():
     """
-    Analisis IA con streaming SSE para evitar timeout del proxy de Railway.
-    Emite pings cada 8 segundos mientras el thread de Anthropic trabaja.
-    Formato de eventos:
-      data: {"_ping": true}          <- keep-alive
-      data: {"error": "..."}         <- error
-      data: {... resultado ...}      <- resultado final
+    Arranca el analisis IA en background y devuelve job_id de inmediato.
+    El cliente hace polling a /api/analizar_result/<job_id> cada 3 segundos.
     """
     import traceback as _tb_mod
-    import threading
-    import time as _time
 
     try:
         from core.ai_analyst import (analyze, generate_report_docx,
                                       analyze_wincam, generate_wincam_docx)
     except Exception as e:
-        tb = _tb_mod.format_exc()
-        return jsonify({"error": str(e), "traceback": tb}), 500
+        return jsonify({"error": str(e)}), 500
 
-    tipo     = request.form.get("tipo_analisis", "general")
-    formato  = request.form.get("formato", "descriptivo")
-    context  = request.form.get("contexto", "")
-    api_key  = request.form.get("api_key", "").strip()
-    num_ref  = request.form.get("num_ref", "").strip()
-    cliente  = request.form.get("cliente", "").strip()
-    proyecto = request.form.get("proyecto", num_ref).strip()
-    calle    = request.form.get("calle", "").strip()
+    tipo      = request.form.get("tipo_analisis", "general")
+    formato   = request.form.get("formato", "descriptivo")
+    context   = request.form.get("contexto", "")
+    api_key   = request.form.get("api_key", "").strip()
+    num_ref   = request.form.get("num_ref", "").strip()
+    cliente   = request.form.get("cliente", "").strip()
+    proyecto  = request.form.get("proyecto", num_ref).strip()
+    calle     = request.form.get("calle", "").strip()
     poblacion = request.form.get("poblacion", "").strip()
 
-    # Guardar archivos subidos
     session_id = uuid.uuid4().hex[:8]
     session_dir = UPLOADS_DIR / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -483,9 +480,9 @@ def api_analizar():
     if not saved_files:
         return jsonify({"error": "No se recibieron archivos validos o no se pudieron guardar."}), 400
 
-    # Ejecutar analisis en thread separado mientras se emiten pings SSE
-    result_box: dict = {}
-    exc_box: dict = {}
+    job_id = uuid.uuid4().hex[:12]
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "processing"}
 
     def _run():
         try:
@@ -519,34 +516,34 @@ def api_analizar():
                     result["_docx_wincam"] = wc_name
                 except Exception as e:
                     result["_wincam_docx_error"] = str(e)
-            result_box["data"] = result
+            with _jobs_lock:
+                _jobs[job_id] = {"status": "done", "result": result}
         except Exception as e:
-            exc_box["error"] = str(e)
-            exc_box["tb"] = _tb_mod.format_exc()
+            with _jobs_lock:
+                _jobs[job_id] = {"status": "error", "error": str(e),
+                                  "traceback": _tb_mod.format_exc()}
 
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
+    _threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"job_id": job_id})
 
-    def _stream():
-        # Emitir pings mientras el thread trabaja (evita timeout del proxy Railway)
-        while t.is_alive():
-            yield 'data: {"_ping":true}\n\n'
-            _time.sleep(8)
-        # Thread terminado: emitir resultado o error
-        if exc_box:
-            yield "data: " + json.dumps({"error": exc_box["error"], "traceback": exc_box.get("tb", "")}) + "\n\n"
-        else:
-            yield "data: " + json.dumps(result_box.get("data", {})) + "\n\n"
 
-    return Response(
-        stream_with_context(_stream()),
-        mimetype="text/event-stream",
-        headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
-    )
+@app.route("/api/analizar_result/<job_id>")
+def api_analizar_result(job_id: str):
+    """Polling: devuelve estado del job. processing / done (con resultado) / error."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job no encontrado o expirado"}), 404
+    if job["status"] == "processing":
+        return jsonify({"status": "processing"})
+    if job["status"] == "error":
+        with _jobs_lock:
+            _jobs.pop(job_id, None)
+        return jsonify({"error": job["error"], "traceback": job.get("traceback", "")})
+    result = job["result"]
+    with _jobs_lock:
+        _jobs.pop(job_id, None)
+    return jsonify(result)
 
 
 @app.route("/api/generar_partidas_ia", methods=["POST"])
