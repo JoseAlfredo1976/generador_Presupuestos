@@ -784,6 +784,127 @@ def api_importar_informe():
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+@app.route("/api/importar_presupuesto", methods=["POST"])
+def api_importar_presupuesto():
+    """Importa un presupuesto existente (DOCX/PDF) y extrae todos los campos al schema JSON."""
+    import traceback as _tb
+    import base64
+    import re
+    tmp_dir = None
+    try:
+        import anthropic as _ant
+
+        archivo = request.files.get("archivo")
+        api_key = request.form.get("api_key", "").strip()
+
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        if not key:
+            return jsonify({"error": "API Key no configurada."}), 400
+        if not archivo or not archivo.filename:
+            return jsonify({"error": "No se recibio ningun archivo."}), 400
+
+        suffix = Path(archivo.filename).suffix.lower()
+        if suffix not in {".pdf", ".docx", ".doc", ".txt"}:
+            return jsonify({"error": "Formato no soportado. Usa PDF o DOCX."}), 400
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="imp_pres_"))
+        dest = tmp_dir / f"presupuesto{suffix}"
+        archivo.save(str(dest))
+
+        schema = """{
+  "tipo_modelo": "obra_1|obra_2|desatasco|limpieza_aerea|fresador|robot_limpieza|fuga_agua|vaciado_fosa|cctv_bajante|inspeccion_zum|informe_desatasco|bajantes_amianto|certificado_obra|plan_seguridad|contrato_saneamiento|fontaneria|albanileria|contrato_subcontrata",
+  "num_contrato": "",
+  "fecha_contrato": "YYYY-MM-DD",
+  "cliente_nombre": "",
+  "cliente_dir": "",
+  "cliente_tel": "",
+  "cliente_email": "",
+  "obra": "",
+  "servicio": "",
+  "provincia": "Madrid",
+  "administracion": "",
+  "admin_tel": "",
+  "admin_email": "",
+  "informe": "",
+  "solucion": "",
+  "memoria": "",
+  "plazo": "30",
+  "forma_pago": "",
+  "partidas": [
+    {"descripcion": "", "unidad": "ud", "cantidad": 1, "precio_unitario": 0}
+  ],
+  "partidas_b": []
+}"""
+
+        instruccion = (
+            "Extrae TODOS los datos de este presupuesto y devuelvelos en el siguiente esquema JSON. "
+            "Para tipo_modelo elige el mas apropiado segun el contenido. "
+            "Para fecha_contrato usa formato YYYY-MM-DD; si no aparece usa null. "
+            "Extrae todas las partidas con descripcion, unidad, cantidad y precio unitario. "
+            "Si hay dos opciones A y B, las partidas de la opcion A van en 'partidas' y las de la B en 'partidas_b', "
+            "y tipo_modelo debe ser 'obra_2'. "
+            "Devuelve UNICAMENTE el JSON sin texto adicional.\n\n"
+            f"Esquema:\n{schema}"
+        )
+
+        client = _ant.Anthropic(api_key=key)
+
+        if suffix == ".pdf":
+            pdf_data = dest.read_bytes()
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "document", "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": base64.b64encode(pdf_data).decode(),
+                    }},
+                    {"type": "text", "text": instruccion},
+                ],
+            }]
+        else:
+            if suffix in (".docx", ".doc"):
+                try:
+                    from docx import Document as _DocxDoc
+                    doc = _DocxDoc(str(dest))
+                    text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                    # Also extract tables
+                    for tbl in doc.tables:
+                        for row in tbl.rows:
+                            text += "\n" + "\t".join(c.text for c in row.cells if c.text.strip())
+                except Exception:
+                    text = dest.read_text(encoding="utf-8", errors="replace")
+            else:
+                text = dest.read_text(encoding="utf-8", errors="replace")
+            messages = [{"role": "user", "content": f"PRESUPUESTO:\n{text}\n\n{instruccion}"}]
+
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=8192,
+            system=(
+                "Eres un asistente experto en presupuestos de construccion y saneamiento. "
+                "Extraes datos estructurados de documentos y los devuelves siempre en JSON valido."
+            ),
+            messages=messages,
+        )
+        raw = response.content[0].text.strip()
+        match = re.search(r"\{[\s\S]*\}", raw)
+        if match:
+            try:
+                data = json.loads(match.group())
+                return jsonify(data)
+            except json.JSONDecodeError:
+                pass
+        return jsonify({"error": "No se pudo extraer JSON del presupuesto.", "_raw": raw[:2000]}), 500
+
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
+    finally:
+        if tmp_dir and tmp_dir.exists():
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 @app.route("/api/tarifa/<code>")
 def api_tarifa(code: str):
     item = get_tarifas().lookup(code)

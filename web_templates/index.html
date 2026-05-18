@@ -557,6 +557,10 @@ body {
     <a href="/analizar" class="sb-nav-link">
       <i class="bi bi-robot"></i> Analisis IA
     </a>
+    <a href="#" class="sb-nav-link" style="margin-top:4px" onclick="document.getElementById('imp-pres-input').click();return false;">
+      <i class="bi bi-file-earmark-arrow-up"></i> Importar presupuesto
+    </a>
+    <input type="file" id="imp-pres-input" accept=".pdf,.docx,.doc" style="display:none" onchange="importarPresupuesto(this.files[0])">
     <a href="/configuracion" class="sb-nav-link" style="margin-top:4px" id="sb-cfg-link">
       <i class="bi bi-gear"></i> Configuracion
       <span id="sb-disco-badge" style="display:none;margin-left:6px;font-size:.7rem;padding:1px 6px;border-radius:10px;background:#dc2626;color:white">!</span>
@@ -2968,6 +2972,108 @@ function descartarRecuperacion() {
   tipo = '';
   rmPanel();
   location.reload();
+}
+
+// ─── Importar presupuesto existente ─────────────────────────────────────────
+async function importarPresupuesto(file) {
+  if (!file) return;
+  document.getElementById('imp-pres-input').value = '';
+
+  // API key: intentar obtener del entorno o pedir
+  let apiKey = '';
+  {% if not api_key_set %}
+  apiKey = prompt('Introduce la clave API de Anthropic para importar el presupuesto:') || '';
+  if (!apiKey) return;
+  {% endif %}
+
+  // Mostrar overlay de carga
+  const ovTxt = document.getElementById('ov-txt');
+  if (ovTxt) ovTxt.textContent = 'Importando presupuesto con IA...';
+  document.getElementById('overlay').style.display = 'flex';
+
+  try {
+    const fd_form = new FormData();
+    fd_form.append('archivo', file);
+    if (apiKey) fd_form.append('api_key', apiKey);
+
+    const resp = await fetch('/api/importar_presupuesto', { method: 'POST', body: fd_form });
+    const data = await resp.json();
+
+    document.getElementById('overlay').style.display = 'none';
+    if (ovTxt) ovTxt.textContent = 'Generando documentos...';
+
+    if (data.error) {
+      alert('Error al importar: ' + data.error);
+      return;
+    }
+
+    _aplicarPresupuestoImportado(data);
+
+  } catch(e) {
+    document.getElementById('overlay').style.display = 'none';
+    if (ovTxt) ovTxt.textContent = 'Generando documentos...';
+    alert('Error de conexion: ' + e.message);
+  }
+}
+
+function _aplicarPresupuestoImportado(data) {
+  // Resetear estado
+  Object.keys(fd).forEach(k => delete fd[k]);
+  tipo = data.tipo_modelo || 'obra_1';
+
+  // Copiar todos los campos de texto a fd (excluir partidas y tipo_modelo)
+  const skip = new Set(['tipo_modelo', 'partidas', 'partidas_b', 'partidas_a']);
+  Object.entries(data).forEach(([k, v]) => {
+    if (!skip.has(k) && v !== null && v !== undefined) fd[k] = String(v);
+  });
+
+  // Guardar partidas para inyeccion posterior
+  window._impPartidas  = data.partidas  || [];
+  window._impPartidasB = data.partidas_b || [];
+
+  // Banner de importacion
+  const banner = document.createElement('div');
+  banner.id = 'imp-pres-banner';
+  banner.style.cssText = 'background:#dbeafe;border:1px solid #2563eb;border-radius:10px;padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:12px;font-size:.88rem';
+  banner.innerHTML = `
+    <i class="bi bi-file-earmark-arrow-up" style="font-size:1.4rem;color:#2563eb"></i>
+    <div style="flex:1">
+      <div style="font-weight:700;color:#1e3a8a">Presupuesto importado &mdash; revisa y modifica los datos</div>
+      <div style="color:#5a7184;font-size:.8rem">${esc(data.num_contrato||'')} ${data.obra ? '&middot; '+esc(data.obra) : ''} &middot; Tipo: <strong>${esc(tipo)}</strong></div>
+    </div>
+    <button style="background:none;border:none;color:#888;cursor:pointer" onclick="document.getElementById('imp-pres-banner').remove()"><i class="bi bi-x-lg"></i></button>`;
+
+  // Inyectar partidas cuando se abra el paso de partidas
+  const _origStepPart = window.stepPartidas;
+  window.stepPartidas = function(which) {
+    _origStepPart(which);
+    const parts = (which === 'b') ? (window._impPartidasB || []) : (window._impPartidas || []);
+    if (!parts.length) return;
+    setTimeout(() => {
+      const prefix = which === '1' ? 'item' : which === 'a' ? 'item_a' : 'item_b';
+      const barId  = 'bar' + which;
+      const tbId   = 'tb'  + which;
+      // Limpiar filas vacias existentes
+      document.querySelectorAll(`#${tbId} tr`).forEach(tr => {
+        const desc = tr.querySelector(`[name^="${prefix}_desc_"]`);
+        if (desc && !desc.value.trim()) tr.remove();
+      });
+      parts.forEach(p => {
+        const udMap = { 'm':'ml','ml':'ml','ud':'ud','pa':'PA','PA':'PA','m2':'m\xb2','m3':'m\xb3','ml':'ml' };
+        const ud = udMap[(p.unidad||'ud').toLowerCase()] || p.unidad || 'ud';
+        addRow(prefix, tbId, barId, p.descripcion||'', ud, parseFloat(p.cantidad)||1, parseFloat(p.precio_unitario)||0);
+      });
+      // Limpiar para no re-inyectar si vuelven al paso
+      if (which === 'b') window._impPartidasB = [];
+      else window._impPartidas = [];
+    }, 100);
+  };
+
+  // Ir al paso 2 con datos pre-cargados
+  rmPanel();
+  document.getElementById('panel-card').before(banner);
+  userMsg('Presupuesto importado correctamente. Revisa los datos paso a paso.');
+  step2();
 }
 
 // ─── Boot
