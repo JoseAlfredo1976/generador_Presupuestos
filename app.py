@@ -449,9 +449,9 @@ def api_generar_plano_ia():
             return jsonify({"error": "No se recibio ninguna imagen."}), 400
 
         suffix = Path(img_file.filename).suffix.lower()
-        mime_map = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
-                    ".gif":"image/gif",".webp":"image/webp",".bmp":"image/bmp"}
-        mime = mime_map.get(suffix, "image/jpeg")
+        ALLOWED_PLANO = {".jpg",".jpeg",".png",".gif",".webp",".bmp",".tiff",".tif",".pdf"}
+        if suffix not in ALLOWED_PLANO:
+            return jsonify({"error": "Formato no soportado. Usa JPG, PNG, WEBP, BMP o PDF."}), 400
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="plano_ia_"))
         dest = tmp_dir / f"boceto{suffix}"
@@ -479,17 +479,37 @@ Extrae del boceto toda la informacion visible: trazado exacto de tuberias, numer
 IMPORTANTE: Devuelve UNICAMENTE el codigo SVG completo. Empieza directamente con <svg y termina con </svg>. Sin markdown, sin texto adicional."""
 
         client = _ant.Anthropic(api_key=key)
+
+        # PDF: usar API de documentos; imagen: usar API de vision
+        if suffix == ".pdf":
+            content_block = {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": img_b64,
+                },
+            }
+        else:
+            mime_map = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
+                        ".gif":"image/gif",".webp":"image/webp",".bmp":"image/bmp",
+                        ".tiff":"image/tiff",".tif":"image/tiff"}
+            content_block = {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_map.get(suffix, "image/jpeg"),
+                    "data": img_b64,
+                },
+            }
+
         response = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=16000,
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "image", "source": {
-                        "type": "base64",
-                        "media_type": mime,
-                        "data": img_b64,
-                    }},
+                    content_block,
                     {"type": "text", "text": prompt},
                 ],
             }],
@@ -529,6 +549,10 @@ def api_generar_croquis():
 
         if not svg_data and (not img_file or not img_file.filename):
             return jsonify({"error": "No se recibio ninguna imagen."}), 400
+
+        # PDF sin SVG: no se puede incrustar directamente, pedir que use IA primero
+        if not svg_data and img_file and Path(img_file.filename).suffix.lower() == ".pdf":
+            return jsonify({"error": "Para generar el PDF desde un documento PDF, usa primero 'Generar plano con IA' y activa el plano generado."}), 400
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="croquis_"))
 
