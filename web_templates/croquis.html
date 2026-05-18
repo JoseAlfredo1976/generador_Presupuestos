@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Croquis y Planos - Grupo Europa</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<style>
+  :root { --blue:#4F84B5; --blue-dark:#3a6a96; --blue-light:#e8f0f8; }
+  body { background:#f0f4f8; font-family:'Segoe UI',Calibri,sans-serif; margin:0; }
+
+  .app-header {
+    background:linear-gradient(135deg,var(--blue-dark),var(--blue));
+    color:white; padding:14px 0; box-shadow:0 2px 8px rgba(0,0,0,.2);
+    position:sticky; top:0; z-index:100;
+  }
+  .app-header h1 { font-size:1.2rem; font-weight:700; margin:0; }
+  .app-header p  { margin:2px 0 0; opacity:.85; font-size:.8rem; }
+  .nav-pill {
+    background:rgba(255,255,255,.15); color:white; border:1px solid rgba(255,255,255,.3);
+    border-radius:20px; padding:5px 14px; font-size:.82rem; text-decoration:none;
+    transition:background .2s;
+  }
+  .nav-pill:hover { background:rgba(255,255,255,.25); color:white; }
+  .nav-pill.active { background:white; color:var(--blue-dark); }
+
+  .main-wrap { max-width:820px; margin:0 auto; padding:28px 16px 80px; }
+
+  .section-title {
+    font-size:1rem; font-weight:700; color:var(--blue-dark);
+    margin:24px 0 12px; border-bottom:2px solid var(--blue-light); padding-bottom:6px;
+  }
+
+  /* Drop zone */
+  .drop-zone {
+    border:2px dashed #90afe0; border-radius:14px; padding:40px 20px;
+    text-align:center; background:white; cursor:pointer; transition:all .2s;
+    position:relative;
+  }
+  .drop-zone:hover, .drop-zone.drag-over { border-color:var(--blue); background:var(--blue-light); }
+  .drop-zone.has-file { border-color:#28a745; background:#f0fff4; }
+  .drop-zone .dz-icon { font-size:3rem; color:var(--blue); margin-bottom:10px; }
+  .drop-zone.has-file .dz-icon { color:#28a745; }
+
+  /* Preview */
+  #preview-wrap { display:none; }
+  #img-preview {
+    max-width:100%; max-height:420px; object-fit:contain;
+    border:2px solid #c8daf0; border-radius:10px; background:#f8fbff;
+    padding:8px; display:block; margin:0 auto;
+  }
+
+  /* Form */
+  .form-label { font-size:.83rem; font-weight:600; color:#555; margin-bottom:3px; }
+  .form-control, .form-select {
+    border-radius:8px; border-color:#cdd8e8; font-size:.88rem;
+  }
+  .form-control:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(79,132,181,.15); }
+
+  /* Generate button */
+  .btn-generate {
+    width:100%; padding:14px; font-size:1.05rem; font-weight:700;
+    background:linear-gradient(135deg,var(--blue),var(--blue-dark));
+    color:white; border:none; border-radius:12px;
+    box-shadow:0 4px 14px rgba(79,132,181,.4); transition:all .2s;
+  }
+  .btn-generate:hover:not(:disabled) { transform:translateY(-2px); box-shadow:0 6px 20px rgba(79,132,181,.5); }
+  .btn-generate:disabled { opacity:.6; }
+
+  /* Progress */
+  #progress-wrap { display:none; }
+  .progress-anim { height:6px; background:#e0e8f0; border-radius:3px; overflow:hidden; }
+  .progress-bar-anim {
+    height:100%; width:60%;
+    background:linear-gradient(90deg,var(--blue),var(--blue-dark));
+    border-radius:3px; animation:slide 1.5s ease-in-out infinite;
+  }
+  @keyframes slide { 0%{transform:translateX(-100%)} 100%{transform:translateX(250%)} }
+
+  /* Result */
+  #result-wrap { display:none; }
+  .btn-dl {
+    border-radius:8px; font-weight:600; padding:11px 22px; font-size:.9rem;
+    background:#B22222; color:white; border:none;
+  }
+  .btn-dl:hover { background:#8b1a1a; color:white; }
+  .btn-new { background:var(--blue); color:white; border:none; border-radius:8px; padding:11px 22px; font-size:.9rem; font-weight:600; }
+  .btn-new:hover { background:var(--blue-dark); color:white; }
+
+  .result-card {
+    background:white; border:1px solid #c8daf0; border-radius:14px;
+    padding:28px; text-align:center;
+  }
+  .result-icon { font-size:3.5rem; color:#B22222; margin-bottom:12px; }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div class="container">
+    <div class="d-flex align-items-center gap-3">
+      <i class="bi bi-map" style="font-size:1.8rem"></i>
+      <div class="flex-grow-1">
+        <h1>Croquis y Planos</h1>
+        <p>Acometidas Europa S.L. &nbsp;&middot;&nbsp; Genera documentos PDF profesionales</p>
+      </div>
+      <div class="d-flex gap-2">
+        <a href="/" class="nav-pill"><i class="bi bi-file-earmark-text me-1"></i>Presupuestos</a>
+        <a href="/analizar" class="nav-pill"><i class="bi bi-robot me-1"></i>Analisis IA</a>
+        <a href="/croquis" class="nav-pill active"><i class="bi bi-map me-1"></i>Croquis</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="main-wrap">
+
+  <div id="form-wrap">
+
+    <!-- Drop zone imagen -->
+    <div class="section-title"><i class="bi bi-image me-2"></i>Imagen del croquis o plano</div>
+    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('img-input').click()">
+      <div class="dz-icon"><i class="bi bi-image" id="dz-icon-i"></i></div>
+      <p id="dz-text"><strong>Arrastra la imagen aqui</strong> o haz clic para seleccionar</p>
+      <small>JPG, PNG, WEBP, BMP &middot; Foto, escaner o captura de pantalla</small>
+    </div>
+    <input type="file" id="img-input" accept=".jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif"
+           style="display:none" onchange="setImagen(this.files[0])">
+
+    <!-- Preview -->
+    <div id="preview-wrap" class="mt-3 mb-2">
+      <img id="img-preview" src="" alt="Preview">
+      <div class="text-center mt-2">
+        <button class="btn btn-sm btn-outline-danger" onclick="clearImagen()">
+          <i class="bi bi-x-circle me-1"></i>Quitar imagen
+        </button>
+      </div>
+    </div>
+
+    <!-- Datos del documento -->
+    <div class="section-title mt-4"><i class="bi bi-card-text me-2"></i>Datos del documento</div>
+    <div class="row g-3 mb-4">
+      <div class="col-md-6">
+        <label class="form-label">Titulo del documento</label>
+        <input type="text" id="f-titulo" class="form-control"
+               value="Croquis de Red de Saneamiento"
+               placeholder="Ej: Croquis de Red, Plano de Instalacion...">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Numero de referencia</label>
+        <input type="text" id="f-numref" class="form-control" placeholder="Ej: 4680/26">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Fecha</label>
+        <input type="date" id="f-fecha" class="form-control">
+      </div>
+      <div class="col-12">
+        <label class="form-label">Direccion / Ubicacion</label>
+        <input type="text" id="f-direccion" class="form-control"
+               placeholder="Ej: C/ Mayor 10, 28001 Madrid">
+      </div>
+      <div class="col-12">
+        <label class="form-label">Observaciones <span class="text-muted fw-normal">(opcional)</span></label>
+        <textarea id="f-notas" class="form-control" rows="3"
+          placeholder="Ej: Red de bajantes planta 1 y 2. Colector horizontal bajo solera cota -1.20 m. Material: PVC DN150/200..."></textarea>
+      </div>
+    </div>
+
+    <button class="btn btn-generate" id="btn-generar" onclick="generarPDF()">
+      <i class="bi bi-file-earmark-pdf me-2"></i>Generar PDF profesional
+    </button>
+  </div>
+
+  <!-- Progress -->
+  <div id="progress-wrap" class="mt-4">
+    <div class="text-center mb-3">
+      <i class="bi bi-file-earmark-pdf" style="font-size:2.5rem;color:var(--blue)"></i>
+      <h5 class="mt-2 mb-1">Generando documento...</h5>
+      <p class="text-muted small">Procesando imagen y maquetando el PDF profesional.</p>
+    </div>
+    <div class="progress-anim"><div class="progress-bar-anim"></div></div>
+  </div>
+
+  <!-- Result -->
+  <div id="result-wrap" class="mt-2">
+    <div class="result-card">
+      <div class="result-icon"><i class="bi bi-file-earmark-pdf-fill"></i></div>
+      <h4 class="mb-1">Documento generado</h4>
+      <p class="text-muted small mb-4" id="result-name"></p>
+      <div class="d-flex gap-3 justify-content-center flex-wrap">
+        <a id="btn-descargar" href="#" class="btn btn-dl">
+          <i class="bi bi-download me-2"></i>Descargar PDF
+        </a>
+        <button class="btn btn-new" onclick="nuevo()">
+          <i class="bi bi-plus-circle me-2"></i>Nuevo croquis
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /main-wrap -->
+
+<script>
+let imgFile = null;
+
+// Fecha de hoy por defecto
+document.getElementById('f-fecha').value = new Date().toISOString().slice(0,10);
+
+// Drag & drop
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) setImagen(f);
+});
+
+function setImagen(file) {
+  if (!file) return;
+  imgFile = file;
+
+  // Mostrar preview
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('img-preview').src = e.target.result;
+    document.getElementById('preview-wrap').style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+
+  // Actualizar drop zone
+  dz.classList.add('has-file');
+  document.getElementById('dz-icon-i').className = 'bi bi-check-circle-fill';
+  document.getElementById('dz-text').innerHTML =
+    `<strong>${esc(file.name)}</strong> &mdash; ${(file.size/1024).toFixed(0)} KB (haz clic para cambiar)`;
+}
+
+function clearImagen() {
+  imgFile = null;
+  document.getElementById('img-input').value = '';
+  document.getElementById('img-preview').src = '';
+  document.getElementById('preview-wrap').style.display = 'none';
+  dz.classList.remove('has-file');
+  document.getElementById('dz-icon-i').className = 'bi bi-image';
+  document.getElementById('dz-text').innerHTML =
+    '<strong>Arrastra la imagen aqui</strong> o haz clic para seleccionar';
+}
+
+async function generarPDF() {
+  if (!imgFile) { alert('Selecciona primero una imagen del croquis o plano.'); return; }
+
+  document.getElementById('form-wrap').style.display = 'none';
+  document.getElementById('progress-wrap').style.display = 'block';
+  document.getElementById('result-wrap').style.display = 'none';
+
+  const fd = new FormData();
+  fd.append('imagen',    imgFile);
+  fd.append('titulo',    document.getElementById('f-titulo').value.trim());
+  fd.append('num_ref',   document.getElementById('f-numref').value.trim());
+  fd.append('fecha',     document.getElementById('f-fecha').value);
+  fd.append('direccion', document.getElementById('f-direccion').value.trim());
+  fd.append('notas',     document.getElementById('f-notas').value.trim());
+
+  try {
+    const resp = await fetch('/api/generar_croquis', { method:'POST', body:fd });
+    const data = await resp.json();
+    document.getElementById('progress-wrap').style.display = 'none';
+
+    if (data.error) {
+      document.getElementById('form-wrap').style.display = 'block';
+      alert('Error: ' + data.error);
+      return;
+    }
+
+    document.getElementById('result-name').textContent = data.pdf;
+    document.getElementById('btn-descargar').href = '/descargar/' + encodeURIComponent(data.pdf);
+    document.getElementById('result-wrap').style.display = 'block';
+
+  } catch(e) {
+    document.getElementById('progress-wrap').style.display = 'none';
+    document.getElementById('form-wrap').style.display = 'block';
+    alert('Error de conexion: ' + e.message);
+  }
+}
+
+function nuevo() {
+  document.getElementById('result-wrap').style.display = 'none';
+  document.getElementById('form-wrap').style.display = 'block';
+  clearImagen();
+  window.scrollTo({ top:0, behavior:'smooth' });
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

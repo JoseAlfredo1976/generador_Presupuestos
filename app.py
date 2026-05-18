@@ -422,6 +422,180 @@ def analizar():
     return render_template("analizar.html", api_key_set=api_key_set)
 
 
+@app.route("/croquis")
+def croquis():
+    return render_template("croquis.html")
+
+
+@app.route("/api/generar_croquis", methods=["POST"])
+def api_generar_croquis():
+    """Genera un PDF profesional a partir de una imagen de croquis/plano."""
+    import base64
+    import traceback as _tb
+    tmp_dir = None
+    try:
+        img_file  = request.files.get("imagen")
+        titulo    = request.form.get("titulo", "Croquis de Red").strip()
+        num_ref   = request.form.get("num_ref", "").strip()
+        direccion = request.form.get("direccion", "").strip()
+        fecha_raw = request.form.get("fecha", datetime.now().strftime("%Y-%m-%d")).strip()
+        notas     = request.form.get("notas", "").strip()
+
+        if not img_file or not img_file.filename:
+            return jsonify({"error": "No se recibio ninguna imagen."}), 400
+
+        suffix = Path(img_file.filename).suffix.lower()
+        ALLOWED = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
+        if suffix not in ALLOWED:
+            return jsonify({"error": "Formato no soportado. Usa JPG, PNG, WEBP o BMP."}), 400
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="croquis_"))
+        img_path = tmp_dir / f"imagen{suffix}"
+        img_file.save(str(img_path))
+
+        # Fecha en formato largo
+        try:
+            dt = datetime.strptime(fecha_raw, "%Y-%m-%d")
+            meses = ["enero","febrero","marzo","abril","mayo","junio",
+                     "julio","agosto","septiembre","octubre","noviembre","diciembre"]
+            fecha_display = f"{dt.day} de {meses[dt.month-1]} de {dt.year}"
+        except ValueError:
+            fecha_display = fecha_raw
+
+        # Imagen como base64
+        mime = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
+                ".gif":"image/gif",".webp":"image/webp",".bmp":"image/bmp",
+                ".tiff":"image/tiff",".tif":"image/tiff"}.get(suffix, "image/jpeg")
+        img_b64 = base64.b64encode(img_path.read_bytes()).decode()
+        img_src = f"data:{mime};base64,{img_b64}"
+
+        # HTML del documento
+        notas_html = ""
+        if notas:
+            notas_html = f"""
+            <div class="notas-box">
+              <div class="notas-title">Observaciones</div>
+              <div class="notas-text">{notas}</div>
+            </div>"""
+
+        meta_rows = ""
+        if num_ref:
+            meta_rows += f'<tr><td class="meta-k">Referencia</td><td class="meta-v">{num_ref}</td></tr>'
+        if direccion:
+            meta_rows += f'<tr><td class="meta-k">Ubicacion</td><td class="meta-v">{direccion}</td></tr>'
+        meta_rows += f'<tr><td class="meta-k">Fecha</td><td class="meta-v">{fecha_display}</td></tr>'
+
+        html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page {{ margin: 1.8cm 1.8cm 2cm; }}
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: 'Arial', sans-serif; color: #1a2a3a; background: white; }}
+
+  .header {{
+    background: linear-gradient(135deg, #1a3a5c 0%, #2e6da4 100%);
+    color: white; padding: 18px 24px; border-radius: 8px 8px 0 0;
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 0;
+  }}
+  .header-brand {{ font-size: 13px; font-weight: 700; letter-spacing: 0.05em; }}
+  .header-sub {{ font-size: 9px; opacity: 0.8; margin-top: 3px; }}
+  .header-doc {{ text-align: right; font-size: 9px; opacity: 0.75; }}
+
+  .title-bar {{
+    background: #f0f6ff; border: 1px solid #c8daf0; border-top: none;
+    padding: 14px 24px; border-radius: 0 0 4px 4px; margin-bottom: 14px;
+  }}
+  .doc-title {{ font-size: 16px; font-weight: 700; color: #1a3a5c; text-transform: uppercase; }}
+  .doc-subtitle {{ font-size: 10px; color: #5a7a9a; margin-top: 3px; }}
+
+  .meta-table {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 10px; }}
+  .meta-k {{ background: #e8f0f8; padding: 6px 12px; font-weight: 700;
+             color: #2e6da4; width: 120px; border: 1px solid #c8daf0; }}
+  .meta-v {{ padding: 6px 12px; border: 1px solid #c8daf0; color: #1a2a3a; }}
+
+  .img-frame {{
+    border: 2px solid #c8daf0; border-radius: 6px; padding: 12px;
+    background: #f8fbff; text-align: center; margin-bottom: 14px;
+  }}
+  .img-frame img {{ max-width: 100%; max-height: 480px; object-fit: contain; }}
+  .img-caption {{ font-size: 9px; color: #7a9ab8; margin-top: 8px; font-style: italic; }}
+
+  .notas-box {{
+    border-left: 4px solid #2e6da4; background: #f0f6ff;
+    padding: 10px 14px; border-radius: 0 6px 6px 0; margin-bottom: 14px;
+  }}
+  .notas-title {{ font-size: 10px; font-weight: 700; color: #2e6da4; margin-bottom: 4px; }}
+  .notas-text {{ font-size: 10px; color: #1a2a3a; line-height: 1.5; }}
+
+  .footer {{
+    position: fixed; bottom: 0; left: 1.8cm; right: 1.8cm;
+    border-top: 1px solid #c8daf0; padding-top: 6px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 8px; color: #8a9ab8;
+  }}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="header-brand">ACOMETIDAS EUROPA S.L.</div>
+    <div class="header-sub">Saneamiento Tecnico &bull; Poceria &bull; CCTV</div>
+  </div>
+  <div class="header-doc">
+    {'<div>Ref: ' + num_ref + '</div>' if num_ref else ''}
+    <div>{fecha_display}</div>
+  </div>
+</div>
+
+<div class="title-bar">
+  <div class="doc-title">{titulo}</div>
+  {'<div class="doc-subtitle">' + direccion + '</div>' if direccion else ''}
+</div>
+
+<table class="meta-table">
+  {meta_rows}
+</table>
+
+<div class="img-frame">
+  <img src="{img_src}" alt="{titulo}">
+  <div class="img-caption">{titulo}{' &mdash; ' + direccion if direccion else ''}</div>
+</div>
+
+{notas_html}
+
+<div class="footer">
+  <span>Acometidas Europa S.L. &bull; Documento tecnico de uso interno</span>
+  <span>{fecha_display}</span>
+</div>
+
+</body>
+</html>"""
+
+        html_path = tmp_dir / "croquis.html"
+        html_path.write_text(html, encoding="utf-8")
+
+        import weasyprint
+        stem = _safe_filename(f"Croquis_{num_ref or titulo}", maxlen=50)
+        pdf_path = SALIDAS_DIR / f"{stem}.pdf"
+        weasyprint.HTML(filename=str(html_path)).write_pdf(str(pdf_path))
+
+        if not pdf_path.exists():
+            return jsonify({"error": "No se pudo generar el PDF."}), 500
+
+        return jsonify({"pdf": pdf_path.name})
+
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
+    finally:
+        if tmp_dir and tmp_dir.exists():
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 @app.route("/api/analizar", methods=["POST"])
 def api_analizar():
     import traceback as _tb_mod
