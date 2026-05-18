@@ -323,7 +323,7 @@
     <div class="text-center mb-3">
       <i class="bi bi-robot" style="font-size:2.5rem; color:var(--blue)"></i>
       <h5 class="mt-2 mb-1">Analizando archivos...</h5>
-      <p class="text-muted small" id="progress-msg">El perito tecnico IA esta procesando los archivos. Esto puede tardar entre 30 y 120 segundos segun el volumen.</p>
+      <p class="text-muted small" id="progress-msg">El perito tecnico IA esta procesando los archivos. Esto puede tardar entre 15 y 60 segundos segun el volumen.</p>
     </div>
     <div class="progress-anim"><div class="progress-bar-anim"></div></div>
   </div>
@@ -487,49 +487,17 @@ async function startAnalysis() {
   if (croquis) fd.append('croquis', croquis);
 
   try {
-    // Enviar archivos y obtener job_id de inmediato
-    const startResp = await fetch('/api/analizar', { method:'POST', body:fd });
-    const startData = await startResp.json();
-    if (startData.error || !startData.job_id) {
-      document.getElementById('progress-wrap').style.display = 'none';
-      showError(startData.error || 'Error al iniciar el analisis.');
-      return;
+    const resp = await fetch('/api/analizar', { method:'POST', body:fd });
+    const data = await resp.json();
+    document.getElementById('progress-wrap').style.display = 'none';
+    if (data.error) {
+      showError(data.error, data.traceback);
+    } else {
+      currentReport = data;
+      chatHistory = [];
+      showResult(data);
+      initChat();
     }
-
-    // Polling cada 3 segundos hasta que el job termine
-    const jobId = startData.job_id;
-    let elapsed = 0;
-    const progressMsg = document.getElementById('progress-msg');
-
-    while (true) {
-      await new Promise(r => setTimeout(r, 3000));
-      elapsed += 3;
-      if (progressMsg) {
-        const mins = Math.floor(elapsed / 60);
-        const secs = elapsed % 60;
-        const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-        progressMsg.textContent = `Analizando con IA... (${timeStr}) PDFs grandes pueden tardar hasta 2 minutos.`;
-      }
-
-      const pollResp = await fetch(`/api/analizar_result/${jobId}`);
-      const pollData = await pollResp.json();
-
-      if (pollData.status === 'processing') continue;
-
-      // Terminado (exito o error)
-      document.getElementById('progress-wrap').style.display = 'none';
-      if (pollData.error) {
-        showError(pollData.error, pollData.traceback);
-      } else {
-        console.log('ANALISIS OK - datos recibidos:', JSON.stringify(pollData, null, 2));
-        currentReport = pollData;
-        chatHistory = [];
-        showResult(pollData);
-        initChat();
-      }
-      return;
-    }
-
   } catch(e) {
     document.getElementById('progress-wrap').style.display = 'none';
     showError('Error de conexion: ' + e.message);
@@ -538,24 +506,6 @@ async function startAnalysis() {
 
 // ── Render result
 function showResult(r) {
-  console.log('showResult - titulo:', r.titulo, 'objeto_len:', (r.objeto||'').length, 'raw_len:', (r._raw||'').length);
-
-  // Si el informe no tiene contenido util, mostrar respuesta cruda para diagnostico
-  const tieneContenido = r.titulo || r.objeto || (r.tramos && r.tramos.length) || (r.patologias && r.patologias.length);
-  if (!tieneContenido) {
-    const wrap = document.getElementById('result-wrap');
-    const rawText = r._raw || JSON.stringify(r, null, 2);
-    wrap.innerHTML = `
-      <div class="alert alert-warning">
-        <strong>El informe no contiene contenido estructurado.</strong><br>
-        Respuesta de la IA (primeros 3000 caracteres):
-      </div>
-      <pre style="background:#f8f9fa;padding:12px;border-radius:8px;font-size:.78rem;max-height:400px;overflow:auto">${esc(rawText.slice(0, 3000))}</pre>
-      <button class="btn btn-new-analysis mt-3" onclick="newAnalysis()"><i class="bi bi-arrow-left me-1"></i>Nuevo Analisis</button>`;
-    wrap.style.display = 'block';
-    return;
-  }
-
   const urgencia = r.nivel_urgencia_global || 'Medio';
   const inmediata = r.requiere_intervencion_inmediata;
 

@@ -12,8 +12,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from flask import (Flask, Response, abort, jsonify, redirect, render_template,
-                   request, send_file, stream_with_context, url_for)
+from flask import (Flask, abort, jsonify, redirect, render_template,
+                   request, send_file, url_for)
 
 from core.ai_analyst import extract_partidas_from_subcontrata, extract_solicitud_data
 from core.docx_generator import DocxGenerator
@@ -70,11 +70,6 @@ app.secret_key = "grupo-europa-presupuestos"
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
 
 _tarifas: TarifaLoader | None = None
-
-# ── Job store para analisis IA (polling) ────────────────────────────────────
-import threading as _threading
-_jobs: dict[str, dict] = {}
-_jobs_lock = _threading.Lock()
 
 
 def get_tarifas() -> TarifaLoader:
@@ -429,130 +424,125 @@ def analizar():
 
 @app.route("/api/analizar", methods=["POST"])
 def api_analizar():
-    """
-    Arranca el analisis IA en background y devuelve job_id de inmediato.
-    El cliente hace polling a /api/analizar_result/<job_id> cada 3 segundos.
-    """
     import traceback as _tb_mod
+    _log = Path("C:/debug_analizar.log")
+
+    def _write_log(msg: str):
+        try:
+            with open(_log, "a", encoding="utf-8") as _f:
+                _f.write(msg + "\n")
+        except Exception:
+            pass
+
+    _write_log("=== NUEVA PETICION /api/analizar ===")
 
     try:
         from core.ai_analyst import (analyze, generate_report_docx,
                                       analyze_wincam, generate_wincam_docx)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        tb = _tb_mod.format_exc()
+        _write_log("ERROR IMPORTANDO ai_analyst:\n" + tb)
+        return jsonify({"error": str(e), "traceback": tb}), 500
 
-    tipo      = request.form.get("tipo_analisis", "general")
-    formato   = request.form.get("formato", "descriptivo")
-    context   = request.form.get("contexto", "")
-    api_key   = request.form.get("api_key", "").strip()
-    num_ref   = request.form.get("num_ref", "").strip()
-    cliente   = request.form.get("cliente", "").strip()
-    proyecto  = request.form.get("proyecto", num_ref).strip()
-    calle     = request.form.get("calle", "").strip()
-    poblacion = request.form.get("poblacion", "").strip()
+    try:
+        tipo = request.form.get("tipo_analisis", "general")
+        formato = request.form.get("formato", "descriptivo")  # descriptivo | wincam | ambos
+        context = request.form.get("contexto", "")
+        api_key = request.form.get("api_key", "").strip()
+        num_ref = request.form.get("num_ref", "").strip()
+        cliente = request.form.get("cliente", "").strip()
+        proyecto = request.form.get("proyecto", num_ref).strip()
+        calle = request.form.get("calle", "").strip()
+        poblacion = request.form.get("poblacion", "").strip()
 
-    session_id = uuid.uuid4().hex[:8]
-    session_dir = UPLOADS_DIR / session_id
-    session_dir.mkdir(parents=True, exist_ok=True)
+        _write_log(f"tipo={tipo} formato={formato} api_key={'SET' if api_key else 'ENV'}")
 
-    saved_files: list[Path] = []
-    for uploaded in request.files.getlist("archivos"):
-        if not uploaded.filename:
-            continue
-        suffix = Path(uploaded.filename).suffix.lower()
-        if suffix not in ALLOWED_IA_EXTENSIONS:
-            continue
-        dest = session_dir / f"{uuid.uuid4().hex[:6]}{suffix}"
-        uploaded.save(str(dest))
-        if dest.exists():
-            saved_files.append(dest)
+        # Save uploaded files
+        session_id = uuid.uuid4().hex[:8]
+        session_dir = UPLOADS_DIR / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        _write_log(f"session_dir={session_dir}")
 
-    croquis_path = None
-    croquis_file = request.files.get("croquis")
-    if croquis_file and croquis_file.filename:
-        suf_c = Path(croquis_file.filename).suffix.lower()
-        if suf_c in ALLOWED_IA_EXTENSIONS:
-            dest_c = session_dir / f"croquis{suf_c}"
-            croquis_file.save(str(dest_c))
-            if dest_c.exists():
-                croquis_path = dest_c
+        saved_files: list[Path] = []
+        for uploaded in request.files.getlist("archivos"):
+            if not uploaded.filename:
+                continue
+            suffix = Path(uploaded.filename).suffix.lower()
+            if suffix not in ALLOWED_IA_EXTENSIONS:
+                _write_log(f"Extension no permitida: {suffix}")
+                continue
+            dest = session_dir / f"{uuid.uuid4().hex[:6]}{suffix}"
+            _write_log(f"Guardando {uploaded.filename} -> {dest}")
+            uploaded.save(str(dest))
+            if dest.exists():
+                saved_files.append(dest)
+                _write_log(f"OK: {dest.stat().st_size} bytes")
+            else:
+                _write_log(f"WARN: no existe tras save: {dest}")
 
-    if not saved_files:
-        return jsonify({"error": "No se recibieron archivos validos o no se pudieron guardar."}), 400
+        # Croquis (optional - single file: image or PDF)
+        croquis_path = None
+        croquis_file = request.files.get("croquis")
+        if croquis_file and croquis_file.filename:
+            suf_c = Path(croquis_file.filename).suffix.lower()
+            if suf_c in ALLOWED_IA_EXTENSIONS:
+                dest_c = session_dir / f"croquis{suf_c}"
+                croquis_file.save(str(dest_c))
+                if dest_c.exists():
+                    croquis_path = dest_c
+                    _write_log(f"Croquis guardado: {dest_c} ({dest_c.stat().st_size} bytes)")
 
-    job_id = uuid.uuid4().hex[:12]
-    with _jobs_lock:
-        _jobs[job_id] = {"status": "processing"}
+        _write_log(f"saved_files={len(saved_files)} croquis={'si' if croquis_path else 'no'}")
+        if not saved_files:
+            return jsonify({"error": "No se recibieron archivos validos o no se pudieron guardar."}), 400
 
-    def _run():
-        try:
-            result = {"_formato": formato}
-            if formato in ("descriptivo", "ambos"):
-                report = analyze(saved_files, tipo, context, api_key, croquis_path=croquis_path)
-                import logging as _lg
-                _lg.getLogger(__name__).info(
-                    "analyze() OK - titulo=%r objeto_len=%d tramos=%d patologias=%d raw_len=%d",
-                    report.get("titulo", ""),
-                    len(report.get("objeto", "") or ""),
-                    len(report.get("tramos", []) or []),
-                    len(report.get("patologias", []) or []),
-                    len(report.get("_raw", "") or ""),
-                )
-                result.update(report)
-                docx_name = f"Informe_IA_{session_id}.docx"
-                docx_path = SALIDAS_DIR / docx_name
-                try:
-                    generate_report_docx(report, docx_path, num_ref=num_ref, cliente=cliente)
-                    result["_docx"] = docx_name
-                except Exception as e:
-                    result["_docx_error"] = str(e)
-                try:
-                    pdf_p = PdfConverter().convert(docx_path, SALIDAS_DIR)
-                    if pdf_p:
-                        result["_pdf"] = pdf_p.name
-                except Exception:
-                    pass
-            if formato in ("wincam", "ambos"):
-                wc_report = analyze_wincam(saved_files, context, api_key,
-                                           proyecto=proyecto or num_ref,
-                                           calle=calle, poblacion=poblacion,
-                                           croquis_path=croquis_path)
-                result["_wincam"] = wc_report
-                wc_name = f"Informe_WinCam_{session_id}.docx"
-                wc_path = SALIDAS_DIR / wc_name
-                try:
-                    generate_wincam_docx(wc_report, wc_path, num_ref=num_ref, cliente=cliente)
-                    result["_docx_wincam"] = wc_name
-                except Exception as e:
-                    result["_wincam_docx_error"] = str(e)
-            with _jobs_lock:
-                _jobs[job_id] = {"status": "done", "result": result}
-        except Exception as e:
-            with _jobs_lock:
-                _jobs[job_id] = {"status": "error", "error": str(e),
-                                  "traceback": _tb_mod.format_exc()}
+        result = {"_formato": formato}
 
-    _threading.Thread(target=_run, daemon=True).start()
-    return jsonify({"job_id": job_id})
+        # Formato descriptivo (o ambos)
+        if formato in ("descriptivo", "ambos"):
+            _write_log("Llamando a analyze() descriptivo...")
+            report = analyze(saved_files, tipo, context, api_key, croquis_path=croquis_path)
+            _write_log("analyze() OK")
+            result.update(report)
+            docx_name = f"Informe_IA_{session_id}.docx"
+            docx_path = SALIDAS_DIR / docx_name
+            try:
+                generate_report_docx(report, docx_path, num_ref=num_ref, cliente=cliente)
+                result["_docx"] = docx_name
+            except Exception as e:
+                result["_docx_error"] = str(e)
+                _write_log(f"DOCX descriptivo error: {e}")
+            try:
+                pdf_path = PdfConverter().convert(docx_path, SALIDAS_DIR)
+                if pdf_path:
+                    result["_pdf"] = pdf_path.name
+            except Exception:
+                pass
 
+        # Formato WinCam (o ambos)
+        if formato in ("wincam", "ambos"):
+            _write_log("Llamando a analyze_wincam()...")
+            wc_report = analyze_wincam(saved_files, context, api_key,
+                                       proyecto=proyecto or num_ref,
+                                       calle=calle, poblacion=poblacion,
+                                       croquis_path=croquis_path)
+            _write_log("analyze_wincam() OK")
+            result["_wincam"] = wc_report
+            wc_name = f"Informe_WinCam_{session_id}.docx"
+            wc_path = SALIDAS_DIR / wc_name
+            try:
+                generate_wincam_docx(wc_report, wc_path, num_ref=num_ref, cliente=cliente)
+                result["_docx_wincam"] = wc_name
+            except Exception as e:
+                result["_wincam_docx_error"] = str(e)
+                _write_log(f"DOCX WinCam error: {e}")
 
-@app.route("/api/analizar_result/<job_id>")
-def api_analizar_result(job_id: str):
-    """Polling: devuelve estado del job. processing / done (con resultado) / error."""
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-    if not job:
-        return jsonify({"error": "Job no encontrado o expirado"}), 404
-    if job["status"] == "processing":
-        return jsonify({"status": "processing"})
-    if job["status"] == "error":
-        with _jobs_lock:
-            _jobs.pop(job_id, None)
-        return jsonify({"error": job["error"], "traceback": job.get("traceback", "")})
-    result = job["result"]
-    with _jobs_lock:
-        _jobs.pop(job_id, None)
-    return jsonify(result)
+        return jsonify(result)
+
+    except Exception as e:
+        tb = _tb_mod.format_exc()
+        _write_log("=== EXCEPCION ===\n" + tb)
+        return jsonify({"error": f"{str(e)}\n\n--- TRACEBACK ---\n{tb}", "traceback": tb}), 500
 
 
 @app.route("/api/generar_partidas_ia", methods=["POST"])
