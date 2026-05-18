@@ -538,6 +538,24 @@ async function startAnalysis() {
 
 // ── Render result
 function showResult(r) {
+  console.log('showResult - titulo:', r.titulo, 'objeto_len:', (r.objeto||'').length, 'raw_len:', (r._raw||'').length);
+
+  // Si el informe no tiene contenido util, mostrar respuesta cruda para diagnostico
+  const tieneContenido = r.titulo || r.objeto || (r.tramos && r.tramos.length) || (r.patologias && r.patologias.length);
+  if (!tieneContenido) {
+    const wrap = document.getElementById('result-wrap');
+    const rawText = r._raw || JSON.stringify(r, null, 2);
+    wrap.innerHTML = `
+      <div class="alert alert-warning">
+        <strong>El informe no contiene contenido estructurado.</strong><br>
+        Respuesta de la IA (primeros 3000 caracteres):
+      </div>
+      <pre style="background:#f8f9fa;padding:12px;border-radius:8px;font-size:.78rem;max-height:400px;overflow:auto">${esc(rawText.slice(0, 3000))}</pre>
+      <button class="btn btn-new-analysis mt-3" onclick="newAnalysis()"><i class="bi bi-arrow-left me-1"></i>Nuevo Analisis</button>`;
+    wrap.style.display = 'block';
+    return;
+  }
+
   const urgencia = r.nivel_urgencia_global || 'Medio';
   const inmediata = r.requiere_intervencion_inmediata;
 

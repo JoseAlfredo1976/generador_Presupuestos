@@ -489,6 +489,15 @@ def api_analizar():
             result = {"_formato": formato}
             if formato in ("descriptivo", "ambos"):
                 report = analyze(saved_files, tipo, context, api_key, croquis_path=croquis_path)
+                import logging as _lg
+                _lg.getLogger(__name__).info(
+                    "analyze() OK - titulo=%r objeto_len=%d tramos=%d patologias=%d raw_len=%d",
+                    report.get("titulo", ""),
+                    len(report.get("objeto", "") or ""),
+                    len(report.get("tramos", []) or []),
+                    len(report.get("patologias", []) or []),
+                    len(report.get("_raw", "") or ""),
+                )
                 result.update(report)
                 docx_name = f"Informe_IA_{session_id}.docx"
                 docx_path = SALIDAS_DIR / docx_name
