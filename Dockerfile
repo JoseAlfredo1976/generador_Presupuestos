@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     libfontconfig1 \
     fonts-liberation \
     shared-mime-info \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
