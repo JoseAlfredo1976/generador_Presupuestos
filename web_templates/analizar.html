@@ -521,6 +521,7 @@ async function startAnalysis() {
       if (pollData.error) {
         showError(pollData.error, pollData.traceback);
       } else {
+        console.log('ANALISIS OK - datos recibidos:', JSON.stringify(pollData, null, 2));
         currentReport = pollData;
         chatHistory = [];
         showResult(pollData);
