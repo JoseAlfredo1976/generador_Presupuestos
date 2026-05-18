@@ -993,7 +993,14 @@ function descargarSVG() {
 
 // ── Generate PDF
 async function generarPDF() {
-  if (!baseCanvas) { alert('Selecciona primero una imagen del croquis o plano.'); return; }
+  if (!baseCanvas && !(usandoSvg && svgGenerado)) {
+    if (pdfFile) {
+      alert('Usa primero "Generar plano con IA" y activa el plano generado antes de generar el PDF.');
+    } else {
+      alert('Selecciona primero una imagen del croquis o plano.');
+    }
+    return;
+  }
 
   document.getElementById('btn-generar').disabled = true;
   document.getElementById('progress-wrap').style.display = 'block';
