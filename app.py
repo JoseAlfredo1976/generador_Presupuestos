@@ -458,37 +458,15 @@ def api_generar_plano_ia():
         img_file.save(str(dest))
         img_b64 = base64.b64encode(dest.read_bytes()).decode()
 
-        ctx_extra = f"\nInformacion adicional del usuario: {contexto}" if contexto else ""
-
-        prompt = f"""Analiza este croquis a mano alzada de una instalacion de saneamiento y genera un plano tecnico limpio en formato SVG.
-
-REQUISITOS DEL SVG:
-- viewBox="0 0 900 660", width="900", height="660", fondo blanco (#ffffff)
-- TUBERIAS Y COLECTORES: lineas rectas con stroke="#1a2a3a", stroke-width="2.5" para principales, "1.5" para ramales. Usa <line> o <polyline>.
-- POZOS DE REGISTRO: circulo exterior <circle r="13" fill="none" stroke="#1a2a3a" stroke-width="2"/> + circulo interior <circle r="4" fill="#555"/>
-- BAJANTES: cuadrado <rect width="14" height="14" fill="none" stroke="#1a2a3a" stroke-width="2"/> con aspa <line> interior
-- FLECHAS DE FLUJO: usar <marker> con flecha y colocarlas en mitad de cada tramo con marker-mid
-- COTAS/DIMENSIONES: lineas finas (#888, stroke-width="0.8") con texto de medida encima
-- ETIQUETAS: <text font-family="Arial,sans-serif" font-size="11" fill="#1a2a3a"> con fondo blanco <rect> detras si hace falta legibilidad
-- DIAMETROS: texto junto a la tuberia "DN150", "DN200", etc.
-- CAJETIN esquina inferior derecha (180x90px): rectangulo con lineas divisorias, "Red de Saneamiento", escala "S/E", fecha actual
-- LEYENDA esquina inferior izquierda: muestra simbolos usados con su descripcion
-
-Extrae del boceto toda la informacion visible: trazado exacto de tuberias, numero y posicion de pozos, bajantes, diametros, materiales, longitudes, cotas de nivel, orientacion del flujo, referencias a plantas o niveles. Si algo es ilegible usa "?".{ctx_extra}
-
-IMPORTANTE: Devuelve UNICAMENTE el codigo SVG completo. Empieza directamente con <svg y termina con </svg>. Sin markdown, sin texto adicional."""
+        ctx_extra = f"\nIndicaciones adicionales: {contexto}" if contexto else ""
 
         client = _ant.Anthropic(api_key=key)
 
-        # PDF: usar API de documentos; imagen: usar API de vision
+        # Construir bloque de contenido segun tipo de archivo
         if suffix == ".pdf":
             content_block = {
                 "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": "application/pdf",
-                    "data": img_b64,
-                },
+                "source": {"type": "base64", "media_type": "application/pdf", "data": img_b64},
             }
         else:
             mime_map = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
@@ -496,33 +474,125 @@ IMPORTANTE: Devuelve UNICAMENTE el codigo SVG completo. Empieza directamente con
                         ".tiff":"image/tiff",".tif":"image/tiff"}
             content_block = {
                 "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": mime_map.get(suffix, "image/jpeg"),
-                    "data": img_b64,
-                },
+                "source": {"type": "base64",
+                           "media_type": mime_map.get(suffix, "image/jpeg"),
+                           "data": img_b64},
             }
 
-        response = client.messages.create(
+        # ── PASO 1: extraer estructura como JSON con posiciones en % ──────────
+        PROMPT_PASO1 = """Analiza este croquis/plano con mucha atencion. Extrae TODOS los elementos visibles.
+Para cada elemento indica su posicion como porcentaje del ancho (x) y alto (y) de la imagen, de 0 a 100.
+Sé muy preciso con las posiciones relativas: si un pozo esta a la izquierda de otro, el x del primero debe ser menor.
+
+Devuelve UNICAMENTE este JSON (sin markdown, sin texto adicional):
+{
+  "tuberias": [{"x1":25,"y1":40,"x2":70,"y2":40,"dn":"DN150","material":"PVC","longitud":"12m","flecha":true}],
+  "pozos": [{"x":25,"y":40,"id":"P1","cota_tapa":null,"cota_solera":null}],
+  "bajantes": [{"x":50,"y":20,"id":"B1"}],
+  "arquetas": [{"x":80,"y":60,"id":"A1"}],
+  "etiquetas": [{"x":50,"y":10,"texto":"texto visible en el boceto"}],
+  "cotas": [{"x1":20,"y1":80,"x2":60,"y2":80,"valor":"15.00m"}],
+  "descripcion": "descripcion breve de la instalacion representada"
+}
+Omite claves cuyo array este vacio. Si un campo es desconocido usa null."""
+
+        resp1 = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4000,
+            messages=[{"role": "user", "content": [content_block, {"type": "text", "text": PROMPT_PASO1}]}],
+        )
+
+        raw1 = resp1.content[0].text.strip()
+        json_m = re.search(r"\{[\s\S]*\}", raw1)
+        estructura = {}
+        if json_m:
+            try:
+                estructura = json.loads(json_m.group(0))
+            except Exception:
+                estructura = {}
+
+        desc = estructura.get("descripcion", "Red de saneamiento")[:60]
+        fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+
+        # ── PASO 2: generar SVG fiel a las coordenadas extraidas ──────────────
+        PROMPT_PASO2 = f"""Genera un plano tecnico SVG usando EXACTAMENTE estas coordenadas extraidas del boceto original:
+
+{json.dumps(estructura, ensure_ascii=False, indent=2)}{ctx_extra}
+
+ESCALA obligatoria:
+  Area util del plano: x=[30,850], y=[30,560]  (820 px ancho, 530 px alto)
+  svg_x = 30 + (campo_x / 100.0) * 820
+  svg_y = 30 + (campo_y / 100.0) * 530
+  Aplica esta formula a TODOS los campos x, y, x1, y1, x2, y2.
+
+ESPECIFICACION SVG:
+viewBox="0 0 900 660" width="900" height="660"
+<rect width="900" height="660" fill="#ffffff"/>
+
+<defs>
+  <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a2a3a"/>
+  </marker>
+</defs>
+
+TUBERIAS: <line x1="..." y1="..." x2="..." y2="..." stroke="#1a2a3a" stroke-width="2.5" marker-end="url(#arr)"/>
+  Etiqueta DN junto a punto medio de la linea, font-size="10" fill="#1a2a3a"
+  Si flecha=false omite marker-end
+
+POZOS: <g transform="translate(svg_x,svg_y)">
+  <circle r="12" fill="white" stroke="#1a2a3a" stroke-width="2"/>
+  <circle r="4" fill="#555"/>
+  <text text-anchor="middle" dy="-18" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
+</g>
+
+BAJANTES: <g transform="translate(svg_x,svg_y)">
+  <rect x="-8" y="-8" width="16" height="16" fill="white" stroke="#1a2a3a" stroke-width="2"/>
+  <line x1="-6" y1="-6" x2="6" y2="6" stroke="#1a2a3a" stroke-width="1.5"/>
+  <line x1="6" y1="-6" x2="-6" y2="6" stroke="#1a2a3a" stroke-width="1.5"/>
+  <text text-anchor="middle" dy="-14" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
+</g>
+
+ARQUETAS: <g transform="translate(svg_x,svg_y)">
+  <rect x="-10" y="-10" width="20" height="20" fill="white" stroke="#1a2a3a" stroke-width="2"/>
+  <text text-anchor="middle" dy="-16" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
+</g>
+
+ETIQUETAS: <text x="svg_x" y="svg_y" font-family="Arial" font-size="11" fill="#333">texto</text>
+
+COTAS: <line x1="..." y1="..." x2="..." y2="..." stroke="#aaa" stroke-width="0.8"/>
+  + marcas perpendiculares en extremos (4px) + <text font-size="9" fill="#666">valor</text>
+
+CAJETIN (x=688, y=555, 200x92):
+<rect x="688" y="555" width="200" height="92" fill="white" stroke="#1a2a3a" stroke-width="1.5"/>
+<line x1="688" y1="580" x2="888" y2="580" stroke="#1a2a3a" stroke-width="0.8"/>
+<line x1="688" y1="600" x2="888" y2="600" stroke="#1a2a3a" stroke-width="0.8"/>
+<line x1="688" y1="622" x2="888" y2="622" stroke="#1a2a3a" stroke-width="0.8"/>
+<text x="788" y="572" text-anchor="middle" font-family="Arial" font-size="9" font-weight="bold" fill="#1a2a3a">RED DE SANEAMIENTO</text>
+<text x="788" y="592" text-anchor="middle" font-family="Arial" font-size="8" fill="#333">{desc}</text>
+<text x="700" y="613" font-family="Arial" font-size="8" fill="#555">Fecha: {fecha_hoy}</text>
+<text x="820" y="613" font-family="Arial" font-size="8" fill="#555">Esc: S/E</text>
+<text x="788" y="638" text-anchor="middle" font-family="Arial" font-size="8" fill="#555">Acometidas Europa S.L.</text>
+
+LEYENDA (x=12, y=555, 160x92): muestra solo simbolos presentes en el plano generado.
+
+DEVUELVE UNICAMENTE el SVG. Empieza con <svg y termina con </svg>. Sin markdown."""
+
+        resp2 = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=16000,
             messages=[{
                 "role": "user",
-                "content": [
-                    content_block,
-                    {"type": "text", "text": prompt},
-                ],
+                "content": [content_block, {"type": "text", "text": PROMPT_PASO2}],
             }],
         )
 
-        raw = response.content[0].text.strip()
-        # Extraer SVG limpio
+        raw = resp2.content[0].text.strip()
         svg_match = re.search(r"<svg[\s\S]*?</svg>", raw, re.IGNORECASE)
         if not svg_match:
             return jsonify({"error": "La IA no genero un SVG valido.", "_raw": raw[:1000]}), 500
 
         svg = svg_match.group(0)
-        return jsonify({"svg": svg})
+        return jsonify({"svg": svg, "estructura": estructura})
 
     except Exception as e:
         return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
