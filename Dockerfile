@@ -25,4 +25,4 @@ RUN mkdir -p config
 ENV PYTHONUNBUFFERED=1
 
 # Railway inyecta PORT automaticamente; gunicorn lo usa
-CMD gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 2 --timeout 120 --access-logfile - app:app
+CMD gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 1 --timeout 300 --access-logfile - app:app
