@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unicodedata
 import uuid
 from datetime import datetime
@@ -15,7 +16,8 @@ from pathlib import Path
 from flask import (Flask, abort, jsonify, redirect, render_template,
                    request, send_file, url_for)
 
-from core.ai_analyst import extract_partidas_from_subcontrata, extract_solicitud_data
+from core.ai_analyst import (extract_partidas_from_subcontrata, extract_solicitud_data,
+                             extract_subcontrata_datos)
 from core.docx_generator import DocxGenerator
 from core.excel_generator import ExcelGenerator
 from core.html_generator import HtmlGenerator
@@ -67,7 +69,15 @@ ALLOWED_IA_EXTENSIONS = {
 
 app = Flask(__name__, template_folder="web_templates")
 app.secret_key = "grupo-europa-presupuestos"
-app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB
+
+@app.errorhandler(413)
+def _too_large(_e):
+    limite_mb = app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024)
+    return jsonify({
+        "error": f"Archivos demasiado grandes. Limite total: {limite_mb} MB. "
+                 "Sube menos videos a la vez o comprimelos."
+    }), 413
 
 _tarifas: TarifaLoader | None = None
 
@@ -496,7 +506,21 @@ Devuelve UNICAMENTE este JSON (sin markdown, sin texto adicional):
 }
 Omite claves cuyo array este vacio. Si un campo es desconocido usa null."""
 
-        resp1 = client.messages.create(
+        def _api_create(client, **kwargs):
+            """Llama a messages.create con reintentos en caso de 529 (overloaded)."""
+            delays = [5, 15, 30]
+            for attempt, delay in enumerate(delays, 1):
+                try:
+                    return client.messages.create(**kwargs)
+                except Exception as exc:
+                    code = getattr(exc, "status_code", None)
+                    if code == 529 and attempt < len(delays):
+                        time.sleep(delay)
+                        continue
+                    raise
+
+        resp1 = _api_create(
+            client,
             model="claude-sonnet-4-6",
             max_tokens=4000,
             messages=[{"role": "user", "content": [content_block, {"type": "text", "text": PROMPT_PASO1}]}],
@@ -577,7 +601,8 @@ LEYENDA (x=12, y=555, 160x92): muestra solo simbolos presentes en el plano gener
 
 DEVUELVE UNICAMENTE el SVG. Empieza con <svg y termina con </svg>. Sin markdown."""
 
-        resp2 = client.messages.create(
+        resp2 = _api_create(
+            client,
             model="claude-sonnet-4-6",
             max_tokens=16000,
             messages=[{
@@ -824,6 +849,31 @@ def api_analizar():
             if not uploaded.filename:
                 continue
             suffix = Path(uploaded.filename).suffix.lower()
+
+            # ZIP: extraer y anadir los archivos validos que contenga
+            if suffix == ".zip":
+                import zipfile, shutil as _sh
+                zpath = session_dir / f"{uuid.uuid4().hex[:6]}.zip"
+                uploaded.save(str(zpath))
+                try:
+                    with zipfile.ZipFile(zpath) as zf:
+                        for member in zf.namelist():
+                            if member.endswith("/"):
+                                continue
+                            msuf = Path(member).suffix.lower()
+                            if msuf not in ALLOWED_IA_EXTENSIONS:
+                                continue
+                            # nombre aleatorio (ignora la ruta interna -> evita zip-slip)
+                            dest = session_dir / f"{uuid.uuid4().hex[:6]}{msuf}"
+                            with zf.open(member) as src, open(dest, "wb") as out:
+                                _sh.copyfileobj(src, out)
+                            if dest.exists() and dest.stat().st_size > 0:
+                                saved_files.append(dest)
+                                _write_log(f"ZIP {member} -> {dest} ({dest.stat().st_size} bytes)")
+                except Exception as e:
+                    _write_log(f"Error extrayendo ZIP {uploaded.filename}: {e}")
+                continue
+
             if suffix not in ALLOWED_IA_EXTENSIONS:
                 _write_log(f"Extension no permitida: {suffix}")
                 continue
@@ -1021,38 +1071,75 @@ def api_chat_informe():
 
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=8192,
+            max_tokens=16000,
             system=SYSTEM_PROMPT,
             messages=messages,
         )
 
-        raw = response.content[0].text.strip()
+        raw = (response.content[0].text or "").strip()
 
         import re
-        match = re.search(r"\{[\s\S]*\}", raw)
-        if match:
+        # Quitar fences markdown (```json ... ```)
+        raw_clean = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
+        raw_clean = re.sub(r"\n?```\s*$", "", raw_clean).strip()
+        updated = _parse_json_lenient(raw_clean)
+        if isinstance(updated, dict):
+            # Conservar el anexo fotografico (la respuesta de Claude no reenvia las rutas)
+            if not updated.get("_evidencia_img") and report_actual.get("_evidencia_img"):
+                updated["_evidencia_img"] = report_actual["_evidencia_img"]
+            # Regenerar DOCX con el informe actualizado
+            session_id = uuid.uuid4().hex[:8]
+            docx_name = f"Informe_IA_{session_id}.docx"
+            docx_path = SALIDAS_DIR / docx_name
             try:
-                updated = json.loads(match.group())
-                # Regenerar DOCX con el informe actualizado
-                session_id = uuid.uuid4().hex[:8]
-                docx_name = f"Informe_IA_{session_id}.docx"
-                docx_path = SALIDAS_DIR / docx_name
-                try:
-                    generate_report_docx(updated, docx_path, num_ref=num_ref, cliente=cliente)
-                    updated["_docx"] = docx_name
-                except Exception:
-                    pass
-                updated["_assistant_msg"] = updated.get("respuesta_chat", "Informe actualizado.")
-                return jsonify({"report": updated, "raw": raw})
-            except json.JSONDecodeError:
+                generate_report_docx(updated, docx_path, num_ref=num_ref, cliente=cliente)
+                updated["_docx"] = docx_name
+            except Exception:
                 pass
+            updated["_assistant_msg"] = updated.get("respuesta_chat", "Informe actualizado.")
+            return jsonify({"report": updated, "raw": raw})
 
-        # Si no hay JSON valido, es una respuesta conversacional
-        return jsonify({"report": report_actual, "raw": raw, "assistant_msg": raw})
+        # No se obtuvo JSON valido
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            try:
+                with open(BASE_DIR / "debug_chat_informe.txt", "w", encoding="utf-8") as _fh:
+                    _fh.write(f"stop_reason=max_tokens\nlen_raw={len(raw)}\n=== RAW ===\n{raw}")
+            except Exception:
+                pass
+            return jsonify({"error": "La respuesta del informe se corto por longitud (limite de tokens). Pide los cambios por partes o reintenta.", "_raw": raw[:2000]}), 500
+        # Respuesta conversacional (pregunta tecnica, sin cambios al informe)
+        return jsonify({"report": report_actual, "raw": raw, "assistant_msg": raw_clean or raw})
 
     except Exception as e:
         tb = _tb.format_exc()
         return jsonify({"error": str(e), "traceback": tb}), 500
+
+
+def _parse_json_lenient(text):
+    """Parsea JSON de la respuesta del modelo de forma tolerante (fences, preambulo, comas colgantes)."""
+    if not text:
+        return None
+    import re as _re
+    # 1) intento directo
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    # 2) primer '{' hasta ultimo '}'
+    m = _re.search(r"\{[\s\S]*\}", text)
+    if not m:
+        return None
+    frag = m.group(0)
+    try:
+        return json.loads(frag)
+    except Exception:
+        pass
+    # 3) quitar comas colgantes antes de } o ]
+    frag2 = _re.sub(r",\s*([}\]])", r"\1", frag)
+    try:
+        return json.loads(frag2)
+    except Exception:
+        return None
 
 
 @app.route("/api/importar_informe", methods=["POST"])
@@ -1118,18 +1205,26 @@ def api_importar_informe():
 
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=8192,
+            max_tokens=16000,
             system=SYSTEM_PROMPT,
             messages=messages,
         )
-        raw = response.content[0].text.strip()
-        match = re.search(r"\{[\s\S]*\}", raw)
-        if match:
-            try:
-                report = json.loads(match.group())
-                return jsonify(report)
-            except json.JSONDecodeError:
-                pass
+        raw = (response.content[0].text or "").strip()
+        # Quitar fences markdown (```json ... ```)
+        raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
+        raw = re.sub(r"\n?```\s*$", "", raw).strip()
+        report = _parse_json_lenient(raw)
+        if report is not None:
+            return jsonify(report)
+        # Volcado de diagnostico cuando el parseo falla
+        try:
+            with open(BASE_DIR / "debug_importar_informe.txt", "w", encoding="utf-8") as _fh:
+                _fh.write(f"stop_reason={getattr(response, 'stop_reason', None)}\n")
+                _fh.write(f"len_raw={len(raw)}\n=== RAW ===\n{raw}")
+        except Exception:
+            pass
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            return jsonify({"error": "El informe es demasiado largo y la respuesta se corto (limite de tokens). Divide el documento o reintenta.", "_raw": raw[:2000]}), 500
         return jsonify({"error": "No se pudo extraer JSON del informe.", "_raw": raw[:2000]}), 500
 
     except Exception as e:
@@ -1192,9 +1287,34 @@ def api_importar_presupuesto():
   "partidas_b": []
 }"""
 
+        guia_tipos = (
+            "GUIA DE CLASIFICACION (elige el tipo_modelo segun el TITULO y CONTENIDO real del documento, "
+            "NO por palabras sueltas como 'saneamiento'):\n"
+            "- obra_1: presupuesto de obra con UNA SOLA opcion y tabla de partidas (es lo MAS COMUN para presupuestos de obra civil/saneamiento).\n"
+            "- obra_2: presupuesto de obra con DOS opciones A y B (dos tablas de partidas distintas).\n"
+            "- desatasco: presupuesto de desatasco puntual (camion cuba, hidropresion).\n"
+            "- robot_limpieza: limpieza con robot fresador/cortador en colectores.\n"
+            "- limpieza_aerea: limpieza de bajantes desde cubierta (plataforma elevadora).\n"
+            "- cctv_bajante: inspeccion CCTV con camara en bajantes o colectores.\n"
+            "- inspeccion_zum: inspeccion ZUM (camara empujada).\n"
+            "- fresador: trabajos de fresado de raices/incrustaciones.\n"
+            "- fuga_agua: deteccion de fuga de agua.\n"
+            "- vaciado_fosa: vaciado de fosa septica o separadora de grasas.\n"
+            "- informe_desatasco: INFORME tecnico (no presupuesto) de un desatasco.\n"
+            "- bajantes_amianto: sustitucion de bajantes que contienen amianto.\n"
+            "- certificado_obra: CERTIFICADO final de obra (no presupuesto).\n"
+            "- plan_seguridad: Plan de Seguridad y Salud (PSS).\n"
+            "- contrato_saneamiento: CONTRATO de mantenimiento de saneamiento (recurring). Solo si el documento dice claramente 'CONTRATO' y describe servicios periodicos. NO uses este tipo para presupuestos de obra puntual.\n"
+            "- fontaneria: presupuesto de trabajos de fontaneria.\n"
+            "- albanileria: presupuesto de trabajos de albanileria.\n"
+            "- contrato_subcontrata: contrato con subcontratista.\n"
+            "REGLA DE DESEMPATE: si el documento tiene una tabla de partidas con precios y NO es un contrato recurrente, "
+            "es casi seguro 'obra_1' (o 'obra_2' si hay dos opciones)."
+        )
+
         instruccion = (
-            "Extrae TODOS los datos de este presupuesto y devuelvelos en el siguiente esquema JSON. "
-            "Para tipo_modelo elige el mas apropiado segun el contenido. "
+            "Extrae TODOS los datos de este presupuesto y devuelvelos en el siguiente esquema JSON.\n\n"
+            f"{guia_tipos}\n\n"
             "Para fecha_contrato usa formato YYYY-MM-DD; si no aparece usa null. "
             "Extrae todas las partidas con descripcion, unidad, cantidad y precio unitario. "
             "Si hay dos opciones A y B, las partidas de la opcion A van en 'partidas' y las de la B en 'partidas_b', "
@@ -1252,6 +1372,136 @@ def api_importar_presupuesto():
             except json.JSONDecodeError:
                 pass
         return jsonify({"error": "No se pudo extraer JSON del presupuesto.", "_raw": raw[:2000]}), 500
+
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
+    finally:
+        if tmp_dir and tmp_dir.exists():
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.route("/api/aplicar_modificaciones_ia", methods=["POST"])
+def api_aplicar_modificaciones_ia():
+    """Aplica modificaciones IA sobre un presupuesto ya importado.
+
+    Recibe (FormData):
+      - presupuesto_json: JSON string con el presupuesto actual (mismo schema que /api/importar_presupuesto)
+      - instrucciones: texto libre con los cambios a aplicar
+      - archivo: PDF/imagen opcional con notas de modificacion
+      - api_key: opcional
+
+    Devuelve el JSON modificado. NO modifica tipo_modelo (lo respeta tal cual viene).
+    """
+    import traceback as _tb
+    import base64
+    import re
+    tmp_dir = None
+    try:
+        import anthropic as _ant
+
+        pres_raw = request.form.get("presupuesto_json", "").strip()
+        instrucciones = request.form.get("instrucciones", "").strip()
+        api_key = request.form.get("api_key", "").strip()
+        archivo = request.files.get("archivo")
+
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        if not key:
+            return jsonify({"error": "API Key no configurada."}), 400
+        if not pres_raw:
+            return jsonify({"error": "Falta el presupuesto_json."}), 400
+        if not instrucciones and not (archivo and archivo.filename):
+            return jsonify({"error": "Debes indicar instrucciones (texto) o subir un archivo con las modificaciones."}), 400
+
+        try:
+            presupuesto = json.loads(pres_raw)
+        except json.JSONDecodeError as e:
+            return jsonify({"error": f"presupuesto_json invalido: {e}"}), 400
+
+        tipo_original = presupuesto.get("tipo_modelo", "")
+
+        client = _ant.Anthropic(api_key=key)
+
+        contenido = []
+        if archivo and archivo.filename:
+            suffix = Path(archivo.filename).suffix.lower()
+            if suffix not in {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".txt", ".docx", ".doc"}:
+                return jsonify({"error": "Formato de archivo no soportado para modificaciones."}), 400
+            tmp_dir = Path(tempfile.mkdtemp(prefix="mod_pres_"))
+            dest = tmp_dir / f"mods{suffix}"
+            archivo.save(str(dest))
+            data_bytes = dest.read_bytes()
+
+            if suffix == ".pdf":
+                contenido.append({"type": "document", "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": base64.b64encode(data_bytes).decode(),
+                }})
+            elif suffix in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+                media = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",".gif":"image/gif",".webp":"image/webp"}[suffix]
+                contenido.append({"type": "image", "source": {
+                    "type": "base64",
+                    "media_type": media,
+                    "data": base64.b64encode(data_bytes).decode(),
+                }})
+            elif suffix in (".docx", ".doc"):
+                try:
+                    from docx import Document as _DocxDoc
+                    doc = _DocxDoc(str(dest))
+                    text_doc = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                    for tbl in doc.tables:
+                        for row in tbl.rows:
+                            text_doc += "\n" + "\t".join(c.text for c in row.cells if c.text.strip())
+                    contenido.append({"type": "text", "text": f"ARCHIVO ADJUNTO (texto extraido del DOCX):\n{text_doc}"})
+                except Exception:
+                    pass
+            else:
+                try:
+                    text_doc = dest.read_text(encoding="utf-8", errors="replace")
+                    contenido.append({"type": "text", "text": f"ARCHIVO ADJUNTO:\n{text_doc}"})
+                except Exception:
+                    pass
+
+        prompt_mod = (
+            "Aplica las siguientes modificaciones sobre el presupuesto JSON proporcionado. "
+            "Devuelve el JSON COMPLETO modificado con el MISMO esquema de campos (no inventes campos nuevos).\n\n"
+            "REGLAS ESTRICTAS:\n"
+            "1. NO modifiques el campo 'tipo_modelo' bajo ninguna circunstancia (devuelvelo tal cual viene).\n"
+            "2. Puedes modificar: partidas (anadir/quitar/cambiar precios o cantidades), partidas_b, "
+            "informe, solucion, memoria, plazo, forma_pago, cliente_nombre, cliente_dir, cliente_tel, cliente_email, "
+            "obra, servicio, provincia, administracion, admin_tel, admin_email, num_contrato, fecha_contrato.\n"
+            "3. Si las instrucciones piden anadir partidas, anadelas al array 'partidas' (o 'partidas_b' si se indica opcion B).\n"
+            "4. Si piden quitar una partida, eliminala del array.\n"
+            "5. Conserva los campos no afectados por las modificaciones.\n"
+            "6. Devuelve UNICAMENTE el JSON valido sin texto adicional.\n\n"
+            f"PRESUPUESTO ACTUAL (JSON):\n{json.dumps(presupuesto, ensure_ascii=False, indent=2)}\n\n"
+            f"INSTRUCCIONES DE MODIFICACION:\n{instrucciones or '(ver archivo adjunto)'}"
+        )
+
+        contenido.append({"type": "text", "text": prompt_mod})
+
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=8192,
+            system=(
+                "Eres un asistente experto en presupuestos de construccion y saneamiento. "
+                "Modificas presupuestos en JSON segun las instrucciones del usuario, devolviendo siempre JSON valido."
+            ),
+            messages=[{"role": "user", "content": contenido}],
+        )
+        raw = response.content[0].text.strip()
+        match = re.search(r"\{[\s\S]*\}", raw)
+        if match:
+            try:
+                data = json.loads(match.group())
+                # Forzar tipo_modelo original (seguridad por si la IA lo cambia)
+                if tipo_original:
+                    data["tipo_modelo"] = tipo_original
+                return jsonify(data)
+            except json.JSONDecodeError:
+                pass
+        return jsonify({"error": "No se pudo extraer JSON modificado.", "_raw": raw[:2000]}), 500
 
     except Exception as e:
         return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
@@ -1371,6 +1621,99 @@ def api_importar_subcontrata():
 
     try:
         result = extract_partidas_from_subcontrata(saved, api_key=api_key)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# --- Subcontratas guardadas (config/subcontratas.json) ---------------------
+SUBCONTRATAS_PATH = BASE_DIR / "config" / "subcontratas.json"
+_SUBC_KEYS = ["empresa", "cif", "domicilio", "telefono", "email", "rep_nombre",
+              "rep_dni", "rep_domicilio", "notario", "notario_loc",
+              "fecha_escritura", "protocolo", "registro"]
+
+
+def _load_subcontratas() -> list:
+    try:
+        with open(SUBCONTRATAS_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_subcontratas(items: list) -> None:
+    SUBCONTRATAS_PATH.parent.mkdir(exist_ok=True)
+    with open(SUBCONTRATAS_PATH, "w", encoding="utf-8") as fh:
+        json.dump(items, fh, indent=2, ensure_ascii=False)
+
+
+@app.route("/api/subcontratas", methods=["GET"])
+def api_subcontratas_list():
+    return jsonify(_load_subcontratas())
+
+
+@app.route("/api/subcontratas", methods=["POST"])
+def api_subcontratas_save():
+    body = request.get_json(silent=True) or {}
+    datos = {k: str(body.get(k, "") or "").strip() for k in _SUBC_KEYS}
+    if not datos["empresa"]:
+        return jsonify({"error": "Falta el nombre de la empresa."}), 400
+    items = _load_subcontratas()
+    cif = datos["cif"].upper()
+    name = datos["empresa"].lower()
+    replaced = False
+    for i, it in enumerate(items):
+        same_cif = cif and (it.get("cif", "").strip().upper() == cif)
+        same_name = (not cif) and (it.get("empresa", "").strip().lower() == name)
+        if same_cif or same_name:
+            items[i] = datos
+            replaced = True
+            break
+    if not replaced:
+        items.append(datos)
+    _save_subcontratas(items)
+    return jsonify({"ok": True, "guardada": datos["empresa"], "count": len(items)})
+
+
+@app.route("/api/subcontratas/<path:empresa>", methods=["DELETE"])
+def api_subcontratas_delete(empresa):
+    key = empresa.strip().lower()
+    items = [it for it in _load_subcontratas() if it.get("empresa", "").strip().lower() != key]
+    _save_subcontratas(items)
+    return jsonify({"ok": True, "count": len(items)})
+
+
+@app.route("/api/extraer_datos_subcontrata", methods=["POST"])
+def api_extraer_datos_subcontrata():
+    """Extrae los datos identificativos de la subcontrata de un documento (PDF/imagen/DOCX/texto)."""
+    files_in = request.files.getlist("archivos")
+    if not files_in:
+        return jsonify({"error": "No se recibieron archivos."}), 400
+    api_key = request.form.get("api_key", "").strip() or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return jsonify({"error": "API Key de Anthropic no configurada."}), 400
+
+    ALLOWED = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf",
+               ".txt", ".html", ".htm", ".csv", ".doc", ".docx"}
+    tmp_dir = Path(tempfile.mkdtemp(prefix="subc_datos_"))
+    saved: list[Path] = []
+    for fobj in files_in:
+        suf = Path(fobj.filename or "").suffix.lower()
+        if suf not in ALLOWED:
+            continue
+        dest = tmp_dir / f"{uuid.uuid4().hex}{suf}"
+        fobj.save(dest)
+        saved.append(dest)
+
+    if not saved:
+        return jsonify({"error": "Formato no valido. Sube PDF, imagen, DOCX o texto."}), 400
+
+    try:
+        result = extract_subcontrata_datos(saved, api_key=api_key)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1629,4 +1972,4 @@ if __name__ == "__main__":
     print("\n  Generador de Presupuestos + Analisis IA - Grupo Europa")
     print("  Abriendo en el navegador: http://localhost:5000")
     print("  (Para parar: pulsa Ctrl+C)\n")
-    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
+    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False, threaded=True)
