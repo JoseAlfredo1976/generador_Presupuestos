@@ -120,7 +120,18 @@
   .key-note { background:#fff3cd; border:1px solid #ffc107; border-radius:8px; padding:10px 14px; font-size:.82rem; }
 
   /* Chat perito */
-  #chat-wrap { margin-top:28px; border:2px solid var(--blue-light); border-radius:14px; overflow:hidden; }
+  #chat-wrap { margin-top:28px; border:2px solid var(--blue-light); border-radius:14px; overflow:hidden; position:relative; }
+  #chat-wrap.drag-over { border-color:var(--blue); box-shadow:0 0 0 3px rgba(79,132,181,.2); }
+  .btn-chat-attach { background:#e8f0f8; color:var(--blue-dark); border:1px solid #cdd8e8; border-radius:8px; padding:9px 12px; font-size:1rem; cursor:pointer; flex-shrink:0; }
+  .btn-chat-attach:hover { background:#d7e6f5; }
+  #chat-attach-list { display:flex; flex-wrap:wrap; gap:6px; padding:0 14px; background:white; }
+  #chat-attach-list:not(:empty) { padding:10px 14px 0; }
+  .chat-chip { display:inline-flex; align-items:center; gap:6px; background:#eef4fb; border:1px solid #cdd8e8; border-radius:16px; padding:4px 10px; font-size:.78rem; max-width:220px; }
+  .chat-chip .cc-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chat-chip .cc-del { background:none; border:none; color:#cc3333; cursor:pointer; padding:0; line-height:1; }
+  .chat-drop-overlay { display:none; position:absolute; inset:0; z-index:20; background:rgba(31,78,121,.9); color:white; align-items:center; justify-content:center; text-align:center; font-weight:700; font-size:1rem; border-radius:12px; }
+  .chat-drop-overlay i { font-size:2.4rem; }
+  #chat-wrap.drag-over .chat-drop-overlay { display:flex; }
   .chat-header { background:var(--blue-dark); color:white; padding:12px 18px; font-weight:700; font-size:.92rem; display:flex; align-items:center; gap:8px; }
   .chat-messages { padding:14px 16px; max-height:340px; overflow-y:auto; background:#f8fbff; }
   .chat-msg { display:flex; gap:10px; margin-bottom:12px; }
@@ -137,6 +148,9 @@
   .btn-chat-send { background:var(--blue); color:white; border:none; border-radius:8px; padding:9px 18px; font-weight:600; font-size:.88rem; cursor:pointer; }
   .btn-chat-send:hover { background:var(--blue-dark); }
   .btn-chat-send:disabled { opacity:.5; cursor:not-allowed; }
+  .btn-chat-dl { background:#185ABD; color:white; border:none; border-radius:8px; padding:9px 16px; font-weight:600; font-size:.88rem; cursor:pointer; flex-shrink:0; }
+  .btn-chat-dl:hover { background:#1249a0; }
+  .btn-chat-dl:disabled { opacity:.4; cursor:not-allowed; }
   .chat-thinking { display:flex; gap:5px; align-items:center; padding:6px 0; }
   .chat-thinking span { width:8px; height:8px; border-radius:50%; background:var(--blue); animation:bounce .8s infinite; }
   .chat-thinking span:nth-child(2) { animation-delay:.15s; }
@@ -226,9 +240,10 @@
       <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
         <div class="dz-icon"><i class="bi bi-camera-video"></i></div>
         <p><strong>Arrastra los videos aqui</strong> o haz clic para seleccionar</p>
+        <small>Tambien puedes subir un .zip con varios videos. Con muchos videos, la IA reparte automaticamente los fotogramas analizados.</small>
         <small>Puedes subir <strong>varios archivos a la vez</strong> &middot; MP4, AVI, MOV, MKV &middot; Imagenes JPG/PNG &middot; PDFs &middot; Word (.docx) &middot; Texto (.txt)</small>
       </div>
-      <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.mp4,.avi,.mov,.mkv,.webm,.m4v,.docx,.doc,.txt" style="display:none" onchange="addFiles(this.files)">
+      <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.mp4,.avi,.mov,.mkv,.webm,.m4v,.docx,.doc,.txt,.zip" style="display:none" onchange="addFiles(this.files)">
       <div id="file-list"></div>
     </div>
 
@@ -369,13 +384,27 @@
       <span class="ms-auto" style="font-size:.78rem;opacity:.8">Indica cualquier cambio o consulta tecnica</span>
     </div>
     <div class="chat-messages" id="chat-messages"></div>
+    <div id="chat-attach-list"></div>
     <div class="chat-input-row">
+      <input type="file" id="chat-file-input" multiple accept="image/*,.pdf,.doc,.docx,.txt,.md,.mp4,.avi,.mov,.mkv,.webm,.m4v" style="display:none"
+        onchange="addChatFiles(this.files); this.value='';">
+      <button class="btn-chat-attach" id="chat-attach-btn" title="Adjuntar archivos para analizar"
+        onclick="document.getElementById('chat-file-input').click()">
+        <i class="bi bi-paperclip"></i>
+      </button>
       <textarea class="chat-input" id="chat-input" rows="2"
-        placeholder="Ej: Cambia la longitud del tramo V1 a 18.40 m. Añade patologia de raices en metro 12. Modifica la solucion del tramo V2 a encamisado CIPP DN200..."
+        placeholder="Ej: Cambia la longitud del tramo V1 a 18.40 m. Añade patologia de raices en metro 12. O arrastra fotos/videos/PDF nuevos para que los analice e incorpore al informe..."
         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
       <button class="btn-chat-send" id="chat-send-btn" onclick="sendChat()">
         <i class="bi bi-send"></i>
       </button>
+      <button class="btn-chat-dl" id="chat-dl-btn" onclick="descargarInformeChat()"
+        title="Descargar el informe actualizado (Word / PDF)" disabled>
+        <i class="bi bi-download"></i>
+      </button>
+    </div>
+    <div class="chat-drop-overlay" id="chat-drop-overlay">
+      <div><i class="bi bi-cloud-arrow-up"></i><br>Suelta los archivos para que el perito los analice</div>
     </div>
   </div>
 
@@ -393,6 +422,7 @@ let currentNumRef = '';
 let currentCliente = '';
 let currentMode = 'nuevo';  // 'nuevo' | 'importar'
 let importarFile = null;    // File del informe existente a importar
+let chatFiles = [];         // archivos nuevos adjuntados al chat del perito
 
 // ── Modo toggle
 function setMode(mode) {
@@ -625,8 +655,23 @@ async function startAnalysis() {
 
   try {
     const resp = await fetch('/api/analizar', { method:'POST', body:fd });
-    const data = await resp.json();
+    const ct = resp.headers.get('content-type') || '';
     document.getElementById('progress-wrap').style.display = 'none';
+
+    if (!ct.includes('application/json')) {
+      const text = await resp.text();
+      let msg = `El servidor devolvio ${resp.status} ${resp.statusText} (no JSON).`;
+      if (resp.status === 413) {
+        msg += '\n\nMOTIVO: los archivos subidos superan el limite (500 MB total).\nSube menos videos o comprimelos.';
+      } else if (resp.status === 504 || resp.status === 502) {
+        msg += '\n\nMOTIVO: el servidor tardo demasiado o se reinicio durante el analisis.';
+      }
+      msg += '\n\n--- Respuesta del servidor ---\n' + text.substring(0, 800);
+      showError(msg);
+      return;
+    }
+
+    const data = await resp.json();
     if (data.error) {
       showError(data.error, data.traceback);
     } else {
@@ -637,7 +682,7 @@ async function startAnalysis() {
     }
   } catch(e) {
     document.getElementById('progress-wrap').style.display = 'none';
-    showError('Error de conexion: ' + e.message);
+    showError('Error de conexion: ' + e.message + '\n\n(Posibles causas: servidor caido, archivos demasiado grandes, o red interrumpida)');
   }
 }
 
@@ -931,9 +976,76 @@ function initChat() {
   const msgs = document.getElementById('chat-messages');
   msgs.innerHTML = '';
   chatHistory = [];
+  chatFiles = [];
+  renderChatChips();
   wrap.style.display = 'block';
-  addChatMsg('assistant', 'Informe generado. Puedes pedirme cualquier modificacion: cambiar datos de tramos, añadir patologias, ajustar mediciones, reformular conclusiones o cualquier otra consulta tecnica.');
+  initChatDrop();
+  updateChatDlBtn();
+  addChatMsg('assistant', 'Informe generado. Puedes pedirme cualquier modificacion: cambiar datos de tramos, añadir patologias, ajustar mediciones, reformular conclusiones o cualquier otra consulta tecnica. Tambien puedes arrastrar fotos, videos o documentos nuevos y los analizare para incorporarlos al informe.');
   wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Adjuntos del chat (arrastrar/soltar archivos nuevos) ──
+function addChatFiles(fileList) {
+  for (const f of fileList) chatFiles.push(f);
+  renderChatChips();
+}
+
+function removeChatFile(idx) {
+  chatFiles.splice(idx, 1);
+  renderChatChips();
+}
+
+function renderChatChips() {
+  const cont = document.getElementById('chat-attach-list');
+  if (!cont) return;
+  cont.innerHTML = chatFiles.map((f, i) => {
+    const ext = f.name.split('.').pop().toLowerCase();
+    const icon = ['mp4','avi','mov','mkv','webm','m4v'].includes(ext) ? '🎬'
+               : ['jpg','jpeg','png','gif','webp'].includes(ext) ? '🖼️'
+               : ext === 'pdf' ? '📄' : '📝';
+    return `<span class="chat-chip"><span>${icon}</span>`
+         + `<span class="cc-name" title="${esc(f.name)}">${esc(f.name)}</span>`
+         + `<button class="cc-del" onclick="removeChatFile(${i})"><i class="bi bi-x-circle-fill"></i></button></span>`;
+  }).join('');
+}
+
+let _chatDropInit = false;
+function initChatDrop() {
+  if (_chatDropInit) return;
+  _chatDropInit = true;
+  const wrap = document.getElementById('chat-wrap');
+  let depth = 0;
+  wrap.addEventListener('dragenter', e => { e.preventDefault(); depth++; wrap.classList.add('drag-over'); });
+  wrap.addEventListener('dragover',  e => { e.preventDefault(); });
+  wrap.addEventListener('dragleave', e => { e.preventDefault(); if (--depth <= 0) { depth = 0; wrap.classList.remove('drag-over'); } });
+  wrap.addEventListener('drop', e => {
+    e.preventDefault(); depth = 0; wrap.classList.remove('drag-over');
+    if (e.dataTransfer.files && e.dataTransfer.files.length) addChatFiles(e.dataTransfer.files);
+  });
+}
+
+// ── Descargar el informe actualizado desde el chat ──
+function updateChatDlBtn() {
+  const btn = document.getElementById('chat-dl-btn');
+  if (!btn) return;
+  btn.disabled = !(currentReport && (currentReport._docx || currentReport._pdf));
+}
+
+function descargarInformeChat() {
+  if (!currentReport || (!currentReport._docx && !currentReport._pdf)) {
+    alert('Todavia no hay informe generado para descargar.');
+    return;
+  }
+  const urls = [];
+  if (currentReport._docx) urls.push('/descargar/' + encodeURIComponent(currentReport._docx));
+  if (currentReport._pdf)  urls.push('/descargar/' + encodeURIComponent(currentReport._pdf));
+  // Lanzar cada descarga con una pequena separacion para que el navegador no bloquee la segunda
+  urls.forEach((u, i) => setTimeout(() => {
+    const a = document.createElement('a');
+    a.href = u; a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
+  }, i * 400));
 }
 
 function addChatMsg(role, text) {
@@ -966,29 +1078,50 @@ async function sendChat() {
   const input = document.getElementById('chat-input');
   const btn = document.getElementById('chat-send-btn');
   const msg = input.value.trim();
-  if (!msg || !currentReport) return;
+  const tieneArchivos = chatFiles.length > 0;
+  if ((!msg && !tieneArchivos) || !currentReport) return;
 
-  addChatMsg('user', msg);
+  const nombresAdj = chatFiles.map(f => f.name);
+  const msgUsuario = msg || 'Analiza los archivos adjuntos e incorporalos al informe.';
+  addChatMsg('user', msgUsuario + (tieneArchivos ? '\n📎 ' + nombresAdj.join(', ') : ''));
   input.value = '';
   btn.disabled = true;
   showChatThinking();
 
   // Guardar en historial (solo texto del usuario para el contexto)
-  chatHistory.push({ role: 'user', content: msg });
+  const histMsg = msgUsuario + (tieneArchivos ? ' [adjuntos: ' + nombresAdj.join(', ') + ']' : '');
+  chatHistory.push({ role: 'user', content: histMsg });
+
+  const enviados = chatFiles.slice();
+  chatFiles = [];
+  renderChatChips();
 
   try {
-    const resp = await fetch('/api/chat_informe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        report: currentReport,
-        historial: chatHistory.slice(-6), // ultimas 6 rondas
-        mensaje: msg,
-        api_key: currentApiKey,
-        num_ref: currentNumRef,
-        cliente: currentCliente,
-      })
-    });
+    let resp;
+    if (enviados.length) {
+      const fd = new FormData();
+      fd.append('report', JSON.stringify(currentReport));
+      fd.append('historial', JSON.stringify(chatHistory.slice(-6)));
+      fd.append('mensaje', msgUsuario);
+      fd.append('api_key', currentApiKey);
+      fd.append('num_ref', currentNumRef);
+      fd.append('cliente', currentCliente);
+      for (const f of enviados) fd.append('archivos', f);
+      resp = await fetch('/api/chat_informe', { method: 'POST', body: fd });
+    } else {
+      resp = await fetch('/api/chat_informe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          report: currentReport,
+          historial: chatHistory.slice(-6), // ultimas 6 rondas
+          mensaje: msg,
+          api_key: currentApiKey,
+          num_ref: currentNumRef,
+          cliente: currentCliente,
+        })
+      });
+    }
     const data = await resp.json();
     document.getElementById('chat-thinking')?.remove();
 
@@ -1005,6 +1138,7 @@ async function sendChat() {
     if (data.report) {
       currentReport = data.report;
       showResult(currentReport);
+      updateChatDlBtn();
     }
   } catch(e) {
     document.getElementById('chat-thinking')?.remove();
@@ -1065,7 +1199,7 @@ async function sendChat() {
   }
 
   const NO_MIC_IDS = new Set(['f-num-ref','f-proyecto']);
-  const NO_MIC_PH  = /^(ej:|n[º°]|cod|ref|tel[eé]|email|dni|cif|\d)/i;
+  const NO_MIC_PH  = /^(n[º°]|cod|ref|tel[eé]|email|dni|cif|\d)/i;
 
   // Guardar placeholder original y añadir mic a todos los campos de texto apropiados
   document.addEventListener('DOMContentLoaded', () => {

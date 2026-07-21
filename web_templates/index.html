@@ -632,6 +632,7 @@ const TIPOS = [
   // Obra
   { id:'obra_1',              icon:'🏗️',  name:'Obra\n1 Opcion',        cat:'obra'       },
   { id:'obra_2',              icon:'🔀',  name:'Obra\n2 Opciones',      cat:'obra'       },
+  { id:'presupuesto_multioficio', icon:'🧰', name:'Presupuesto\nIntegral Multioficio', cat:'obra' },
   // Desatascos y servicios
   { id:'desatasco',           icon:'🚛',  name:'Desatasco',             cat:'svc'        },
   { id:'cctv_bajante',        icon:'📷',  name:'CCTV\nBajante',         cat:'svc'        },
@@ -775,7 +776,7 @@ const _NO_MIC_IDS = new Set([
   'f_plazo','f_pago','ba_val','f_val','f_pago_cs',
   'ps_cif','ps_dni','ps_tel_emp','ps_prom_cif',
 ]);
-const _NO_MIC_PLACEHOLDER = /^(ej:|n[º°]|cod|ref|tel[eé]|email|dni|cif|nif|\d)/i;
+const _NO_MIC_PLACEHOLDER = /^(n[º°]|cod|ref|tel[eé]|email|dni|cif|nif|\d)/i;
 
 function _addMicBtns(container) {
   if (!_SR) return;
@@ -875,11 +876,18 @@ function card(t) {
 function selTipo(t, el) {
   document.querySelectorAll('.type-card').forEach(c=>c.classList.remove('selected'));
   el.classList.add('selected'); tipo = t;
+  delete fd.titulo_servicio;  // el titulo propio solo aplica al flujo Multioficio, que lo re-asigna
+  delete fd._multioficio;
 }
 function ok1() {
   if (!tipo) { alert('Elige el tipo de documento.'); return; }
+  const label = TLABELS[tipo];
+  if (tipo === 'presupuesto_multioficio') {   // tarjeta de portada -> se genera como obra 1 opcion
+    tipo = 'obra_1';
+    fd._multioficio = true;
+  }
   fd.tipo_modelo = tipo;
-  rmPanel(); userMsg(TLABELS[tipo]); stepSolicitudIA();
+  rmPanel(); userMsg(label); stepSolicitudIA();
 }
 
 // ─── STEP 1b - Analizar solicitud con IA
@@ -1105,10 +1113,25 @@ function ok2() {
   step3();
 }
 
+// Datos fijos de la parte contratante en contratos de subcontrata = Acometidas Europa
+const ACOMETIDAS_DATOS = {
+  nombre: 'ACOMETIDAS EUROPA S.L.',
+  dir:    'Avda. Doctor Severo Ochoa 35, Nave 5dD - Alcobendas',
+  tel:    '91 386 21 12',
+  email:  'info@acometidaseuropa.com'
+};
+
 // ─── STEP 3 - Cliente
 function step3() {
   prog(34);
   const p = fdPrefill || {};
+  // En contrato de subcontrata la parte contratante es SIEMPRE Acometidas Europa
+  if (tipo === 'contrato_subcontrata' && !fd.cliente_nombre) {
+    fd.cliente_nombre = ACOMETIDAS_DATOS.nombre;
+    fd.cliente_dir    = ACOMETIDAS_DATOS.dir;
+    fd.cliente_tel    = ACOMETIDAS_DATOS.tel;
+    fd.cliente_email  = ACOMETIDAS_DATOS.email;
+  }
   const iaBanner = fdPrefill ? `<div class="alert alert-success py-1 px-2 mb-2" style="font-size:.78rem;">
     <i class="bi bi-magic me-1"></i>Datos pre-rellenados por IA. Revisa y corrige si es necesario.
     </div>` : '';
@@ -1173,6 +1196,7 @@ function ok3() {
 
 // ─── STEP 4a-IA - Origen: IA o manual
 function stepObraOrigenIA() {
+  if (fd._multioficio) return stepImportarCompleto();  // tarjeta de portada: directo a subir el documento
   prog(44);
   const tieneInformeSession = !!sessionStorage.getItem('ia_presupuesto');
   const tieneInformeRetorno = !!localStorage.getItem('ia_presupuesto_retorno');
@@ -1215,6 +1239,12 @@ function stepObraOrigenIA() {
         <span><strong>Importar presupuesto de subcontrata</strong><br>
         <small style="opacity:.85">Sube el presupuesto de otra empresa. La IA extrae las partidas y aplica tu margen.</small></span>
       </button>
+      <button class="btn btn-lg" style="background:#0d9488;color:white;border-radius:12px;padding:16px;text-align:left"
+        onclick="stepImportarCompleto()">
+        <i class="bi bi-list-check me-3" style="font-size:1.4rem"></i>
+        <span><strong>Presupuesto Integral Multioficio</strong><br>
+        <small style="opacity:.85">Sube un informe o presupuesto con muchas partidas de varios oficios. La IA las extrae TODAS y luego editas, anades o eliminas antes de generar.</small></span>
+      </button>
       <button class="btn btn-lg btn-outline-secondary" style="border-radius:12px;padding:16px;text-align:left"
         onclick="rmPanel();stepObraTextos()">
         <i class="bi bi-pencil me-3" style="font-size:1.4rem"></i>
@@ -1244,6 +1274,109 @@ function abrirAnalizadorIA() {
     <button class="btn btn-next" onclick="rmPanel();stepObraOrigenIA()">
       <i class="bi bi-arrow-clockwise me-2"></i>Actualizar - Ya termine el analisis
     </button>`);
+}
+
+// ─── STEP: Importar presupuesto/informe COMPLETO (multi-oficio) ──────────────
+let _impcFiles = [];
+
+function stepImportarCompleto() {
+  tipo = 'obra_1';   // presupuesto integral multioficio de una sola opcion -> plantilla obra 1 opcion
+  fd.tipo_modelo = 'obra_1';
+  fd.titulo_servicio = 'PRESUPUESTO INTEGRAL MULTIOFICIO';  // titulo propio en el banner superior del DOCX
+  _impcFiles = [];
+  prog(46);
+  botMsg('<strong>Presupuesto Integral Multioficio.</strong> Sube el informe o presupuesto con las partidas (de cualquier oficio). La IA extraera <strong>todas</strong> y despues podras editarlas, anadir o eliminar antes de generar el presupuesto final.');
+  panel(`
+    <div id="impc-drop" style="border:2px dashed #dce4ef;border-radius:12px;padding:28px;text-align:center;background:#f8fafc;cursor:pointer;transition:border-color .2s;"
+      ondragover="event.preventDefault();this.style.borderColor='#0d9488'"
+      ondragleave="this.style.borderColor='#dce4ef'"
+      ondrop="_impcDrop(event)">
+      <i class="bi bi-list-check" style="font-size:2.5rem;color:#0d9488;"></i>
+      <div style="font-size:.9rem;color:#555;margin-top:8px;font-weight:600;">Arrastra el informe o presupuesto aqui</div>
+      <div style="font-size:.78rem;color:#8fa3b8;margin-top:4px;">PDF, Word, Excel, imagen o texto &middot; Puedes subir varios archivos &middot; Haz clic para seleccionar</div>
+      <input id="impc-file-input" type="file" multiple
+        accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt,.md,.csv,.html,.htm,.doc,.docx,.xls,.xlsx"
+        style="position:absolute;opacity:0;width:1px;height:1px;"
+        onchange="_impcFilesSelected(this.files)">
+    </div>
+    <div id="impc-file-list" style="margin-top:10px;font-size:.82rem;display:none;"></div>
+    <div class="mt-3">
+      <label class="form-label" style="font-size:.83rem">Contexto (opcional)</label>
+      <textarea id="impc-desc" class="form-control" rows="2"
+        placeholder="Ej: reforma integral de local, respetar precios del documento..."></textarea>
+    </div>
+    <div id="impc-error" style="color:#dc2626;margin-top:8px;font-size:.83rem;display:none;"></div>
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <a href="#" style="font-size:.83rem;color:#8fa3b8;" onclick="(fd._multioficio ? step3() : stepObraOrigenIA());return false;">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </a>
+      <button id="impc-btn" class="btn btn-next" style="background:#0d9488;" onclick="_impcExtraer()" disabled>
+        <i class="bi bi-magic me-2"></i>Extraer todas las partidas
+      </button>
+    </div>`);
+  document.getElementById('impc-drop').addEventListener('click', () => {
+    document.getElementById('impc-file-input').click();
+  });
+}
+
+function _impcDrop(e) {
+  e.preventDefault();
+  document.getElementById('impc-drop').style.borderColor = '#dce4ef';
+  _impcFilesSelected(e.dataTransfer.files);
+}
+
+function _impcFilesSelected(fileList) {
+  _impcFiles = Array.from(fileList);
+  const listEl = document.getElementById('impc-file-list');
+  if (_impcFiles.length) {
+    listEl.style.display = 'block';
+    listEl.innerHTML = _impcFiles.map(f =>
+      `<span class="badge me-1 mb-1" style="background:#0d9488"><i class="bi bi-paperclip me-1"></i>${esc(f.name)}</span>`
+    ).join('');
+    document.getElementById('impc-btn').disabled = false;
+  }
+}
+
+async function _impcExtraer() {
+  if (!_impcFiles.length) return;
+  {% if not api_key_set %}
+  let key = fd._api_key || localStorage.getItem('bg_apikey') || '';
+  if (!key) {
+    key = prompt('Introduce tu API Key de Anthropic (sk-ant-...):') || '';
+    if (!key) return;
+    fd._api_key = key; localStorage.setItem('bg_apikey', key);
+  }
+  {% else %}
+  const key = '';
+  {% endif %}
+  const desc = (document.getElementById('impc-desc')?.value || '').trim();
+  const ov = document.getElementById('overlay');
+  const ovTxt = ov ? ov.querySelector('p,#ov-txt') : null;
+  if (ovTxt) ovTxt.textContent = 'Extrayendo todas las partidas del documento...';
+  if (ov) ov.classList.add('show');
+  const form = new FormData();
+  _impcFiles.forEach(f => form.append('archivos', f));
+  form.append('api_key', key);
+  form.append('descripcion', desc);
+  try {
+    const res = await fetch('/api/importar_presupuesto_completo', { method:'POST', body:form });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    if (ov) ov.classList.remove('show');
+    if (ovTxt) ovTxt.textContent = 'Generando documentos...';
+    const n = (data.partidas || []).length;
+    rmPanel();
+    userMsg(`Documento importado: ${n} partida(s) extraida(s)`);
+    if (data._truncado) {
+      botMsg('<i class="bi bi-exclamation-triangle me-1 text-warning"></i>El documento era muy largo; revisa que estan todas las partidas. Puedes anadir las que falten en la tabla.');
+    }
+    stepRevisarIA(data);
+  } catch(err) {
+    if (ov) ov.classList.remove('show');
+    if (ovTxt) ovTxt.textContent = 'Generando documentos...';
+    const errEl = document.getElementById('impc-error');
+    if (errEl) { errEl.style.display=''; errEl.textContent='Error: '+err.message; }
+  }
 }
 
 // ─── STEP: Importar presupuesto de subcontrata ───────────────────────────────
@@ -1362,10 +1495,13 @@ function _subcMostrarPreview(data) {
       <div class="col-md-5">
         <label class="form-label">% de incremento / margen</label>
         <div class="input-group">
-          <input id="subc-pct" type="number" class="form-control" value="20" min="0" max="500" step="0.5" oninput="_subcActualizarTotal()">
+          <input id="subc-pct" type="number" class="form-control" value="20" min="-100" max="500" step="0.5" oninput="_subcActualizarTotal()">
           <span class="input-group-text">%</span>
         </div>
-        <div class="text-muted mt-1" style="font-size:.75rem">Tu precio final: <strong id="subc-total-final">${fmtE(total*1.2)}</strong></div>
+        <div class="text-muted mt-1" style="font-size:.75rem">
+          Subtotal sin IVA: <strong id="subc-total-final">${fmtE(total*1.2)}</strong>
+          &middot; Con IVA (21%): <strong id="subc-total-iva">${fmtE(total*1.2*1.21)}</strong>
+        </div>
       </div>
       <div class="col-md-7">
         <div style="background:#eff6ff;border:1px solid #dce4ef;border-radius:8px;padding:10px 14px;font-size:.82rem">
@@ -1386,8 +1522,11 @@ function _subcMostrarPreview(data) {
 function _subcActualizarTotal() {
   const pct = parseFloat(document.getElementById('subc-pct')?.value) || 0;
   const total = _subcPartidas.reduce((s,p) => s + (p.importe||0), 0);
+  const subtotal = total * (1 + pct/100);
   const el = document.getElementById('subc-total-final');
-  if (el) el.textContent = fmtE(total * (1 + pct/100));
+  if (el) el.textContent = fmtE(subtotal);
+  const elIva = document.getElementById('subc-total-iva');
+  if (elIva) elIva.textContent = fmtE(subtotal * 1.21);
 }
 function _subcAplicarYContinuar() {
   const pct = parseFloat(document.getElementById('subc-pct')?.value) || 0;
@@ -1426,10 +1565,34 @@ function _subcIniciarDesdeServ() {
 // PASO A: Datos de la subcontratista
 function stepContratoSubcDatos() {
   prog(44);
-  botMsg('Datos de la empresa subcontratista.');
+  botMsg('Datos de la empresa subcontratista. Puedes seleccionar una guardada o arrastrar un documento para autocompletar.');
   // Defaults del modelo Lyana
   const d = fd._subcDatos || {};
   panel(`
+    <div style="background:#11202e;border:1px solid #1c3144;border-radius:10px;padding:.9rem 1rem;margin-bottom:1rem;">
+      <div class="row g-2 align-items-stretch">
+        <div class="col-md-7">
+          <label class="form-label mb-1" style="font-size:.82rem;">Subcontrata guardada</label>
+          <select id="sc_saved" class="form-select form-select-sm" onchange="_scOnSelect()">
+            <option value="">— Cargando... —</option>
+          </select>
+        </div>
+        <div class="col-md-5">
+          <label class="form-label mb-1" style="font-size:.82rem;">Autocompletar desde documento</label>
+          <div id="sc_drop"
+            style="border:1.5px dashed #2a4a63;border-radius:8px;padding:.55rem;text-align:center;font-size:.76rem;color:#8fa3b8;cursor:pointer;transition:.15s;"
+            ondragover="event.preventDefault();this.style.borderColor='#4a9edb';this.style.background='#13283a'"
+            ondragleave="this.style.borderColor='#2a4a63';this.style.background='transparent'"
+            ondrop="this.style.borderColor='#2a4a63';this.style.background='transparent';_scDrop(event)"
+            onclick="document.getElementById('sc_drop_input').click()">
+            <i class="bi bi-cloud-arrow-up me-1"></i>Arrastra escritura/presupuesto o haz clic
+            <input id="sc_drop_input" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.txt" multiple
+              style="display:none" onchange="_scExtraer(this.files)">
+          </div>
+        </div>
+      </div>
+      <div id="sc_drop_status" class="mt-1" style="font-size:.78rem;color:#8fa3b8;"></div>
+    </div>
     <div class="row g-3">
       <div class="col-md-8"><label class="form-label">Empresa subcontratista *</label>
         <input id="sc_empresa" class="form-control" value="${_esc(d.empresa||'POCERÍAS Y CONSTRUCCIONES LYANA S.L.U.')}"></div>
@@ -1472,8 +1635,102 @@ function stepContratoSubcDatos() {
       <a href="#" style="font-size:.83rem;color:#8fa3b8;" onclick="step3();return false;">
         <i class="bi bi-arrow-left me-1"></i>Volver
       </a>
-      <button class="btn btn-next" onclick="okContratoSubcDatos()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+      <div class="d-flex gap-2">
+        <button id="sc_save_btn" class="btn btn-outline-light btn-sm" onclick="_scGuardar()">
+          <i class="bi bi-save me-1"></i>Guardar subcontrata
+        </button>
+        <button class="btn btn-next" onclick="okContratoSubcDatos()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+      </div>
     </div>`);
+  _scLoadSaved();
+}
+
+// ─── Subcontratas: selector guardadas + autocompletar por documento ──────────
+const _SC_FIELDS = {
+  empresa:'sc_empresa', cif:'sc_cif', domicilio:'sc_domicilio', telefono:'sc_tel',
+  email:'sc_email', rep_nombre:'sc_rep_nombre', rep_dni:'sc_rep_dni',
+  rep_domicilio:'sc_rep_dom', notario:'sc_notario', notario_loc:'sc_notario_loc',
+  fecha_escritura:'sc_fecha_esc', protocolo:'sc_protocolo', registro:'sc_registro'
+};
+
+function _scFillFields(data) {
+  if (!data) return;
+  for (const [k, id] of Object.entries(_SC_FIELDS)) {
+    const el = document.getElementById(id);
+    if (el && data[k] != null && String(data[k]).trim() !== '') el.value = data[k];
+  }
+}
+
+function _scReadFields() {
+  const o = {};
+  for (const [k, id] of Object.entries(_SC_FIELDS)) {
+    const el = document.getElementById(id);
+    o[k] = el ? el.value.trim() : '';
+  }
+  return o;
+}
+
+async function _scLoadSaved() {
+  const sel = document.getElementById('sc_saved');
+  if (!sel) return;
+  try {
+    const r = await fetch('/api/subcontratas');
+    const list = await r.json();
+    window._scSaved = Array.isArray(list) ? list : [];
+  } catch (e) { window._scSaved = []; }
+  sel.innerHTML = '<option value="">— Seleccionar subcontrata guardada —</option>' +
+    window._scSaved.map((s, i) =>
+      `<option value="${i}">${_esc(s.empresa || '(sin nombre)')}${s.cif ? (' · ' + _esc(s.cif)) : ''}</option>`
+    ).join('');
+}
+
+function _scOnSelect() {
+  const sel = document.getElementById('sc_saved');
+  const i = sel.value;
+  if (i === '' || !window._scSaved) return;
+  _scFillFields(window._scSaved[parseInt(i, 10)]);
+}
+
+async function _scGuardar() {
+  const datos = _scReadFields();
+  if (!datos.empresa) { alert('Rellena al menos el nombre de la empresa subcontratista.'); return; }
+  const btn = document.getElementById('sc_save_btn');
+  try {
+    const r = await fetch('/api/subcontratas', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos)
+    });
+    const j = await r.json();
+    if (j.error) { alert(j.error); return; }
+    await _scLoadSaved();
+    if (btn) { const t = btn.innerHTML; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Guardada'; setTimeout(() => btn.innerHTML = t, 1800); }
+  } catch (e) { alert('No se pudo guardar: ' + e); }
+}
+
+async function _scExtraer(files) {
+  if (!files || !files.length) return;
+  const status = document.getElementById('sc_drop_status');
+  let apiKey = '';
+  {% if not api_key_set %}
+  apiKey = fd._api_key || localStorage.getItem('bg_apikey') || prompt('Introduce la clave API de Anthropic:') || '';
+  if (!apiKey) return;
+  fd._api_key = apiKey; localStorage.setItem('bg_apikey', apiKey);
+  {% endif %}
+  if (status) status.textContent = 'Analizando documento con IA...';
+  const form = new FormData();
+  for (const f of files) form.append('archivos', f);
+  if (apiKey) form.append('api_key', apiKey);
+  try {
+    const r = await fetch('/api/extraer_datos_subcontrata', { method: 'POST', body: form });
+    const j = await r.json();
+    if (j.error) { if (status) status.textContent = 'Error: ' + j.error; return; }
+    _scFillFields(j);
+    if (status) status.textContent = 'Datos extraidos. Revisa y corrige si hace falta.';
+  } catch (e) { if (status) status.textContent = 'Error: ' + e; }
+}
+
+function _scDrop(ev) {
+  ev.preventDefault();
+  _scExtraer(ev.dataTransfer.files);
 }
 
 function okContratoSubcDatos() {
@@ -1510,6 +1767,13 @@ function okContratoSubcDatos() {
     subc_protocolo:       fd._subcDatos.protocolo,
     subc_registro:        fd._subcDatos.registro,
   });
+  // Auto-guardar en el desplegable (persistente en config/subcontratas.json, upsert por CIF/nombre)
+  try {
+    fetch('/api/subcontratas', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fd._subcDatos)
+    });
+  } catch (e) { /* no bloquea el flujo */ }
   rmPanel();
   userMsg(empresa);
   stepContratoSubcPresupuesto();
@@ -1945,21 +2209,15 @@ function okRevisarIA() {
     fd.tipo_opcion         = v('ia_topcion');
   }
 
-  function savePartidas(which, prefix) {
-    document.querySelectorAll(`#tb${which} tr`).forEach(tr => {
-      const i = tr.id.replace(prefix+'-row-','');
-      ['desc','unit','qty','price'].forEach(field => {
-        const el = tr.querySelector(`[name="${prefix}_${field}_${i}"]`);
-        if (el) fd[`${prefix}_${field}_${i}`] = el.value;
-      });
-    });
-  }
-
+  // Guardar re-secuenciando indices a 0,1,2... y saltando filas vacias, igual que
+  // _leerPartidasDeFd espera leerlas. Antes se guardaba con el indice crudo del DOM,
+  // por lo que al borrar/anadir filas en la revision IA quedaban huecos y la revision
+  // final (stepGenerar) perdia las partidas a partir del primer hueco.
   if (tipo === 'obra_2') {
-    savePartidas('a', 'item_a');
-    savePartidas('b', 'item_b');
+    _guardarPartidasDesdeDOM('a', 'item_a');
+    _guardarPartidasDesdeDOM('b', 'item_b');
   } else {
-    savePartidas('1', 'item');
+    _guardarPartidasDesdeDOM('1', 'item');
   }
 
   rmPanel();
@@ -2325,16 +2583,79 @@ function stepInformeDesatasco() {
       <div class="col-12"><label class="form-label">Descripcion de los trabajos realizados / observaciones tecnicas *</label>
         <textarea id="f_inf_desc" class="form-control" rows="5"
           placeholder="Se ha procedido al desatasco de la red de saneamiento mediante equipo de alta presion..."></textarea></div>
+      <div class="col-12">
+        <label class="form-label">Fotografias / videos de las patologias (opcional)</label>
+        <div class="text-muted small mb-1">De los videos se extraen fotogramas automaticamente. Todo se añade como <strong>Anexo Fotografico</strong> al final del informe.</div>
+        <input id="inf-evid-input" type="file" multiple
+          accept=".jpg,.jpeg,.png,.gif,.webp,.mp4,.avi,.mov,.mkv,.webm,.m4v" style="display:none"
+          onchange="_infEvidAdd(this.files); this.value='';">
+        <div id="inf-evid-drop" onclick="document.getElementById('inf-evid-input').click()"
+          ondragover="event.preventDefault(); this.style.borderColor='#2563eb'; this.style.background='#eff6ff';"
+          ondragleave="this.style.borderColor='#cbd5e1'; this.style.background='#f8fafc';"
+          ondrop="event.preventDefault(); this.style.borderColor='#cbd5e1'; this.style.background='#f8fafc'; if(event.dataTransfer.files.length) _infEvidAdd(event.dataTransfer.files);"
+          style="border:2px dashed #cbd5e1;border-radius:8px;padding:14px;text-align:center;cursor:pointer;color:#5a7184;font-size:.85rem;background:#f8fafc;transition:.15s">
+          <i class="bi bi-camera-video" style="font-size:1.3rem"></i><br>
+          Arrastra fotos o videos aqui, o haz clic para seleccionar
+        </div>
+        <div id="inf-evid-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+        <div id="inf-evid-status" class="small text-muted mt-1"></div>
+      </div>
     </div>
     ${_htmlPartAdicionales()}
     <div class="text-end mt-2">
-      <button class="btn btn-next" onclick="okInformeDesatasco()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
+      <button class="btn btn-next" id="inf-cont-btn" onclick="okInformeDesatasco()">Continuar <i class="bi bi-arrow-right ms-1"></i></button>
     </div>`);
+  _infEvidRender();
 }
-function okInformeDesatasco() {
+
+let _infEvidFiles = [];
+function _infEvidAdd(fileList) {
+  for (const f of fileList) _infEvidFiles.push(f);
+  fd.evidencia_token = '';  // ficheros cambiados: invalidar token previo
+  _infEvidRender();
+}
+function _infEvidDel(i) { _infEvidFiles.splice(i, 1); fd.evidencia_token = ''; _infEvidRender(); }
+function _infEvidRender() {
+  const c = document.getElementById('inf-evid-chips');
+  if (!c) return;
+  c.innerHTML = _infEvidFiles.map((f, i) => {
+    const e = f.name.split('.').pop().toLowerCase();
+    const ic = ['mp4','avi','mov','mkv','webm','m4v'].includes(e) ? '🎬' : '🖼️';
+    return `<span style="display:inline-flex;align-items:center;gap:6px;background:#eef4fb;border:1px solid #cbd5e1;border-radius:16px;padding:4px 10px;font-size:.78rem;max-width:220px">`
+         + `<span>${ic}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.name)}">${esc(f.name)}</span>`
+         + `<span onclick="_infEvidDel(${i})" style="cursor:pointer;color:#cc3333">&times;</span></span>`;
+  }).join('');
+}
+async function _subirEvidenciaInforme() {
+  if (!_infEvidFiles.length) return true;      // nada que subir
+  if (fd.evidencia_token) return true;         // ya subido
+  const st = document.getElementById('inf-evid-status');
+  const btn = document.getElementById('inf-cont-btn');
+  if (st) st.textContent = 'Procesando fotos/videos (extrayendo fotogramas)... puede tardar.';
+  if (btn) btn.disabled = true;
+  try {
+    const fm = new FormData();
+    _infEvidFiles.forEach(f => fm.append('archivos', f));
+    const r = await fetch('/api/subir_evidencia', { method: 'POST', body: fm });
+    const d = await r.json();
+    if (d.error) { alert('Error procesando evidencia: ' + d.error); if (st) st.textContent = ''; return false; }
+    fd.evidencia_token = d.token;
+    if (st) st.textContent = `${d.num_fotos} foto(s) listas para el anexo.`;
+    return true;
+  } catch(e) {
+    alert('Error de conexion al subir evidencia: ' + e.message);
+    if (st) st.textContent = '';
+    return false;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+async function okInformeDesatasco() {
   const txt=v('f_inf_desc');
   if (!txt) { alert('Introduce la descripcion de los trabajos.'); return; }
   fd.informe_tecnico=txt;
+  const ok = await _subirEvidenciaInforme();
+  if (!ok) return;
   rmPanel(); userMsg('Informe tecnico correcto'); stepGenerar();
 }
 
@@ -3019,12 +3340,204 @@ async function importarPresupuesto(file) {
   }
 }
 
-function _aplicarPresupuestoImportado(data) {
-  // Resetear estado
-  Object.keys(fd).forEach(k => delete fd[k]);
-  tipo = data.tipo_modelo || 'obra_1';
+// Catalogo de tipos para el dropdown de confirmacion tras importar
+const TIPOS_IMPORTAR = [
+  ['obra_1',              'Presupuesto de obra - 1 opcion'],
+  ['obra_2',              'Presupuesto de obra - 2 opciones (A y B)'],
+  ['desatasco',           'Desatasco'],
+  ['robot_limpieza',      'Limpieza con robot'],
+  ['limpieza_aerea',      'Limpieza aerea'],
+  ['cctv_bajante',        'Inspeccion CCTV bajante'],
+  ['inspeccion_zum',      'Inspeccion ZUM'],
+  ['fresador',            'Fresador'],
+  ['fuga_agua',           'Deteccion de fuga de agua'],
+  ['vaciado_fosa',        'Vaciado de fosa'],
+  ['informe_desatasco',   'Informe de desatasco'],
+  ['bajantes_amianto',    'Bajantes con amianto'],
+  ['certificado_obra',    'Certificado de obra'],
+  ['plan_seguridad',      'Plan de seguridad y salud'],
+  ['contrato_saneamiento','Contrato de saneamiento'],
+  ['fontaneria',          'Fontaneria'],
+  ['albanileria',         'Albanileria'],
+  ['contrato_subcontrata','Contrato de subcontrata'],
+];
 
-  // Copiar todos los campos de texto a fd (excluir partidas y tipo_modelo)
+function _aplicarPresupuestoImportado(data) {
+  // Guardar JSON importado para posibles modificaciones
+  window._impData = data;
+  _renderPantallaImportado(data);
+}
+
+function _renderPantallaImportado(data) {
+  const detectado = data.tipo_modelo || 'obra_1';
+  const partidasN  = (data.partidas || []).length;
+  const partidasBN = (data.partidas_b || []).length;
+  const totalA = (data.partidas || []).reduce((s,p) => s + (parseFloat(p.cantidad)||0) * (parseFloat(p.precio_unitario)||0), 0);
+  const totalB = (data.partidas_b || []).reduce((s,p) => s + (parseFloat(p.cantidad)||0) * (parseFloat(p.precio_unitario)||0), 0);
+  const fmtEur = n => n.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' EUR';
+
+  rmPanel();
+
+  const opts = TIPOS_IMPORTAR.map(([v,l]) =>
+    `<option value="${v}" ${v===detectado?'selected':''}>${esc(l)}</option>`).join('');
+
+  const partidasBlock = partidasBN > 0
+    ? `<div>Opcion A: <strong>${partidasN}</strong> partidas - ${fmtEur(totalA)}</div>
+       <div>Opcion B: <strong>${partidasBN}</strong> partidas - ${fmtEur(totalB)}</div>`
+    : `<div><strong>${partidasN}</strong> partidas - ${fmtEur(totalA)}</div>`;
+
+  const html = `
+    <div class="qa-bubble" style="max-width:780px">
+      <div style="font-weight:700;font-size:1.05rem;color:#1e3a8a;margin-bottom:10px">
+        <i class="bi bi-file-earmark-check"></i> Presupuesto importado
+      </div>
+      <div style="background:#f1f5f9;border-radius:8px;padding:12px;font-size:.88rem;line-height:1.6;margin-bottom:14px">
+        <div><strong>Numero:</strong> ${esc(data.num_contrato||'-')}</div>
+        <div><strong>Cliente:</strong> ${esc(data.cliente_nombre||'-')}</div>
+        <div><strong>Obra:</strong> ${esc(data.obra||'-')}</div>
+        ${partidasBlock}
+      </div>
+
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-weight:600;font-size:.88rem;margin-bottom:6px">
+          Tipo de documento detectado
+          <span style="color:#dc2626">(verifica y corrige si es erroneo)</span>
+        </label>
+        <select id="imp-tipo-sel" class="form-control" style="width:100%">
+          ${opts}
+        </select>
+      </div>
+
+      <details style="margin-bottom:14px;border:1px solid #cbd5e1;border-radius:8px;padding:10px 14px">
+        <summary style="cursor:pointer;font-weight:600;font-size:.92rem;color:#1e3a8a">
+          <i class="bi bi-magic"></i> Aplicar modificaciones con IA (opcional)
+        </summary>
+        <div style="margin-top:12px">
+          <label style="display:block;font-size:.84rem;font-weight:600;margin-bottom:4px">Instrucciones (texto libre)</label>
+          <textarea id="imp-mod-txt" rows="4" class="form-control"
+            placeholder="Ej.: Anade una partida de hormigon HA-25 de 5 m3 a 120 EUR. Sube precio del fresado a 38 EUR. Cambia plazo a 45 dias."
+            style="width:100%;font-size:.88rem"></textarea>
+
+          <label style="display:block;font-size:.84rem;font-weight:600;margin:10px 0 4px">
+            Archivos con notas (PDF/imagen/foto a mano/DOCX, opcional - puedes arrastrar varios)
+          </label>
+          <input id="imp-mod-file" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.docx,.doc,.txt" style="display:none"
+            onchange="_addModFiles(this.files); this.value='';">
+          <div id="imp-mod-drop" onclick="document.getElementById('imp-mod-file').click()"
+            ondragover="event.preventDefault(); this.style.borderColor='#2563eb'; this.style.background='#eff6ff';"
+            ondragleave="this.style.borderColor='#cbd5e1'; this.style.background='#f8fafc';"
+            ondrop="event.preventDefault(); this.style.borderColor='#cbd5e1'; this.style.background='#f8fafc'; if(event.dataTransfer.files.length) _addModFiles(event.dataTransfer.files);"
+            style="border:2px dashed #cbd5e1;border-radius:8px;padding:16px;text-align:center;cursor:pointer;color:#5a7184;font-size:.85rem;background:#f8fafc;transition:.15s">
+            <i class="bi bi-cloud-arrow-up" style="font-size:1.4rem"></i><br>
+            Arrastra archivos aqui o haz clic para seleccionar
+          </div>
+          <div id="imp-mod-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+
+          <button class="btn btn-primary" style="margin-top:10px" onclick="_aplicarModsIA()">
+            <i class="bi bi-magic"></i> Aplicar modificaciones con IA
+          </button>
+        </div>
+      </details>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-success" onclick="_continuarImportado()">
+          <i class="bi bi-arrow-right-circle"></i> Continuar con estos datos
+        </button>
+        <button class="btn btn-outline-secondary" onclick="location.reload()">
+          <i class="bi bi-x-circle"></i> Cancelar
+        </button>
+      </div>
+    </div>`;
+
+  panel(html);
+}
+
+let _modFiles = [];  // archivos de notas para "Aplicar modificaciones con IA"
+
+function _addModFiles(fileList) {
+  for (const f of fileList) _modFiles.push(f);
+  _renderModChips();
+}
+
+function _removeModFile(idx) {
+  _modFiles.splice(idx, 1);
+  _renderModChips();
+}
+
+function _renderModChips() {
+  const cont = document.getElementById('imp-mod-chips');
+  if (!cont) return;
+  cont.innerHTML = _modFiles.map((f, i) => {
+    const ext = f.name.split('.').pop().toLowerCase();
+    const icon = ['jpg','jpeg','png','gif','webp'].includes(ext) ? '🖼️' : ext === 'pdf' ? '📄' : '📝';
+    return `<span style="display:inline-flex;align-items:center;gap:6px;background:#eef4fb;border:1px solid #cbd5e1;border-radius:16px;padding:4px 10px;font-size:.78rem;max-width:220px">`
+         + `<span>${icon}</span>`
+         + `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.name)}">${esc(f.name)}</span>`
+         + `<button style="background:none;border:none;color:#cc3333;cursor:pointer;padding:0;line-height:1" onclick="_removeModFile(${i})"><i class="bi bi-x-circle-fill"></i></button></span>`;
+  }).join('');
+}
+
+async function _aplicarModsIA() {
+  const txt = document.getElementById('imp-mod-txt').value.trim();
+  if (!txt && _modFiles.length === 0) {
+    alert('Escribe instrucciones o sube archivos con las modificaciones.');
+    return;
+  }
+
+  // API key
+  let apiKey = '';
+  {% if not api_key_set %}
+  apiKey = prompt('Introduce la clave API de Anthropic:') || '';
+  if (!apiKey) return;
+  {% endif %}
+
+  // Fijar tipo actual del select antes de enviar (puede haberlo cambiado el usuario)
+  const sel = document.getElementById('imp-tipo-sel');
+  if (sel) window._impData.tipo_modelo = sel.value;
+
+  const ovTxt = document.getElementById('ov-txt');
+  if (ovTxt) ovTxt.textContent = 'Aplicando modificaciones con IA...';
+  document.getElementById('overlay').style.display = 'flex';
+
+  try {
+    const form = new FormData();
+    form.append('presupuesto_json', JSON.stringify(window._impData));
+    form.append('instrucciones', txt);
+    for (const f of _modFiles) form.append('archivo', f);
+    if (apiKey) form.append('api_key', apiKey);
+
+    const resp = await fetch('/api/aplicar_modificaciones_ia', { method: 'POST', body: form });
+    const data = await resp.json();
+
+    document.getElementById('overlay').style.display = 'none';
+    if (ovTxt) ovTxt.textContent = 'Generando documentos...';
+
+    if (data.error) {
+      alert('Error al aplicar modificaciones: ' + data.error);
+      return;
+    }
+
+    _modFiles = [];
+    window._impData = data;
+    userMsg('Modificaciones aplicadas. Revisa el resumen actualizado.');
+    _renderPantallaImportado(data);
+
+  } catch(e) {
+    document.getElementById('overlay').style.display = 'none';
+    if (ovTxt) ovTxt.textContent = 'Generando documentos...';
+    alert('Error de conexion: ' + e.message);
+  }
+}
+
+function _continuarImportado() {
+  const data = window._impData || {};
+
+  // Tipo (puede haberlo cambiado manualmente en el dropdown)
+  const sel = document.getElementById('imp-tipo-sel');
+  tipo = (sel && sel.value) || data.tipo_modelo || 'obra_1';
+
+  // Resetear fd y copiar campos
+  Object.keys(fd).forEach(k => delete fd[k]);
   const skip = new Set(['tipo_modelo', 'partidas', 'partidas_b', 'partidas_a']);
   Object.entries(data).forEach(([k, v]) => {
     if (!skip.has(k) && v !== null && v !== undefined) fd[k] = String(v);
@@ -3034,7 +3547,7 @@ function _aplicarPresupuestoImportado(data) {
   window._impPartidas  = data.partidas  || [];
   window._impPartidasB = data.partidas_b || [];
 
-  // Banner de importacion
+  // Banner persistente arriba
   const banner = document.createElement('div');
   banner.id = 'imp-pres-banner';
   banner.style.cssText = 'background:#dbeafe;border:1px solid #2563eb;border-radius:10px;padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:12px;font-size:.88rem';
@@ -3066,18 +3579,77 @@ function _aplicarPresupuestoImportado(data) {
         const ud = udMap[(p.unidad||'ud').toLowerCase()] || p.unidad || 'ud';
         addRow(prefix, tbId, barId, p.descripcion||'', ud, parseFloat(p.cantidad)||1, parseFloat(p.precio_unitario)||0);
       });
-      // Limpiar para no re-inyectar si vuelven al paso
       if (which === 'b') window._impPartidasB = [];
       else window._impPartidas = [];
     }, 100);
   };
 
-  // Ir al paso 2 con datos pre-cargados
   rmPanel();
   document.getElementById('panel-card').before(banner);
   userMsg('Presupuesto importado correctamente. Revisa los datos paso a paso.');
   step2();
 }
+
+// ─── Sistema de navegacion: boton "Atras" universal ─────────────────────────
+window.__navStack = [];
+window.__navRestoring = false;
+
+function navPush(name, args) {
+  if (window.__navRestoring) return;
+  const last = window.__navStack[window.__navStack.length - 1];
+  if (last && last.name === name && JSON.stringify(last.args) === JSON.stringify(Array.from(args || []))) return;
+  window.__navStack.push({ name, args: Array.from(args || []) });
+}
+
+function navBack() {
+  if (window.__navStack.length < 2) return;
+  window.__navStack.pop();                                    // descarta el actual
+  const prev = window.__navStack.pop();                       // saca el anterior (se re-anadira al re-pintar)
+  if (!prev || typeof window[prev.name] !== 'function') return;
+  window.__navRestoring = false;                              // permitimos que se reapile
+  try {
+    window[prev.name].apply(null, prev.args);
+  } catch(e) { console.error('navBack error:', e); }
+}
+
+// Lista blanca de pasos navegables
+const __navSteps = [
+  'step1','step2','step3','stepSolicitudIA','stepObraOrigenIA','stepImportarSubcontrata',
+  'stepContratoSubcDatos','stepContratoSubcPresupuesto','stepContratoSubcCondiciones',
+  'stepDescripcionIA','stepRevisarIA','stepObraTextos','stepPartidas','stepCondiciones',
+  'stepSvc','stepFuga','stepVaciado','stepInformeDesatasco','stepCertificado',
+  'stepBajantesAmianto','stepContratoSaneamiento','stepPlanSeguridad','stepGenerar'
+];
+__navSteps.forEach(n => {
+  if (typeof window[n] !== 'function') return;
+  const orig = window[n];
+  window[n] = function() {
+    navPush(n, arguments);
+    return orig.apply(this, arguments);
+  };
+});
+
+// Inyectar boton Atras tras cada llamada a panel()
+const __origPanel = window.panel;
+window.panel = function(html) {
+  __origPanel(html);
+  if (window.__navStack.length >= 2) {
+    const card = document.getElementById('panel-card');
+    if (card && !card.querySelector('.nav-back-btn')) {
+      const btn = document.createElement('button');
+      btn.className = 'nav-back-btn';
+      btn.type = 'button';
+      btn.innerHTML = '<i class="bi bi-arrow-left"></i> Atras';
+      btn.title = 'Volver al paso anterior';
+      btn.style.cssText = 'position:absolute;top:10px;left:10px;padding:6px 12px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;cursor:pointer;font-size:.82rem;color:#1e3a8a;font-weight:600;z-index:50;box-shadow:0 1px 3px rgba(0,0,0,.08)';
+      btn.onmouseover = () => { btn.style.background = '#eff6ff'; };
+      btn.onmouseout  = () => { btn.style.background = '#fff'; };
+      btn.onclick = navBack;
+      card.style.position = 'relative';
+      card.insertBefore(btn, card.firstChild);
+    }
+  }
+};
 
 // ─── Boot
 step1();

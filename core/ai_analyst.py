@@ -16,6 +16,61 @@ import anthropic
 
 MODEL = "claude-sonnet-4-6"
 
+# Maximo de imagenes (fotogramas de video + imagenes) por peticion a Claude.
+# La API tiene un limite duro de 100 imagenes; dejamos margen para no fallar.
+MAX_IMGS_IA = 80
+
+
+def _safe_parse_json(raw: str):
+    """Parsea JSON robustamente: limpia code fences, comas finales y comillas raras.
+    Devuelve dict o None."""
+    if not raw or not raw.strip():
+        return None
+    s = raw.strip()
+    # Quitar code fences ```json ... ``` o ``` ... ```
+    s = re.sub(r"^```(?:json|JSON)?\s*", "", s)
+    s = re.sub(r"\s*```\s*$", "", s)
+    # Capturar el bloque JSON mas grande
+    m = re.search(r"\{[\s\S]*\}", s)
+    if not m:
+        return None
+    candidate = m.group()
+    # Intento directo
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+    # Reparacion 1: quitar comas finales antes de ] o }
+    fixed = re.sub(r",(\s*[\]\}])", r"\1", candidate)
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+    # Reparacion 2: comillas tipograficas -> rectas
+    fixed2 = (fixed.replace("“", '"').replace("”", '"')
+                   .replace("‘", "'").replace("’", "'"))
+    try:
+        return json.loads(fixed2)
+    except json.JSONDecodeError:
+        pass
+    # Reparacion 3: cortar despues del ultimo } valido balanceado
+    depth = 0
+    last_ok = -1
+    for i, ch in enumerate(fixed2):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                last_ok = i
+    if last_ok > 0:
+        try:
+            return json.loads(fixed2[:last_ok + 1])
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
 _FFMPEG_FALLBACK_PATHS = [
     r"C:\Users\Usuario\AppData\Local\ffmpeg\bin\ffmpeg.exe",
     r"C:\ffmpeg\bin\ffmpeg.exe",
@@ -229,9 +284,11 @@ def _extract_video_frames(video_path: Path, max_frames: int = 12) -> list[Path]:
     tmp = Path(tempfile.mkdtemp())
     subprocess.run(
         [ffmpeg, "-i", str(video_path),
-         "-vf", "fps=1/5",
+         # 1 frame cada 5s y reescalado a max 1280px de ancho (sin ampliar) para
+         # reducir peso/memoria del envio a Claude sin perder detalle de patologias
+         "-vf", "fps=1/5,scale='min(1280,iw)':-2",
          "-vframes", str(max_frames),
-         "-q:v", "3", str(tmp / "frame_%04d.jpg")],
+         "-q:v", "4", str(tmp / "frame_%04d.jpg")],
         capture_output=True, timeout=120,
     )
     frames = sorted(tmp.glob("frame_*.jpg"))
@@ -241,6 +298,66 @@ def _extract_video_frames(video_path: Path, max_frames: int = 12) -> list[Path]:
             "Comprueba que el archivo no esta corrupto."
         )
     return frames
+
+
+def files_to_content_blocks(files: list[Path], max_imgs: int = MAX_IMGS_IA) -> tuple[list[dict], list[str]]:
+    """Convierte archivos (imagenes, PDF, video, docx, txt) en bloques de contenido
+    para la API de Claude. Devuelve (bloques, rutas_imagenes); rutas_imagenes alimenta
+    el anexo fotografico del informe. Usado por el chat del perito para incorporar
+    archivos nuevos a un informe ya generado."""
+    content: list[dict] = []
+    evidencia_img: list[str] = []
+    video_ext = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
+    pdf_ext = {".pdf"}
+    img_ext = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    txt_ext = {".txt", ".md"}
+    docx_ext = {".docx", ".doc"}
+
+    _n_videos = sum(1 for f in files if f.suffix.lower() in video_ext) or 1
+    _frames_por_video = max(2, min(12, max_imgs // _n_videos))
+    _imgs = 0
+
+    for fp in files:
+        suf = fp.suffix.lower()
+        if suf in video_ext:
+            if _imgs >= max_imgs:
+                content.append({"type": "text", "text": f"\n[VIDEO: {fp.name}] - omitido (limite de imagenes alcanzado)\n"})
+                continue
+            n_obj = min(_frames_por_video, max_imgs - _imgs)
+            content.append({"type": "text", "text": f"\n[VIDEO: {fp.name}] - Fotogramas extraidos:\n"})
+            frames = _extract_video_frames(fp, max_frames=n_obj)
+            for i, frame in enumerate(frames[:n_obj]):
+                data, mt = _encode_image(frame)
+                content.append({"type": "text", "text": f"Fotograma {i + 1}:"})
+                content.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
+                evidencia_img.append(str(frame))
+                _imgs += 1
+        elif suf in pdf_ext:
+            content.append({"type": "text", "text": f"\n[DOCUMENTO PDF: {fp.name}]\n"})
+            content.append({"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": _encode_pdf(fp)}})
+        elif suf in img_ext:
+            if _imgs >= max_imgs:
+                continue
+            content.append({"type": "text", "text": f"\n[IMAGEN: {fp.name}]\n"})
+            data, mt = _encode_image(fp)
+            content.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
+            evidencia_img.append(str(fp))
+            _imgs += 1
+        elif suf in txt_ext:
+            try:
+                text = fp.read_text(encoding="utf-8", errors="ignore")[:6000]
+                content.append({"type": "text", "text": f"\n[DOCUMENTO TEXTO: {fp.name}]\n{text}\n"})
+            except Exception:
+                pass
+        elif suf in docx_ext:
+            try:
+                from docx import Document as _DocxDoc
+                doc = _DocxDoc(fp)
+                text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())[:6000]
+                content.append({"type": "text", "text": f"\n[DOCUMENTO WORD: {fp.name}]\n{text}\n"})
+            except Exception:
+                pass
+    return content, evidencia_img
 
 
 # ---------------------------------------------------------------------------
@@ -300,18 +417,32 @@ def analyze(files: list[Path], tipo: str, context: str = "", api_key: str = "",
     txt_ext = {".txt", ".md"}
     docx_ext = {".docx", ".doc"}
 
+    evidencia_img: list[str] = []  # frames de video + imagenes -> anexo fotografico del informe
+
+    # Presupuesto global de imagenes enviadas a Claude (limite duro de la API = 100).
+    # Se reparte entre los videos para que subir muchos a la vez no haga fallar la peticion.
+    _n_videos = sum(1 for f in files if f.suffix.lower() in video_ext) or 1
+    _frames_por_video = max(2, min(12, MAX_IMGS_IA // _n_videos))
+    _imgs = 0
+
     for fp in files:
         suf = fp.suffix.lower()
         if suf in video_ext:
+            if _imgs >= MAX_IMGS_IA:
+                content.append({"type": "text", "text": f"\n[VIDEO: {fp.name}] - omitido (limite de imagenes alcanzado)\n"})
+                continue
+            n_obj = min(_frames_por_video, MAX_IMGS_IA - _imgs)
             content.append({"type": "text", "text": f"\n[VIDEO: {fp.name}] - Fotogramas extraidos:\n"})
-            frames = _extract_video_frames(fp)
-            for i, frame in enumerate(frames[:12]):
+            frames = _extract_video_frames(fp, max_frames=n_obj)
+            for i, frame in enumerate(frames[:n_obj]):
                 data, mt = _encode_image(frame)
                 content.append({"type": "text", "text": f"Fotograma {i + 1}:"})
                 content.append({
                     "type": "image",
                     "source": {"type": "base64", "media_type": mt, "data": data},
                 })
+                evidencia_img.append(str(frame))
+                _imgs += 1
         elif suf in pdf_ext:
             content.append({"type": "text", "text": f"\n[DOCUMENTO PDF: {fp.name}]\n"})
             content.append({
@@ -319,9 +450,13 @@ def analyze(files: list[Path], tipo: str, context: str = "", api_key: str = "",
                 "source": {"type": "base64", "media_type": "application/pdf", "data": _encode_pdf(fp)},
             })
         elif suf in img_ext:
+            if _imgs >= MAX_IMGS_IA:
+                continue
             content.append({"type": "text", "text": f"\n[IMAGEN: {fp.name}]\n"})
             data, mt = _encode_image(fp)
             content.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
+            evidencia_img.append(str(fp))
+            _imgs += 1
         elif suf in txt_ext:
             try:
                 text = fp.read_text(encoding="utf-8", errors="ignore")[:6000]
@@ -354,19 +489,20 @@ def analyze(files: list[Path], tipo: str, context: str = "", api_key: str = "",
     )
 
     raw = response.content[0].text.strip()
-    match = re.search(r"\{[\s\S]*\}", raw)
-    if match:
-        try:
-            report = json.loads(match.group())
-            report["_raw"] = raw
-            report["_tipo_label"] = config["label"]
-            return report
-        except json.JSONDecodeError:
-            pass
+    report = _safe_parse_json(raw)
+    if report is not None:
+        report["_raw"] = raw
+        report["_tipo_label"] = config["label"]
+        report["_evidencia_img"] = evidencia_img
+        return report
 
+    # Parseo fallido: devolvemos esqueleto vacio sin volcar el raw en 'objeto'
     return {
         "titulo": f"Informe Tecnico - {config['label']}",
-        "objeto": raw,
+        "objeto": (
+            "No se pudo procesar la respuesta de la IA como informe estructurado. "
+            "Repite el analisis o revisa los archivos subidos."
+        ),
         "antecedentes": "",
         "metodologia": "",
         "descripcion_red": "",
@@ -383,7 +519,9 @@ def analyze(files: list[Path], tipo: str, context: str = "", api_key: str = "",
         "nivel_urgencia_global": "Medio",
         "requiere_intervencion_inmediata": False,
         "_raw": raw,
+        "_parse_error": True,
         "_tipo_label": config["label"],
+        "_evidencia_img": evidencia_img,
     }
 
 
@@ -525,24 +663,75 @@ def generate_partidas_ia(
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=4096,
+        max_tokens=16000,
         system=_PARTIDAS_SYSTEM,
         messages=[{"role": "user", "content": msg_content}],
     )
 
     raw = response.content[0].text.strip()
-    match = re.search(r"\{[\s\S]*\}", raw)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
+    parsed = _safe_parse_json(raw)
+    if parsed is not None:
+        return parsed
     return {"_raw": raw, "_error": "No se pudo parsear la respuesta de la IA"}
 
 
 # ---------------------------------------------------------------------------
 # DOCX report generator
 # ---------------------------------------------------------------------------
+
+def _append_photo_annex(doc, evidencia, titulo="Anexo Fotografico"):
+    """Anade al final del DOCX un anexo con los fotogramas/imagenes de la inspeccion.
+
+    `evidencia` es la lista de rutas (str) recogida durante el analisis (frames de
+    video extraidos por ffmpeg + imagenes aportadas). Se incrustan numeradas. Las
+    rutas que ya no existan en disco se ignoran sin romper la generacion.
+    """
+    from docx.shared import Cm, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    imgs = [p for p in (evidencia or []) if p and Path(p).exists()]
+    if not imgs:
+        return
+
+    MAX_FOTOS = 40
+    gris = RGBColor(0x7F, 0x7F, 0x7F)
+    azul = RGBColor(0x1F, 0x4E, 0x79)
+
+    doc.add_page_break()
+    h = doc.add_paragraph()
+    hr = h.add_run(titulo)
+    hr.bold = True
+    hr.font.size = Pt(13)
+    hr.font.color.rgb = azul
+
+    sub = doc.add_paragraph()
+    sr = sub.add_run("Fotogramas de la inspeccion CCTV e imagenes aportadas, donde se "
+                     "aprecian las patologias descritas en el informe.")
+    sr.italic = True
+    sr.font.size = Pt(9)
+    sr.font.color.rgb = gris
+
+    for n, img in enumerate(imgs[:MAX_FOTOS], 1):
+        try:
+            cap = doc.add_paragraph()
+            cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            cap.add_run().add_picture(str(img), width=Cm(13))
+            foot = doc.add_paragraph()
+            foot.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            fr = foot.add_run(f"Imagen {n}")
+            fr.italic = True
+            fr.font.size = Pt(8)
+            fr.font.color.rgb = gris
+        except Exception:
+            continue
+
+    if len(imgs) > MAX_FOTOS:
+        nota = doc.add_paragraph()
+        nr = nota.add_run(f"(Se muestran las primeras {MAX_FOTOS} de {len(imgs)} imagenes disponibles.)")
+        nr.italic = True
+        nr.font.size = Pt(8)
+        nr.font.color.rgb = gris
+
 
 def generate_report_docx(report: dict, output_path: Path, num_ref: str = "", cliente: str = ""):
     from datetime import datetime
@@ -842,6 +1031,10 @@ def generate_report_docx(report: dict, output_path: Path, num_ref: str = "", cli
     fr.font.size = Pt(8)
     fr.font.color.rgb = GRAY
 
+    # Anexo fotografico: fotogramas/imagenes de la inspeccion
+    _append_photo_annex(doc, report.get("_evidencia_img"),
+                        titulo="11. Anexo Fotografico")
+
     doc.save(str(output_path))
 
 
@@ -941,21 +1134,38 @@ def analyze_wincam(files: list[Path], context: str = "", api_key: str = "",
     pdf_ext = {".pdf"}
     img_ext = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
+    evidencia_img: list[str] = []  # frames de video + imagenes -> anexo fotografico
+
+    # Presupuesto global de imagenes (ver MAX_IMGS_IA): reparte fotogramas entre videos.
+    _n_videos = sum(1 for f in files if f.suffix.lower() in video_ext) or 1
+    _frames_por_video = max(2, min(12, MAX_IMGS_IA // _n_videos))
+    _imgs = 0
+
     for fp in files:
         suf = fp.suffix.lower()
         if suf in video_ext:
+            if _imgs >= MAX_IMGS_IA:
+                content.append({"type": "text", "text": f"\n[VIDEO CCTV: {fp.name}] - omitido (limite de imagenes alcanzado)\n"})
+                continue
+            n_obj = min(_frames_por_video, MAX_IMGS_IA - _imgs)
             content.append({"type": "text", "text": f"\n[VIDEO CCTV: {fp.name}]\n"})
-            frames = _extract_video_frames(fp)
-            for i, frame in enumerate(frames[:12]):
+            frames = _extract_video_frames(fp, max_frames=n_obj)
+            for i, frame in enumerate(frames[:n_obj]):
                 data, mt = _encode_image(frame)
                 content.append({"type": "text", "text": f"Fotograma {i + 1}:"})
                 content.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
+                evidencia_img.append(str(frame))
+                _imgs += 1
         elif suf in pdf_ext:
             content.append({"type": "text", "text": f"\n[PDF: {fp.name}]\n"})
             content.append({"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": _encode_pdf(fp)}})
         elif suf in img_ext:
+            if _imgs >= MAX_IMGS_IA:
+                continue
             data, mt = _encode_image(fp)
             content.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
+            evidencia_img.append(str(fp))
+            _imgs += 1
 
     content.append({"type": "text", "text": f"\nResponde UNICAMENTE con JSON segun este esquema:\n{WINCAM_SCHEMA}"})
 
@@ -967,13 +1177,12 @@ def analyze_wincam(files: list[Path], context: str = "", api_key: str = "",
     )
 
     raw = response.content[0].text.strip()
-    match = re.search(r"\{[\s\S]*\}", raw)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
-    return {"proyecto": proyecto, "secciones": [], "totales": {}, "_raw": raw}
+    parsed = _safe_parse_json(raw)
+    if parsed is not None:
+        parsed["_evidencia_img"] = evidencia_img
+        return parsed
+    return {"proyecto": proyecto, "secciones": [], "totales": {}, "_raw": raw,
+            "_parse_error": True, "_evidencia_img": evidencia_img}
 
 
 def generate_wincam_docx(report: dict, output_path: Path, num_ref: str = "", cliente: str = ""):
@@ -1252,6 +1461,11 @@ def generate_wincam_docx(report: dict, output_path: Path, num_ref: str = "", cli
         r2.font.size = Pt(10)
 
     page_footer(len(secciones) + 3)
+
+    # Anexo fotografico: fotogramas/imagenes de la inspeccion
+    _append_photo_annex(doc, report.get("_evidencia_img"),
+                        titulo="Anexo Fotografico")
+
     doc.save(str(output_path))
 
 
@@ -1408,25 +1622,25 @@ def extract_partidas_from_subcontrata(files: list[Path], api_key: str = "") -> d
                 text = fp.read_text(encoding="utf-8", errors="replace")
             except Exception:
                 text = fp.read_text(errors="replace")
-            content.append({"type": "text", "text": f"\n--- DOCUMENTO: {fp.name} ---\n{text[:12000]}\n"})
+            content.append({"type": "text", "text": f"\n--- DOCUMENTO: {fp.name} ---\n{text[:200000]}\n"})
         else:
             try:
                 text = fp.read_text(encoding="utf-8", errors="replace")
-                content.append({"type": "text", "text": f"\n--- ARCHIVO: {fp.name} ---\n{text[:6000]}\n"})
+                content.append({"type": "text", "text": f"\n--- ARCHIVO: {fp.name} ---\n{text[:200000]}\n"})
             except Exception:
                 pass
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=4096,
+        max_tokens=16000,
         system=_SUBCONTRATA_SYSTEM,
         messages=[{"role": "user", "content": content}],
     )
 
     raw = response.content[0].text.strip()
-    raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.MULTILINE)
-    raw = re.sub(r"```$", "", raw, flags=re.MULTILINE)
-    result = json.loads(raw.strip())
+    result = _safe_parse_json(raw)
+    if result is None:
+        raise ValueError("No se pudo interpretar la respuesta de la IA (JSON invalido o cortado).")
 
     # Recalculate importe for each partida to ensure consistency
     for p in result.get("partidas", []):
@@ -1440,3 +1654,253 @@ def extract_partidas_from_subcontrata(files: list[Path], api_key: str = "") -> d
             p["importe"] = 0.0
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Presupuesto/informe COMPLETO multi-oficio -> extraccion fiel de TODAS las partidas
+# ---------------------------------------------------------------------------
+
+_PRESUP_COMPLETO_SYSTEM = """Eres un aparejador tecnico de Acometidas Europa que prepara presupuestos de obra a partir de documentos aportados (informes tecnicos, presupuestos de otras empresas, mediciones, hojas de calculo).
+Tu tarea es EXTRAER TODAS Y CADA UNA de las partidas que aparezcan en el/los documento(s), de CUALQUIER oficio (albanileria, fontaneria, electricidad, saneamiento, poceria, pintura, carpinteria, climatizacion, etc.), SIN OMITIR NINGUNA y SIN RESUMIR NI AGRUPAR varias partidas en una sola.
+
+REGLAS CRITICAS:
+- Extrae TODAS las partidas, una por una, en el mismo orden en que aparecen. OMITIR partidas es un error grave.
+- Respeta la descripcion, la unidad, la cantidad y el precio unitario tal como figuran en el documento. NO inventes precios ni cantidades.
+- Si una linea tiene importe total y cantidad pero no precio unitario, calcula precio_unitario = importe / cantidad.
+- Si solo hay importe total sin cantidad, pon cantidad = 1 y precio_unitario = importe.
+- Si el documento agrupa por capitulos u oficios, antepon el nombre del capitulo/oficio a la descripcion (ej: "FONTANERIA - Sustitucion de bajante de PVC DN110").
+- Normaliza unidades: "m.l."/"ml." -> "ml", "m2"/"M2" -> "m2", "Ud."/"uds" -> "ud", "PA"/"P.A." -> "PA".
+- Precios y cantidades SIEMPRE como numero (float), sin simbolo de euro, con punto decimal.
+- Si un valor no se lee con seguridad ponlo a 0, pero NUNCA elimines la partida por ello.
+- Responde UNICAMENTE con el JSON solicitado, sin texto adicional ni markdown."""
+
+_PRESUP_COMPLETO_SCHEMA = """{
+  "informe_tecnico": "string: 1-3 frases resumiendo el objeto de la obra (deducido del documento)",
+  "solucion_adoptar": "string: 1-2 frases con la solucion global propuesta",
+  "memoria_tecnica": "string: 1-3 frases sobre como se ejecutaran los trabajos",
+  "partidas": [
+    {
+      "descripcion": "string: descripcion completa de la partida (con prefijo de oficio/capitulo si aplica)",
+      "unidad": "string: ud, ml, m2, m3, PA, kg, h, etc.",
+      "cantidad": 0.0,
+      "precio_unitario": 0.0
+    }
+  ]
+}"""
+
+
+def _text_from_office_file(fp: Path) -> str:
+    """Extrae texto plano de DOCX/DOC o XLSX/XLS para pasarlo al modelo."""
+    suf = fp.suffix.lower()
+    if suf in (".docx", ".doc"):
+        try:
+            from docx import Document as _DocxDoc
+            doc = _DocxDoc(str(fp))
+            partes = [p.text for p in doc.paragraphs if p.text.strip()]
+            for tbl in doc.tables:
+                for row in tbl.rows:
+                    celdas = [c.text.strip() for c in row.cells]
+                    if any(celdas):
+                        partes.append(" | ".join(celdas))
+            return "\n".join(partes)
+        except Exception:
+            return fp.read_text(encoding="utf-8", errors="replace")
+    if suf in (".xlsx", ".xls"):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(str(fp), read_only=True, data_only=True)
+            lineas = []
+            for ws in wb.worksheets:
+                lineas.append(f"--- HOJA: {ws.title} ---")
+                for row in ws.iter_rows(values_only=True):
+                    celdas = [str(c) for c in row if c is not None and str(c).strip()]
+                    if celdas:
+                        lineas.append(" | ".join(celdas))
+            return "\n".join(lineas)
+        except Exception:
+            return ""
+    return fp.read_text(encoding="utf-8", errors="replace")
+
+
+def extract_full_presupuesto(files: list[Path], api_key: str = "", descripcion: str = "") -> dict:
+    """Extrae TODAS las partidas (multi-oficio) de un informe/presupuesto aportado.
+
+    Robusto frente a documentos largos: si la respuesta se corta por limite de tokens,
+    continua la generacion automaticamente y concatena hasta completar el JSON.
+    """
+    key = api_key.strip() or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        raise ValueError("API Key de Anthropic no configurada.")
+    client = anthropic.Anthropic(api_key=key)
+
+    img_ext = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    txt_ext = {".txt", ".md", ".eml", ".html", ".htm", ".csv", ".xml"}
+    office_ext = {".docx", ".doc", ".xlsx", ".xls"}
+
+    MAX_TEXT = 200000  # tope de seguridad por documento
+
+    content: list[dict] = []
+    intro = ("Lee el/los siguiente(s) documento(s) y extrae TODAS las partidas de obra "
+             "con sus datos economicos, de todos los oficios, sin omitir ninguna.\n")
+    if descripcion.strip():
+        intro += f"\nContexto aportado por el tecnico: {descripcion.strip()}\n"
+    intro += f"\nDevuelve UNICAMENTE un JSON con este esquema:\n{_PRESUP_COMPLETO_SCHEMA}\n\nDOCUMENTOS:\n"
+    content.append({"type": "text", "text": intro})
+
+    for fp in files:
+        suf = fp.suffix.lower()
+        if suf in img_ext:
+            data, mt = _encode_image(fp)
+            content.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
+        elif suf == ".pdf":
+            content.append({
+                "type": "document",
+                "source": {"type": "base64", "media_type": "application/pdf", "data": _encode_pdf(fp)},
+            })
+        elif suf in office_ext:
+            text = _text_from_office_file(fp)[:MAX_TEXT]
+            content.append({"type": "text", "text": f"\n--- DOCUMENTO: {fp.name} ---\n{text}\n"})
+        elif suf in txt_ext:
+            try:
+                text = fp.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                text = fp.read_text(errors="replace")
+            content.append({"type": "text", "text": f"\n--- DOCUMENTO: {fp.name} ---\n{text[:MAX_TEXT]}\n"})
+
+    messages = [{"role": "user", "content": content}]
+    raw_parts: list[str] = []
+    truncado = False
+    for _ in range(6):  # 1 + hasta 5 continuaciones
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=16000,
+            system=_PRESUP_COMPLETO_SYSTEM,
+            messages=messages,
+        )
+        chunk = response.content[0].text or ""
+        raw_parts.append(chunk)
+        if getattr(response, "stop_reason", None) != "max_tokens":
+            truncado = False
+            break
+        truncado = True
+        # Continuar exactamente donde se corto
+        messages.append({"role": "assistant", "content": chunk})
+        messages.append({"role": "user", "content": (
+            "La respuesta se corto. Continua el JSON EXACTAMENTE donde lo dejaste, "
+            "sin repetir ni un solo caracter de lo ya escrito, sin markdown y sin explicaciones. "
+            "Sigue enumerando las partidas que falten hasta cerrar el JSON."
+        )})
+
+    raw = "".join(raw_parts)
+    parsed = _safe_parse_json(raw)
+    if parsed is None:
+        return {"_error": "No se pudo parsear la respuesta de la IA.", "_raw": raw[:2000],
+                "_truncado": truncado}
+
+    # Normalizar partidas
+    partidas = []
+    for p in (parsed.get("partidas") or []):
+        try:
+            cant = float(p.get("cantidad") or 1)
+        except (TypeError, ValueError):
+            cant = 1.0
+        try:
+            precio = float(p.get("precio_unitario") or 0)
+        except (TypeError, ValueError):
+            precio = 0.0
+        partidas.append({
+            "codigo": "",
+            "descripcion": (p.get("descripcion") or "").strip(),
+            "unidad": (p.get("unidad") or "ud").strip() or "ud",
+            "cantidad": cant,
+            "precio_unitario": precio,
+            "tarifa_encontrada": False,
+            "nota": "",
+        })
+    parsed["partidas"] = partidas
+    parsed["_n_partidas"] = len(partidas)
+    parsed["_truncado"] = truncado
+    return parsed
+
+
+_SUBC_DATOS_FIELDS = ["empresa", "cif", "domicilio", "telefono", "email",
+                      "rep_nombre", "rep_dni", "rep_domicilio", "notario",
+                      "notario_loc", "fecha_escritura", "protocolo", "registro"]
+
+_SUBC_DATOS_SCHEMA = """{
+  "empresa": "razon social completa CON forma juridica (S.L., S.L.U., S.A., etc.)",
+  "cif": "CIF o NIF de la empresa",
+  "domicilio": "domicilio social completo (calle, numero, CP y localidad)",
+  "telefono": "telefono de contacto",
+  "email": "correo electronico",
+  "rep_nombre": "nombre y apellidos del administrador o representante legal",
+  "rep_dni": "DNI/NIE del representante legal",
+  "rep_domicilio": "domicilio del representante a efectos de notificaciones",
+  "notario": "nombre del notario de la escritura de constitucion",
+  "notario_loc": "localidad del notario",
+  "fecha_escritura": "fecha de la escritura en formato DD/MM/AAAA",
+  "protocolo": "numero de protocolo notarial",
+  "registro": "datos del Registro Mercantil (Tomo, Folio, Hoja)"
+}"""
+
+_SUBC_DATOS_SYSTEM = (
+    "Eres un asistente administrativo de Acometidas Europa Saneamiento Tecnico S.L. "
+    "Extraes los DATOS IDENTIFICATIVOS de una empresa subcontratista a partir de documentos "
+    "(escrituras, presupuestos, facturas, certificados, tarjeta CIF, etc.). "
+    "Devuelves SIEMPRE un unico JSON valido, sin texto adicional ni markdown. "
+    "Si un dato no aparece en el documento, deja la cadena vacia. NUNCA inventes datos."
+)
+
+
+def extract_subcontrata_datos(files: list[Path], api_key: str = "") -> dict:
+    """Extract the subcontractor identity/legal data from one or more documents."""
+    key = api_key.strip() or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        raise ValueError("API Key de Anthropic no configurada.")
+    client = anthropic.Anthropic(api_key=key)
+
+    content: list[dict] = [{"type": "text", "text": (
+        "Extrae los datos identificativos de la empresa subcontratista de estos documentos.\n"
+        f"Devuelve UNICAMENTE un JSON con este esquema:\n{_SUBC_DATOS_SCHEMA}\n\nDOCUMENTOS:\n"
+    )}]
+
+    img_ext = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    for fp in files:
+        suf = fp.suffix.lower()
+        if suf in img_ext:
+            data, mt = _encode_image(fp)
+            content.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
+        elif suf == ".pdf":
+            content.append({"type": "document",
+                            "source": {"type": "base64", "media_type": "application/pdf", "data": _encode_pdf(fp)}})
+        elif suf in (".docx", ".doc"):
+            try:
+                from docx import Document
+                doc = Document(str(fp))
+                text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                for tbl in doc.tables:
+                    for row in tbl.rows:
+                        text += "\n" + "\t".join(c.text for c in row.cells)
+            except Exception:
+                text = fp.read_text(errors="replace")
+            content.append({"type": "text", "text": f"\n--- DOCUMENTO: {fp.name} ---\n{text[:12000]}\n"})
+        else:
+            try:
+                text = fp.read_text(encoding="utf-8", errors="replace")
+                content.append({"type": "text", "text": f"\n--- DOCUMENTO: {fp.name} ---\n{text[:12000]}\n"})
+            except Exception:
+                pass
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=2048,
+        system=_SUBC_DATOS_SYSTEM,
+        messages=[{"role": "user", "content": content}],
+    )
+
+    raw = response.content[0].text.strip()
+    raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.MULTILINE)
+    raw = re.sub(r"```$", "", raw, flags=re.MULTILINE)
+    m = re.search(r"\{[\s\S]*\}", raw)
+    data = json.loads(m.group(0) if m else raw.strip())
+    return {k: str(data.get(k, "") or "").strip() for k in _SUBC_DATOS_FIELDS}

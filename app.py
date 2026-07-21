@@ -17,7 +17,7 @@ from flask import (Flask, abort, jsonify, redirect, render_template,
                    request, send_file, url_for)
 
 from core.ai_analyst import (extract_partidas_from_subcontrata, extract_solicitud_data,
-                             extract_subcontrata_datos)
+                             extract_subcontrata_datos, extract_full_presupuesto)
 from core.docx_generator import DocxGenerator
 from core.excel_generator import ExcelGenerator
 from core.html_generator import HtmlGenerator
@@ -236,7 +236,7 @@ def _build_common_data(f) -> tuple[dict, str, str, str, str]:
         "[[OBRA_COMUNIDAD]]":        obra,
         "[[NOMBRE_OBRA]]":           obra,
         "[[DIRECCION_OBRA]]":        obra,
-        "[[SERVICIO_COMUNIDAD]]":    obra,   # siempre la direccion de ejecucion
+        "[[SERVICIO_COMUNIDAD]]":    obra,   # siempre la direccion de ejecucion (el titulo propio va en el banner superior)
         "[[TIPO_SERVICIO]]":         servicio,
         "[[CLIENTE_NOMBRE]]":        f.get("cliente_nombre", "").strip(),
         "[[CLIENTE_DIRECCION]]":     f.get("cliente_dir", "").strip(),
@@ -254,6 +254,32 @@ def _build_common_data(f) -> tuple[dict, str, str, str, str]:
         "de 2025": f"de {current_year}",
     }
     return data, num_contrato, fecha_larga, obra, servicio
+
+
+def _inject_banner_title(docx_path, titulo: str) -> None:
+    """Inserta un banner con el titulo (en MAYUSCULAS) al inicio del encabezado de pagina.
+
+    Solo se usa cuando el flujo aporta 'titulo_servicio' (Presupuesto Integral Multioficio).
+    No modifica la plantilla: se aplica sobre el DOCX ya generado, asi que no afecta al
+    resto de tipos de presupuesto.
+    """
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document(str(docx_path))
+    header = doc.sections[0].header
+    header.is_linked_to_previous = False
+    if header.paragraphs:
+        p = header.paragraphs[0].insert_paragraph_before()
+    else:
+        p = header.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(titulo.upper())
+    run.bold = True
+    run.font.size = Pt(15)
+    run.font.color.rgb = RGBColor(0x1F, 0x4E, 0x79)
+    doc.save(str(docx_path))
 
 
 def _build_obra_data(f, total_sin_iva: float, fecha_larga: str) -> dict:
@@ -1037,14 +1063,28 @@ def api_chat_informe():
     """Chat con el perito IA para modificar o ampliar un informe generado."""
     import traceback as _tb
     try:
-        from core.ai_analyst import SYSTEM_PROMPT, REPORT_SCHEMA, generate_report_docx
-        data = request.get_json(force=True)
-        report_actual = data.get("report", {})
-        historial = data.get("historial", [])  # [{role, content}]
-        mensaje = data.get("mensaje", "").strip()
-        api_key = data.get("api_key", "").strip()
-        num_ref = data.get("num_ref", "")
-        cliente = data.get("cliente", "")
+        from core.ai_analyst import (SYSTEM_PROMPT, REPORT_SCHEMA,
+                                      generate_report_docx, files_to_content_blocks)
+
+        # Acepta JSON (sin adjuntos) o multipart/form-data (con archivos nuevos a analizar)
+        es_multipart = bool(request.content_type and request.content_type.startswith("multipart/"))
+        if es_multipart:
+            report_actual = json.loads(request.form.get("report") or "{}")
+            historial = json.loads(request.form.get("historial") or "[]")
+            mensaje = (request.form.get("mensaje") or "").strip()
+            api_key = (request.form.get("api_key") or "").strip()
+            num_ref = request.form.get("num_ref", "")
+            cliente = request.form.get("cliente", "")
+            adjuntos = [f for f in request.files.getlist("archivos") if f.filename]
+        else:
+            data = request.get_json(force=True)
+            report_actual = data.get("report", {})
+            historial = data.get("historial", [])  # [{role, content}]
+            mensaje = data.get("mensaje", "").strip()
+            api_key = data.get("api_key", "").strip()
+            num_ref = data.get("num_ref", "")
+            cliente = data.get("cliente", "")
+            adjuntos = []
 
         key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         if not key:
@@ -1053,20 +1093,53 @@ def api_chat_informe():
         import anthropic as _ant
         client = _ant.Anthropic(api_key=key)
 
+        # Guardar y procesar los archivos nuevos que el tecnico haya arrastrado al chat
+        bloques_adjuntos = []
+        nuevos_evidencia = []
+        if adjuntos:
+            chat_dir = UPLOADS_DIR / ("chat_" + uuid.uuid4().hex[:8])
+            chat_dir.mkdir(parents=True, exist_ok=True)
+            saved = []
+            for up in adjuntos:
+                suf = Path(up.filename).suffix.lower()
+                if suf not in ALLOWED_IA_EXTENSIONS:
+                    continue
+                dest = chat_dir / f"{uuid.uuid4().hex[:6]}{suf}"
+                up.save(str(dest))
+                if dest.exists() and dest.stat().st_size > 0:
+                    saved.append(dest)
+            if saved:
+                bloques_adjuntos, nuevos_evidencia = files_to_content_blocks(saved)
+
         # Construir historial de conversacion
         messages = []
         for h in historial:
             messages.append({"role": h["role"], "content": h["content"]})
 
         # Mensaje actual del usuario
-        user_content = (
+        intro = (
             f"INFORME ACTUAL EN JSON:\n{json.dumps(report_actual, ensure_ascii=False, indent=2)}\n\n"
             f"INSTRUCCION DEL TECNICO:\n{mensaje}\n\n"
-            f"Aplica la modificacion solicitada y devuelve el informe completo actualizado "
-            f"en el mismo formato JSON. Si la instruccion es una pregunta tecnica, "
-            f"responde como texto en el campo 'respuesta_chat' y mantén el informe sin cambios. "
+        )
+        if bloques_adjuntos:
+            intro += (
+                "El tecnico adjunta los siguientes ARCHIVOS NUEVOS (imagenes, videos o documentos). "
+                "Analizalos e incorpora la informacion relevante (nuevos tramos, patologias, mediciones, "
+                "fotografias, datos del documento) al informe existente. No borres lo que ya es correcto; "
+                "amplia y actualiza:\n"
+            )
+        cierre = (
+            f"\nDevuelve el informe completo actualizado en el mismo formato JSON. "
+            f"Si la instruccion es solo una pregunta tecnica, responde como texto en el campo "
+            f"'respuesta_chat' y manten el informe sin cambios. "
             f"Responde UNICAMENTE con JSON segun el esquema:\n{REPORT_SCHEMA}"
         )
+        if bloques_adjuntos:
+            user_content = [{"type": "text", "text": intro}]
+            user_content.extend(bloques_adjuntos)
+            user_content.append({"type": "text", "text": cierre})
+        else:
+            user_content = intro + cierre
         messages.append({"role": "user", "content": user_content})
 
         response = client.messages.create(
@@ -1084,9 +1157,12 @@ def api_chat_informe():
         raw_clean = re.sub(r"\n?```\s*$", "", raw_clean).strip()
         updated = _parse_json_lenient(raw_clean)
         if isinstance(updated, dict):
-            # Conservar el anexo fotografico (la respuesta de Claude no reenvia las rutas)
-            if not updated.get("_evidencia_img") and report_actual.get("_evidencia_img"):
-                updated["_evidencia_img"] = report_actual["_evidencia_img"]
+            # Conservar el anexo fotografico previo (Claude no reenvia las rutas) y
+            # anadir las imagenes de los archivos nuevos aportados en este turno.
+            prev_ev = report_actual.get("_evidencia_img") or []
+            merged_ev = list(prev_ev) + [e for e in nuevos_evidencia if e not in prev_ev]
+            if merged_ev:
+                updated["_evidencia_img"] = merged_ev
             # Regenerar DOCX con el informe actualizado
             session_id = uuid.uuid4().hex[:8]
             docx_name = f"Informe_IA_{session_id}.docx"
@@ -1094,6 +1170,13 @@ def api_chat_informe():
             try:
                 generate_report_docx(updated, docx_path, num_ref=num_ref, cliente=cliente)
                 updated["_docx"] = docx_name
+                # Regenerar tambien el PDF para que quede sincronizado (con el anexo fotografico)
+                try:
+                    pdf_path = PdfConverter().convert(docx_path, SALIDAS_DIR)
+                    if pdf_path:
+                        updated["_pdf"] = pdf_path.name
+                except Exception:
+                    pass
             except Exception:
                 pass
             updated["_assistant_msg"] = updated.get("respuesta_chat", "Informe actualizado.")
@@ -1403,15 +1486,15 @@ def api_aplicar_modificaciones_ia():
         pres_raw = request.form.get("presupuesto_json", "").strip()
         instrucciones = request.form.get("instrucciones", "").strip()
         api_key = request.form.get("api_key", "").strip()
-        archivo = request.files.get("archivo")
+        archivos = [f for f in request.files.getlist("archivo") if f and f.filename]
 
         key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         if not key:
             return jsonify({"error": "API Key no configurada."}), 400
         if not pres_raw:
             return jsonify({"error": "Falta el presupuesto_json."}), 400
-        if not instrucciones and not (archivo and archivo.filename):
-            return jsonify({"error": "Debes indicar instrucciones (texto) o subir un archivo con las modificaciones."}), 400
+        if not instrucciones and not archivos:
+            return jsonify({"error": "Debes indicar instrucciones (texto) o subir archivos con las modificaciones."}), 400
 
         try:
             presupuesto = json.loads(pres_raw)
@@ -1423,45 +1506,47 @@ def api_aplicar_modificaciones_ia():
         client = _ant.Anthropic(api_key=key)
 
         contenido = []
-        if archivo and archivo.filename:
-            suffix = Path(archivo.filename).suffix.lower()
-            if suffix not in {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".txt", ".docx", ".doc"}:
-                return jsonify({"error": "Formato de archivo no soportado para modificaciones."}), 400
+        if archivos:
             tmp_dir = Path(tempfile.mkdtemp(prefix="mod_pres_"))
-            dest = tmp_dir / f"mods{suffix}"
-            archivo.save(str(dest))
-            data_bytes = dest.read_bytes()
+            for idx, archivo in enumerate(archivos):
+                suffix = Path(archivo.filename).suffix.lower()
+                if suffix not in {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".txt", ".docx", ".doc"}:
+                    return jsonify({"error": f"Formato no soportado para modificaciones: {archivo.filename}"}), 400
+                dest = tmp_dir / f"mods_{idx}{suffix}"
+                archivo.save(str(dest))
+                data_bytes = dest.read_bytes()
+                contenido.append({"type": "text", "text": f"\n[ARCHIVO ADJUNTO: {archivo.filename}]"})
 
-            if suffix == ".pdf":
-                contenido.append({"type": "document", "source": {
-                    "type": "base64",
-                    "media_type": "application/pdf",
-                    "data": base64.b64encode(data_bytes).decode(),
-                }})
-            elif suffix in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
-                media = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",".gif":"image/gif",".webp":"image/webp"}[suffix]
-                contenido.append({"type": "image", "source": {
-                    "type": "base64",
-                    "media_type": media,
-                    "data": base64.b64encode(data_bytes).decode(),
-                }})
-            elif suffix in (".docx", ".doc"):
-                try:
-                    from docx import Document as _DocxDoc
-                    doc = _DocxDoc(str(dest))
-                    text_doc = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-                    for tbl in doc.tables:
-                        for row in tbl.rows:
-                            text_doc += "\n" + "\t".join(c.text for c in row.cells if c.text.strip())
-                    contenido.append({"type": "text", "text": f"ARCHIVO ADJUNTO (texto extraido del DOCX):\n{text_doc}"})
-                except Exception:
-                    pass
-            else:
-                try:
-                    text_doc = dest.read_text(encoding="utf-8", errors="replace")
-                    contenido.append({"type": "text", "text": f"ARCHIVO ADJUNTO:\n{text_doc}"})
-                except Exception:
-                    pass
+                if suffix == ".pdf":
+                    contenido.append({"type": "document", "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": base64.b64encode(data_bytes).decode(),
+                    }})
+                elif suffix in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+                    media = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",".gif":"image/gif",".webp":"image/webp"}[suffix]
+                    contenido.append({"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": media,
+                        "data": base64.b64encode(data_bytes).decode(),
+                    }})
+                elif suffix in (".docx", ".doc"):
+                    try:
+                        from docx import Document as _DocxDoc
+                        doc = _DocxDoc(str(dest))
+                        text_doc = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                        for tbl in doc.tables:
+                            for row in tbl.rows:
+                                text_doc += "\n" + "\t".join(c.text for c in row.cells if c.text.strip())
+                        contenido.append({"type": "text", "text": f"(texto extraido del DOCX):\n{text_doc}"})
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        text_doc = dest.read_text(encoding="utf-8", errors="replace")
+                        contenido.append({"type": "text", "text": text_doc})
+                    except Exception:
+                        pass
 
         prompt_mod = (
             "Aplica las siguientes modificaciones sobre el presupuesto JSON proporcionado. "
@@ -1509,6 +1594,58 @@ def api_aplicar_modificaciones_ia():
         if tmp_dir and tmp_dir.exists():
             import shutil
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.route("/api/subir_evidencia", methods=["POST"])
+def api_subir_evidencia():
+    """Recibe videos/imagenes para el anexo fotografico de un informe.
+    Extrae fotogramas de los videos, guarda todas las imagenes en una carpeta
+    de sesion (UPLOADS_DIR/evid_xxx) y devuelve un token para adjuntarlas al
+    documento en el momento de generar (via campo oculto 'evidencia_token')."""
+    import traceback as _tb
+    import shutil as _sh
+    try:
+        from core.ai_analyst import files_to_content_blocks
+        archivos = [f for f in request.files.getlist("archivos") if f.filename]
+        if not archivos:
+            return jsonify({"error": "No se recibieron archivos."}), 400
+
+        token = "evid_" + uuid.uuid4().hex[:10]
+        sess = UPLOADS_DIR / token
+        sess.mkdir(parents=True, exist_ok=True)
+
+        saved = []
+        for up in archivos:
+            suf = Path(up.filename).suffix.lower()
+            if suf not in ALLOWED_IA_EXTENSIONS:
+                continue
+            dest = sess / f"src_{uuid.uuid4().hex[:6]}{suf}"
+            up.save(str(dest))
+            if dest.exists() and dest.stat().st_size > 0:
+                saved.append(dest)
+        if not saved:
+            return jsonify({"error": "Ningun archivo valido (usa video o imagen)."}), 400
+
+        # Extrae fotogramas de los videos y recoge las imagenes -> lista de rutas
+        _, evidencia = files_to_content_blocks(saved)
+
+        # Copia todas las imagenes (frames + fotos) al folder de sesion, numeradas
+        fotos = []
+        for i, p in enumerate(evidencia):
+            src = Path(p)
+            if not src.exists():
+                continue
+            dst = sess / f"foto_{i:03d}{src.suffix.lower()}"
+            try:
+                if src.resolve() != dst.resolve():
+                    _sh.copyfile(src, dst)
+                fotos.append(dst.name)
+            except Exception:
+                pass
+
+        return jsonify({"token": token, "num_fotos": len(fotos)})
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
 
 
 @app.route("/api/tarifa/<code>")
@@ -1624,6 +1761,52 @@ def api_importar_subcontrata():
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.route("/api/importar_presupuesto_completo", methods=["POST"])
+def api_importar_presupuesto_completo():
+    """Extrae TODAS las partidas (multi-oficio) de un informe/presupuesto aportado.
+
+    Devuelve el resultado en el mismo formato que consume stepRevisarIA en el frontend
+    (informe_tecnico, solucion_adoptar, memoria_tecnica, partidas[]), de modo que el
+    tecnico pueda editar/anadir/eliminar partidas antes de generar el presupuesto final.
+    """
+    files_in = request.files.getlist("archivos")
+    if not files_in:
+        return jsonify({"error": "No se recibieron archivos."}), 400
+
+    api_key = request.form.get("api_key", "").strip() or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return jsonify({"error": "API Key de Anthropic no configurada."}), 400
+    descripcion = request.form.get("descripcion", "").strip()
+
+    ALLOWED = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf",
+               ".txt", ".md", ".html", ".htm", ".csv", ".xml",
+               ".doc", ".docx", ".xls", ".xlsx"}
+    tmp_dir = Path(tempfile.mkdtemp(prefix="presup_completo_"))
+    saved: list[Path] = []
+    for fobj in files_in:
+        suf = Path(fobj.filename or "").suffix.lower()
+        if suf not in ALLOWED:
+            continue
+        dest = tmp_dir / f"{uuid.uuid4().hex}{suf}"
+        fobj.save(dest)
+        saved.append(dest)
+
+    if not saved:
+        return jsonify({"error": "Formato no valido. Sube PDF, imagen, Word, Excel o texto."}), 400
+
+    try:
+        result = extract_full_presupuesto(saved, api_key=api_key, descripcion=descripcion)
+        if "_error" in result:
+            return jsonify({"error": result["_error"], "raw": result.get("_raw", "")}), 500
+        return jsonify(result)
+    except Exception as e:
+        import traceback as _tb
+        return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
     finally:
         import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1839,6 +2022,9 @@ def generar():
                 items=items, items_a=items_a, items_b=items_b,
                 subc_items=subc_items,
             )
+            titulo_banner = f.get("titulo_servicio", "").strip()
+            if titulo_banner:
+                _inject_banner_title(docx_path, titulo_banner)
             generated["docx"] = docx_path.relative_to(SALIDAS_DIR).as_posix()
         except Exception as e:
             errors.append(f"DOCX: {e}")
@@ -1861,6 +2047,25 @@ def generar():
             generated["html"] = html_path.relative_to(SALIDAS_DIR).as_posix()
         except Exception as e:
             errors.append(f"HTML: {e}")
+
+    # Anexo fotografico opcional: fotogramas de video + fotos subidas por el usuario.
+    # El token viene de /api/subir_evidencia (campo oculto 'evidencia_token').
+    evid_token = f.get("evidencia_token", "").strip()
+    if (evid_token and "docx" in generated
+            and evid_token.startswith("evid_") and evid_token[5:].isalnum()):
+        try:
+            from core.ai_analyst import _append_photo_annex
+            from docx import Document as _DocxDoc
+            sess = UPLOADS_DIR / evid_token
+            img_ext = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+            fotos = sorted(str(p) for p in sess.glob("foto_*") if p.suffix.lower() in img_ext)
+            if fotos:
+                _dpath = SALIDAS_DIR / generated["docx"]
+                _doc = _DocxDoc(str(_dpath))
+                _append_photo_annex(_doc, fotos, titulo="Anexo Fotografico")
+                _doc.save(str(_dpath))
+        except Exception as e:
+            errors.append(f"Anexo fotografico: {e}")
 
     # PDF
     try:
