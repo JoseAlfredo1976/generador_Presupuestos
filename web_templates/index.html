@@ -1364,9 +1364,16 @@ async function _impcExtraer() {
     if (data.error) throw new Error(data.error);
     if (ov) ov.classList.remove('show');
     if (ovTxt) ovTxt.textContent = 'Generando documentos...';
-    const n = (data.partidas || []).length;
+    const parts = data.partidas || [];
+    const n = parts.length;
+    const conTarifa = data._partidas_con_tarifa || 0;
+    const enBlanco = parts.filter(p => !(+p.precio_unitario)).length;
     rmPanel();
     userMsg(`Documento importado: ${n} partida(s) extraida(s)`);
+    let resumen = `<i class="bi bi-check-circle-fill me-1" style="color:#059669"></i><strong>${n} partidas</strong> extraidas.`;
+    if (conTarifa) resumen += ` ${conTarifa} con precio de tu tabla de tarifas (marcadas <span class="tbadge" style="display:inline">Tarifa</span>).`;
+    if (enBlanco) resumen += ` <strong>${enBlanco} sin precio</strong> (sin coincidencia en tarifas): ponles tu el importe en la tabla.`;
+    botMsg(resumen);
     if (data._truncado) {
       botMsg('<i class="bi bi-exclamation-triangle me-1 text-warning"></i>El documento era muy largo; revisa que estan todas las partidas. Puedes anadir las que falten en la tabla.');
     }

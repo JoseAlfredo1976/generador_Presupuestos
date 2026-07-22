@@ -1766,6 +1766,46 @@ def api_importar_subcontrata():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+_MATCH_STOP = {"de", "del", "la", "el", "los", "las", "y", "en", "con", "por",
+               "para", "a", "o", "un", "una", "al", "su", "sus", "capitulo", "capítulo"}
+
+
+def _match_norm(s: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
+    return s.lower()
+
+
+def _match_tokens(s: str) -> list[str]:
+    import re as _re
+    s = _match_norm(s)
+    # Quitar prefijo tipo "CAPITULO 1 - " o "FONTANERIA - " del inicio
+    s = _re.sub(r"^[^-\n]{2,45}-\s*", "", s)
+    words = _re.findall(r"[a-z0-9]+", s)
+    return [w for w in words if len(w) >= 3 and w not in _MATCH_STOP]
+
+
+def _best_tarifa_match(desc: str, items: list[dict]):
+    """Devuelve (item, score 0..1) de la tarifa mas parecida a la descripcion, o (None, 0)."""
+    import difflib
+    q = _match_tokens(desc)
+    if not q:
+        return None, 0.0
+    qset = set(q)
+    qnorm = _match_norm(desc)
+    best, best_score = None, 0.0
+    for it in items:
+        dt = set(_match_tokens(it.get("descripcion", "")))
+        if not dt:
+            continue
+        overlap = len(qset & dt) / len(qset)
+        ratio = difflib.SequenceMatcher(None, qnorm, _match_norm(it.get("descripcion", ""))).ratio()
+        score = 0.7 * overlap + 0.3 * ratio
+        if score > best_score:
+            best, best_score = it, score
+    return best, best_score
+
+
 @app.route("/api/importar_presupuesto_completo", methods=["POST"])
 def api_importar_presupuesto_completo():
     """Extrae TODAS las partidas (multi-oficio) de un informe/presupuesto aportado.
@@ -1803,6 +1843,29 @@ def api_importar_presupuesto_completo():
         result = extract_full_presupuesto(saved, api_key=api_key, descripcion=descripcion)
         if "_error" in result:
             return jsonify({"error": result["_error"], "raw": result.get("_raw", "")}), 500
+
+        # Para partidas SIN precio (informe sin valorar): buscar la tarifa mas parecida
+        # en TARIFAS.xlsx. Si hay match razonable, se usa su precio y se marca "Tarifa".
+        # Si no, se deja en 0 (en blanco) para que el tecnico lo rellene.
+        UMBRAL = 0.5
+        try:
+            items_tarifa = get_tarifas().all_items()
+        except Exception:
+            items_tarifa = []
+        n_tarifa = 0
+        for p in result.get("partidas", []):
+            if p.get("precio_unitario", 0) or not items_tarifa:
+                continue
+            match, score = _best_tarifa_match(p.get("descripcion", ""), items_tarifa)
+            if match and match.get("precio", 0) > 0 and score >= UMBRAL:
+                p["precio_unitario"] = match["precio"]
+                p["codigo"] = match["codigo"]
+                p["tarifa_encontrada"] = True
+                p["importe"] = round(p.get("cantidad", 1) * match["precio"], 2)
+                nota_prev = (p.get("nota") or "").strip()
+                p["nota"] = (nota_prev + " " if nota_prev else "") + f"Precio tomado de tarifa {match['codigo']} (similitud {round(score*100)}%)"
+                n_tarifa += 1
+        result["_partidas_con_tarifa"] = n_tarifa
         return jsonify(result)
     except Exception as e:
         import traceback as _tb
