@@ -71,6 +71,39 @@ def _safe_parse_json(raw: str):
     return None
 
 
+def _to_float(v, default=0.0):
+    """Convierte a float aceptando formato espanol (coma decimal, punto de miles) o ingles.
+    Ej: '12,50' -> 12.5 ; '1.234,56' -> 1234.56 ; '1,234.56' -> 1234.56 ; '310 €' -> 310.0"""
+    if v is None:
+        return default
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    if not s:
+        return default
+    # Quitar todo lo que no sea digito, coma, punto o signo
+    s = re.sub(r"[^\d,.\-]", "", s)
+    if not s or s in ("-", ".", ","):
+        return default
+    if "," in s and "." in s:
+        # El separador decimal es el que aparece mas a la derecha
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")   # espanol: 1.234,56
+        else:
+            s = s.replace(",", "")                      # ingles: 1,234.56
+    elif "," in s:
+        # Solo coma: si hay una sola coma la tratamos como decimal (12,50)
+        if s.count(",") == 1:
+            s = s.replace(",", ".")
+        else:
+            s = s.replace(",", "")                      # varias comas = miles
+    # solo punto o sin separador: se deja tal cual
+    try:
+        return float(s)
+    except ValueError:
+        return default
+
+
 _FFMPEG_FALLBACK_PATHS = [
     r"C:\Users\Usuario\AppData\Local\ffmpeg\bin\ffmpeg.exe",
     r"C:\ffmpeg\bin\ffmpeg.exe",
@@ -1642,16 +1675,22 @@ def extract_partidas_from_subcontrata(files: list[Path], api_key: str = "") -> d
     if result is None:
         raise ValueError("No se pudo interpretar la respuesta de la IA (JSON invalido o cortado).")
 
-    # Recalculate importe for each partida to ensure consistency
+    # Recalculate importe for each partida to ensure consistency (formato espanol tolerado)
     for p in result.get("partidas", []):
-        try:
-            p["cantidad"] = float(p.get("cantidad") or 1)
-            p["precio_unitario"] = float(p.get("precio_unitario") or 0)
-            p["importe"] = round(p["cantidad"] * p["precio_unitario"], 2)
-        except (TypeError, ValueError):
-            p["cantidad"] = 1.0
-            p["precio_unitario"] = 0.0
-            p["importe"] = 0.0
+        cant = _to_float(p.get("cantidad"), 0.0)
+        precio = _to_float(p.get("precio_unitario"), 0.0)
+        if precio == 0:
+            imp = _to_float(p.get("importe"), 0.0)
+            if imp and cant:
+                precio = round(imp / cant, 2)
+            elif imp and not cant:
+                cant = 1.0
+                precio = imp
+        if cant == 0:
+            cant = 1.0
+        p["cantidad"] = cant
+        p["precio_unitario"] = precio
+        p["importe"] = round(cant * precio, 2)
 
     return result
 
@@ -1683,7 +1722,8 @@ _PRESUP_COMPLETO_SCHEMA = """{
       "descripcion": "string: descripcion completa de la partida (con prefijo de oficio/capitulo si aplica)",
       "unidad": "string: ud, ml, m2, m3, PA, kg, h, etc.",
       "cantidad": 0.0,
-      "precio_unitario": 0.0
+      "precio_unitario": 0.0,
+      "importe": 0.0
     }
   ]
 }"""
@@ -1797,23 +1837,28 @@ def extract_full_presupuesto(files: list[Path], api_key: str = "", descripcion: 
         return {"_error": "No se pudo parsear la respuesta de la IA.", "_raw": raw[:2000],
                 "_truncado": truncado}
 
-    # Normalizar partidas
+    # Normalizar partidas (acepta numeros en formato espanol: "12,50", "1.234,56")
     partidas = []
     for p in (parsed.get("partidas") or []):
-        try:
-            cant = float(p.get("cantidad") or 1)
-        except (TypeError, ValueError):
+        cant = _to_float(p.get("cantidad"), 0.0)
+        precio = _to_float(p.get("precio_unitario"), 0.0)
+        # Si no hay precio unitario pero si importe total y cantidad, deducirlo
+        if precio == 0:
+            imp = _to_float(p.get("importe") or p.get("total"), 0.0)
+            if imp and cant:
+                precio = round(imp / cant, 2)
+            elif imp and not cant:
+                cant = 1.0
+                precio = imp
+        if cant == 0:
             cant = 1.0
-        try:
-            precio = float(p.get("precio_unitario") or 0)
-        except (TypeError, ValueError):
-            precio = 0.0
         partidas.append({
             "codigo": "",
             "descripcion": (p.get("descripcion") or "").strip(),
             "unidad": (p.get("unidad") or "ud").strip() or "ud",
             "cantidad": cant,
             "precio_unitario": precio,
+            "importe": round(cant * precio, 2),
             "tarifa_encontrada": False,
             "nota": "",
         })
