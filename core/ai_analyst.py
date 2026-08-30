@@ -766,7 +766,46 @@ def _append_photo_annex(doc, evidencia, titulo="Anexo Fotografico"):
         nr.font.color.rgb = gris
 
 
-def generate_report_docx(report: dict, output_path: Path, num_ref: str = "", cliente: str = ""):
+def _add_hyperlink(paragraph, url: str, text: str, color_hex: str = "0563C1", size_pt=9, bold=False):
+    """Inserta un hyperlink de verdad (clicable en Word/PDF) en el parrafo dado.
+
+    python-docx no trae un metodo add_hyperlink: hay que registrar la relacion
+    externa y montar el <w:hyperlink> a mano.
+    """
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    part = paragraph.part
+    r_id = part.relate_to(url, RT.HYPERLINK, is_external=True)
+
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+
+    run = OxmlElement("w:r")
+    rPr = OxmlElement("w:rPr")
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), color_hex)
+    rPr.append(color)
+    u = OxmlElement("w:u")
+    u.set(qn("w:val"), "single")
+    rPr.append(u)
+    if bold:
+        rPr.append(OxmlElement("w:b"))
+    sz = OxmlElement("w:sz")
+    sz.set(qn("w:val"), str(int(size_pt * 2)))
+    rPr.append(sz)
+    run.append(rPr)
+    t = OxmlElement("w:t")
+    t.text = text
+    run.append(t)
+    hyperlink.append(run)
+    paragraph._p.append(hyperlink)
+    return hyperlink
+
+
+def generate_report_docx(report: dict, output_path: Path, num_ref: str = "", cliente: str = "",
+                         enlace_video: str | None = None):
     from datetime import datetime
     from docx import Document
     from docx.shared import Pt, RGBColor, Cm
@@ -1068,6 +1107,32 @@ def generate_report_docx(report: dict, output_path: Path, num_ref: str = "", cli
     _append_photo_annex(doc, report.get("_evidencia_img"),
                         titulo="11. Anexo Fotografico")
 
+    # -- Enlace al video de la inspeccion (visor publico, sin necesidad de
+    # cuenta): se incrusta aqui para que viaje siempre pegado al documento.
+    if enlace_video:
+        h1("Video de la inspeccion")
+        fila = doc.add_table(rows=1, cols=2)
+        fila.autofit = False
+        fila.columns[0].width = Cm(3.6)
+        fila.columns[1].width = Cm(13.4)
+        celda_qr, celda_txt = fila.rows[0].cells
+        try:
+            import io
+            import qrcode
+            qr_img = qrcode.make(enlace_video, border=1)
+            qr_buf = io.BytesIO()
+            qr_img.save(qr_buf, format="PNG")
+            celda_qr.paragraphs[0].add_run().add_picture(qr_buf, width=Cm(3.2))
+        except Exception:
+            set_cell_text(celda_qr, "(codigo QR no disponible)", size=8, color=GRAY)
+        set_cell_text(celda_txt,
+                      "Escanea este codigo con la camara del movil, o pulsa el enlace "
+                      "de abajo, para ver el video de la inspeccion:",
+                      size=9)
+        p_link = celda_txt.add_paragraph()
+        p_link.paragraph_format.space_before = Pt(6)
+        _add_hyperlink(p_link, enlace_video, enlace_video, size_pt=9, bold=True)
+
     doc.save(str(output_path))
 
 
@@ -1218,7 +1283,8 @@ def analyze_wincam(files: list[Path], context: str = "", api_key: str = "",
             "_parse_error": True, "_evidencia_img": evidencia_img}
 
 
-def generate_wincam_docx(report: dict, output_path: Path, num_ref: str = "", cliente: str = ""):
+def generate_wincam_docx(report: dict, output_path: Path, num_ref: str = "", cliente: str = "",
+                         enlace_video: str | None = None):
     """Generate WinCam-style DOCX inspection report."""
     from datetime import datetime
     from docx import Document
@@ -1498,6 +1564,37 @@ def generate_wincam_docx(report: dict, output_path: Path, num_ref: str = "", cli
     # Anexo fotografico: fotogramas/imagenes de la inspeccion
     _append_photo_annex(doc, report.get("_evidencia_img"),
                         titulo="Anexo Fotografico")
+
+    # -- Enlace al video de la inspeccion (visor publico, sin necesidad de
+    # cuenta): se incrusta aqui para que viaje siempre pegado al documento.
+    if enlace_video:
+        tp = doc.add_paragraph()
+        tp.paragraph_format.space_before = Pt(14)
+        tr = tp.add_run("VIDEO DE LA INSPECCION")
+        tr.bold = True
+        tr.font.size = Pt(11)
+        tr.font.color.rgb = BLUE
+        fila = doc.add_table(rows=1, cols=2)
+        fila.autofit = False
+        fila.columns[0].width = Cm(3.6)
+        fila.columns[1].width = Cm(13.4)
+        celda_qr, celda_txt = fila.rows[0].cells
+        try:
+            import io
+            import qrcode
+            qr_img = qrcode.make(enlace_video, border=1)
+            qr_buf = io.BytesIO()
+            qr_img.save(qr_buf, format="PNG")
+            celda_qr.paragraphs[0].add_run().add_picture(qr_buf, width=Cm(3.2))
+        except Exception:
+            cell_text(celda_qr, "(codigo QR no disponible)", size=8, color=LGRAY)
+        cell_text(celda_txt,
+                  "Escanea este codigo con la camara del movil, o pulsa el enlace de "
+                  "abajo, para ver el video de la inspeccion con las anomalias senaladas:",
+                  size=9)
+        p_link = celda_txt.add_paragraph()
+        p_link.paragraph_format.space_before = Pt(6)
+        _add_hyperlink(p_link, enlace_video, enlace_video, size_pt=9, bold=True)
 
     doc.save(str(output_path))
 

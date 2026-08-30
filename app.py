@@ -4,7 +4,9 @@ Interfaz web del Generador de Presupuestos + Analisis IA - Grupo Europa
 Uso: python app.py  -> abre http://localhost:5000
 """
 import json
+import logging
 import os
+import secrets
 import sys
 import tempfile
 import time
@@ -25,6 +27,7 @@ from core.pdf_converter import PdfConverter
 from utils.tarifa_loader import TarifaLoader
 from utils.sheets_registro import siguiente_numero, registrar as sheets_registrar
 from utils.output_saver import guardar_en_red, estado_disco as disco_estado
+from utils import compartidos
 
 BASE_DIR = Path(__file__).parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -32,10 +35,20 @@ TARIFAS_DIR = BASE_DIR / "tarifas"
 # Salidas y uploads fuera de Google Drive para evitar WinError 2 con rutas largas/acentos
 SALIDAS_DIR = Path(tempfile.gettempdir()) / "acometidas_salidas"
 UPLOADS_DIR = Path(tempfile.gettempdir()) / "acometidas_uploads_ia"
+# VIDEOS_DIR: a diferencia de UPLOADS_DIR (frames temporales, se pueden
+# perder), los videos originales hay que conservarlos para poder
+# reproducirlos despues desde el enlace publico del cliente. Se guardan bajo
+# BASE_DIR/config para que, SI se monta un volumen persistente de Railway en
+# /app/config (recomendado, igual que en PresuPro), sobrevivan a los
+# redeploys; si no se monta ningun volumen aqui, se perderan igual que ya le
+# pasa hoy a SALIDAS_DIR/UPLOADS_DIR en cada reinicio.
+VIDEOS_DIR = BASE_DIR / "config" / "videos_ia"
 TARIFAS_FILE = TARIFAS_DIR / "TARIFAS.xlsx"
 
 SALIDAS_DIR.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(exist_ok=True)
+VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+compartidos.init_db()
 
 TEMPLATE_FILES = {
     "obra_1":              "MODELO_MAESTRO_1OPCION.docx",
@@ -68,7 +81,21 @@ ALLOWED_IA_EXTENSIONS = {
 }
 
 app = Flask(__name__, template_folder="web_templates")
-app.secret_key = "grupo-europa-presupuestos"
+# Railway (o cualquier PaaS con proxy delante) termina el HTTPS antes de que
+# la peticion llegue a gunicorn: sin esto, los enlaces publicos generados con
+# url_for(..., _external=True) (el enlace de video para el cliente) saldrian
+# como http:// en vez de https://.
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+_secret_key = os.environ.get("SECRET_KEY")
+if not _secret_key:
+    logging.warning(
+        "SECRET_KEY no esta configurada: se usa una clave aleatoria temporal "
+        "(las sesiones/enlaces firmados se invalidarian al reiniciar el "
+        "servidor). Configura SECRET_KEY en las variables de entorno."
+    )
+    _secret_key = secrets.token_hex(32)
+app.secret_key = _secret_key
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB
 
 @app.errorhandler(413)
@@ -107,6 +134,84 @@ def _safe_filename(s: str, maxlen: int = 60) -> str:
 def fmt_euro(amount: float) -> str:
     s = f"{amount:,.2f} €"
     return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _transcodificar_video_web(origen: Path, destino: Path) -> bool:
+    """Convierte un video CCTV a H.264/MP4 web-compatible y comprimido.
+
+    Las camaras de inspeccion CCTV suelen grabar en codecs antiguos (mpeg4/DivX,
+    resolucion CIF) que ningun navegador sabe decodificar en un <video>: el
+    archivo carga (headers/tamano correctos) pero no se ve ninguna imagen.
+    H.264 es soportado por todos los navegadores y ademas comprime bastante
+    mas que esos codecs antiguos.
+    """
+    import subprocess
+    from core.ai_analyst import _find_ffmpeg
+    try:
+        ffmpeg = _find_ffmpeg()
+    except Exception:
+        return False
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", str(origen),
+             "-c:v", "libx264", "-profile:v", "main", "-preset", "veryfast", "-crf", "26",
+             "-vf", "scale='min(1280,iw)':-2",
+             "-c:a", "aac", "-b:a", "96k",
+             "-movflags", "+faststart",
+             str(destino)],
+            capture_output=True, timeout=1800, check=True,
+        )
+    except Exception:
+        return False
+    return destino.exists() and destino.stat().st_size > 0
+
+
+# Intervalo de extraccion de fotogramas en core/ai_analyst.py (_extract_video_frames
+# usa "fps=1/5"): 1 fotograma cada 5 segundos, empezando en el segundo 0 del video.
+_SEGUNDOS_POR_FOTOGRAMA = 5.0
+
+
+def _marcar_timestamps_video(wc_report: dict, session_id: str, videos_persistidos: dict[str, str]) -> list[dict]:
+    """Anade '_video' (nombre de archivo WEB, ya transcodificado) y '_t' (segundos
+    aprox.) a cada observacion de wc_report que referencia un fotograma de un
+    video persistido, usando '_evidencia_src' (archivo ORIGINAL de cada
+    fotograma, en orden) para calcular la posicion local del fotograma dentro
+    de su video.
+
+    videos_persistidos: {nombre_original: nombre_web}.
+    Devuelve la lista de videos reproducibles: [{"nombre", "url"}, ...].
+    """
+    evidencia_src = wc_report.get("_evidencia_src") or []
+    if not evidencia_src or not videos_persistidos:
+        return []
+
+    contador: dict[str, int] = {}
+    local_idx_por_global: list[tuple[str, int] | None] = []
+    for src in evidencia_src:
+        if src in videos_persistidos:
+            idx = contador.get(src, 0)
+            local_idx_por_global.append((src, idx))
+            contador[src] = idx + 1
+        else:
+            local_idx_por_global.append(None)  # imagen/PDF, no es un video
+
+    def _anotar(obs: dict) -> None:
+        for n in obs.get("imagenes") or []:
+            i = int(n) - 1  # "imagenes" es 1-indexado
+            if 0 <= i < len(local_idx_por_global) and local_idx_por_global[i]:
+                src_original, local_idx = local_idx_por_global[i]
+                obs["_video"] = videos_persistidos[src_original]
+                obs["_t"] = round(local_idx * _SEGUNDOS_POR_FOTOGRAMA, 1)
+                return
+
+    for seccion in wc_report.get("secciones") or []:
+        for obs in seccion.get("observaciones_tabla") or []:
+            _anotar(obs)
+
+    return [
+        {"nombre": web_name, "url": url_for("servir_video_ia", session_id=session_id, filename=web_name)}
+        for web_name in videos_persistidos.values()
+    ]
 
 
 def fmt_euro_plain(amount: float) -> str:
@@ -928,7 +1033,60 @@ def api_analizar():
         if not saved_files:
             return jsonify({"error": "No se recibieron archivos validos o no se pudieron guardar."}), 400
 
-        result = {"_formato": formato}
+        # Copia persistente de los videos, TRANSCODIFICADOS a H.264/MP4 (ver
+        # _transcodificar_video_web): las camaras CCTV suelen grabar en codecs
+        # que ningun navegador reproduce, y de paso queda una version
+        # comprimida lista para compartir con el cliente. videos_persistidos
+        # mapea nombre_original (el que usa "_evidencia_src" del informe) ->
+        # nombre_web (el .mp4 ya transcodificado y realmente servido).
+        video_ext_persist = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
+        videos_persistidos: dict[str, str] = {}
+        video_session_dir = VIDEOS_DIR / session_id
+        for sf in saved_files:
+            if sf.suffix.lower() in video_ext_persist:
+                video_session_dir.mkdir(parents=True, exist_ok=True)
+                destino_web = video_session_dir / f"{sf.stem}.mp4"
+                if _transcodificar_video_web(sf, destino_web):
+                    videos_persistidos[sf.name] = destino_web.name
+                    _write_log(f"Video transcodificado: {sf.name} -> {destino_web.name}")
+                else:
+                    import shutil as _sh_video
+                    destino_fallback = video_session_dir / sf.name
+                    try:
+                        _sh_video.copy2(sf, destino_fallback)
+                        videos_persistidos[sf.name] = destino_fallback.name
+                        _write_log(f"Video persistido SIN transcodificar (fallback): {sf.name}")
+                    except Exception as e:
+                        _write_log(f"No se pudo persistir video {sf.name}: {e}")
+
+        # Enlace publico de solo-video, generado YA (independientemente del
+        # formato elegido) para poder incrustarlo como texto+QR en el DOCX que
+        # se genere: asi viaja siempre pegado al informe. Se guarda tambien
+        # una version minima del informe compartible (por si el formato es
+        # solo "descriptivo", sin secciones/observaciones); el bloque WinCam
+        # de mas abajo la enriquece si aplica.
+        enlace_video = None
+        if videos_persistidos:
+            try:
+                _token_video = compartidos.crear_o_reusar(session_id)
+                enlace_video = url_for("ver_publico", token=_token_video, _external=True)
+                (SALIDAS_DIR / f"Informe_WinCam_{session_id}.json").write_text(
+                    json.dumps({
+                        "proyecto": proyecto, "num_ref": num_ref, "cliente": cliente,
+                        "nivel_urgencia_global": None, "secciones": [], "totales": {},
+                        "videos": [
+                            {"nombre": web_name, "url": url_for("servir_video_ia", session_id=session_id, filename=web_name)}
+                            for web_name in videos_persistidos.values()
+                        ],
+                    }, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                _write_log(f"No se pudo generar el enlace publico: {e}")
+
+        result = {"_formato": formato, "_session_id": session_id}
+        if enlace_video:
+            result["_enlace_video"] = enlace_video
 
         # Formato descriptivo (o ambos)
         if formato in ("descriptivo", "ambos"):
@@ -939,7 +1097,8 @@ def api_analizar():
             docx_name = f"Informe_IA_{session_id}.docx"
             docx_path = SALIDAS_DIR / docx_name
             try:
-                generate_report_docx(report, docx_path, num_ref=num_ref, cliente=cliente)
+                generate_report_docx(report, docx_path, num_ref=num_ref, cliente=cliente,
+                                     enlace_video=enlace_video)
                 result["_docx"] = docx_name
             except Exception as e:
                 result["_docx_error"] = str(e)
@@ -959,15 +1118,47 @@ def api_analizar():
                                        calle=calle, poblacion=poblacion,
                                        croquis_path=croquis_path)
             _write_log("analyze_wincam() OK")
+            result["_videos"] = _marcar_timestamps_video(wc_report, session_id, videos_persistidos)
             result["_wincam"] = wc_report
+
+            # Copia reducida del informe (solo lo necesario para el visor
+            # publico de solo-video: secciones/observaciones + videos) para
+            # poder recuperarla despues desde /ver/<token>.
+            try:
+                informe_compartible = {
+                    "proyecto": wc_report.get("proyecto") or proyecto,
+                    "num_ref": num_ref,
+                    "cliente": cliente,
+                    "nivel_urgencia_global": wc_report.get("nivel_urgencia_global"),
+                    "secciones": wc_report.get("secciones") or [],
+                    "totales": wc_report.get("totales") or {},
+                    "videos": result.get("_videos") or [],
+                }
+                (SALIDAS_DIR / f"Informe_WinCam_{session_id}.json").write_text(
+                    json.dumps(informe_compartible, ensure_ascii=False), encoding="utf-8"
+                )
+            except Exception as e:
+                _write_log(f"No se pudo guardar el informe compartible: {e}")
+
             wc_name = f"Informe_WinCam_{session_id}.docx"
             wc_path = SALIDAS_DIR / wc_name
             try:
-                generate_wincam_docx(wc_report, wc_path, num_ref=num_ref, cliente=cliente)
+                generate_wincam_docx(wc_report, wc_path, num_ref=num_ref, cliente=cliente,
+                                     enlace_video=enlace_video)
                 result["_docx_wincam"] = wc_name
             except Exception as e:
                 result["_wincam_docx_error"] = str(e)
                 _write_log(f"DOCX WinCam error: {e}")
+
+        # Si no se genero el formato WinCam (p.ej. formato="descriptivo")
+        # igualmente se listan los videos persistidos para poder revisarlos
+        # en el visor, aunque sin marcadores de observaciones (esos requieren
+        # el mapeo de fotogramas del informe WinCam).
+        if "_videos" not in result and videos_persistidos:
+            result["_videos"] = [
+                {"nombre": web_name, "url": url_for("servir_video_ia", session_id=session_id, filename=web_name)}
+                for web_name in videos_persistidos.values()
+            ]
 
         return jsonify(result)
 
@@ -2213,6 +2404,54 @@ def configuracion():
     cfg = cfg_load()
     disco = estado_disco()
     return render_template("configuracion.html", cfg=cfg, disco=disco, msg=msg)
+
+
+@app.route("/video_ia/<session_id>/<path:filename>")
+def servir_video_ia(session_id: str, filename: str):
+    """Sirve (con soporte de range requests, para el <video> del navegador) un
+    video CCTV original subido para analisis IA, persistido en VIDEOS_DIR.
+    Se usa tanto para revisarlo dentro de la app como desde el visor publico."""
+    full = VIDEOS_DIR / session_id / filename
+    if not full.exists() or not full.is_file():
+        abort(404)
+    try:
+        full.resolve().relative_to(VIDEOS_DIR.resolve())
+    except ValueError:
+        abort(403)
+    return send_file(full, conditional=True)
+
+
+@app.route("/api/compartir_informe", methods=["POST"])
+def api_compartir_informe():
+    """Genera (o reutiliza) un enlace publico de solo-video para un informe
+    CCTV ya generado, para poder enviarselo al cliente final."""
+    data = request.get_json(force=True) or {}
+    session_id = (data.get("session_id") or "").strip()
+    if not session_id or "/" in session_id or ".." in session_id:
+        return jsonify({"error": "session_id invalido."}), 400
+    informe_path = SALIDAS_DIR / f"Informe_WinCam_{session_id}.json"
+    if not informe_path.exists():
+        return jsonify({"error": "No se encontro ese informe."}), 404
+    token = compartidos.crear_o_reusar(session_id)
+    return jsonify({"url": url_for("ver_publico", token=token, _external=True)})
+
+
+@app.route("/ver/<token>")
+def ver_publico(token):
+    """Visor publico de solo-video (sin cuenta) para el cliente final."""
+    session_id = compartidos.resolver(token)
+    if not session_id:
+        abort(404)
+    informe_path = SALIDAS_DIR / f"Informe_WinCam_{session_id}.json"
+    if not informe_path.exists():
+        abort(404)
+    try:
+        datos = json.loads(informe_path.read_text(encoding="utf-8"))
+    except Exception:
+        abort(404)
+    for v in datos.get("videos") or []:
+        v["url"] = url_for("servir_video_ia", session_id=session_id, filename=v["nombre"])
+    return render_template("ver_publico.html", datos=datos)
 
 
 @app.route("/descargar/<path:rel_path>")

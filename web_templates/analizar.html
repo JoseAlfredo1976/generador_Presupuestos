@@ -687,6 +687,51 @@ async function startAnalysis() {
 }
 
 // ── Render result
+// ── Visor de video: id de elemento DOM seguro a partir de un nombre de archivo
+function videoElId(nombre) {
+  return String(nombre || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+function verEnVideo(idSeguro, t) {
+  const vid = document.getElementById('video-ia-' + idSeguro);
+  if (!vid) return;
+  vid.scrollIntoView({behavior: 'smooth', block: 'center'});
+  const ir = () => { try { vid.currentTime = t; vid.play(); } catch(e) {} };
+  if (vid.readyState >= 1) ir(); else vid.addEventListener('loadedmetadata', ir, {once: true});
+}
+
+async function mostrarEnlaceUrl(url) {
+  let copiado = false;
+  try { await navigator.clipboard.writeText(url); copiado = true; } catch(e) {}
+  window.prompt(copiado
+    ? 'Enlace copiado. Puedes pegarlo (Ctrl+V) para enviarselo al cliente:'
+    : 'Copia este enlace (Ctrl+C) y enviaselo al cliente:', url);
+}
+
+// El enlace ya se genera automaticamente al analizar (r._enlace_video) y va
+// incrustado como texto+QR en el propio Word/PDF. Este boton es solo para
+// copiarlo rapido sin tener que abrir el documento.
+async function compartirInforme(sessionId, btn, urlYaGenerada) {
+  if (urlYaGenerada) { mostrarEnlaceUrl(urlYaGenerada); return; }
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Generando...';
+  try {
+    const resp = await fetch('/api/compartir_informe', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: sessionId}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Error generando el enlace');
+    await mostrarEnlaceUrl(data.url);
+  } catch (e) {
+    alert('No se pudo generar el enlace: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
 function showResult(r) {
   const urgencia = r.nivel_urgencia_global || 'Medio';
   const inmediata = r.requiere_intervencion_inmediata;
@@ -709,6 +754,34 @@ function showResult(r) {
     if (r._docx)       html += `<a href="/descargar/${esc(r._docx)}" class="btn btn-dl btn-word"><i class="bi bi-file-earmark-word me-1"></i>Word Descriptivo</a>`;
     if (r._pdf)        html += `<a href="/descargar/${esc(r._pdf)}"  class="btn btn-dl btn-pdf"><i class="bi bi-file-earmark-pdf me-1"></i>PDF Descriptivo</a>`;
     if (r._docx_wincam) html += `<a href="/descargar/${esc(r._docx_wincam)}" class="btn btn-dl" style="background:#2E74B5;color:white;border:none"><i class="bi bi-table me-1"></i>Word WinCam</a>`;
+    html += `</div>`;
+  }
+
+  // Enlace publico de solo-video para el cliente final. Ya va incrustado
+  // (texto clicable + QR) en el Word/PDF; este boton es solo un atajo para
+  // copiarlo rapido tambien aqui.
+  if (r._enlace_video && r._session_id) {
+    html += `<div class="mb-4">
+      <button type="button" class="btn btn-sm btn-outline-dark"
+              onclick="compartirInforme('${esc(r._session_id)}', this, ${r._enlace_video ? `'${esc(r._enlace_video)}'` : 'null'})">
+        <i class="bi bi-share me-1"></i>Copiar enlace para el cliente (ver video)
+      </button>
+      <div class="small text-muted mt-1"><i class="bi bi-info-circle me-1"></i>Este enlace ya va incluido con codigo QR en el Word/PDF.</div>
+    </div>`;
+  }
+
+  // Visor de video CCTV (solo si se subieron videos y se persistieron con exito)
+  const videosIA = r._videos || [];
+  if (videosIA.length) {
+    html += `<div class="section-title"><i class="bi bi-camera-video me-2"></i>Video de la inspeccion</div>
+      <div class="d-flex flex-wrap gap-3 mb-4">`;
+    videosIA.forEach(v => {
+      html += `<div style="flex:1 1 320px;max-width:480px">
+        <div class="small fw-semibold text-muted mb-1">${esc(v.nombre)}</div>
+        <video id="video-ia-${esc(videoElId(v.nombre))}" src="${esc(v.url)}" controls preload="metadata"
+               style="width:100%;border-radius:10px;background:#000"></video>
+      </div>`;
+    });
     html += `</div>`;
   }
 
