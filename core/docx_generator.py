@@ -31,6 +31,18 @@ _FORCED_FORMAT: dict[str, tuple[str, str, bool]] = {
     "[[FECHA_LARGA]]":        ("Calibri", "24", False),   # 12pt
 }
 
+# Parrafos que deben eliminarse por completo (no solo vaciarse) cuando su
+# placeholder resuelve a cadena vacia. Usado para no dejar etiquetas o lineas
+# huerfanas (p.ej. "ADMINISTRACION:" sin dato) en la portada.
+_COLLAPSE_IF_EMPTY = {
+    "[[ADMINISTRACION]]",
+    "[[ADMINISTRACION_LABEL]]",
+    "[[ADMINISTRACION_TELEFONO]]",
+    "[[ADMINISTRACION_CORREO ELECTRONICO]]",
+    "[[ADMINISTRACION_CORREOELECTRONICO]]",
+    "[[ADMINISTRACION_PROVINCIA]]",
+}
+
 
 def _w(tag: str) -> str:
     return f"{W}{tag}"
@@ -68,8 +80,10 @@ class DocxGenerator:
                                items, items_a, items_b, subc_items) -> bytes:
         root = etree.fromstring(raw)
         self._merge_split_placeholders(root)
+        paras_to_remove = []
         for para in root.iter(_w("p")):
-            self._replace_in_paragraph(para, data)
+            self._replace_in_paragraph(para, data, paras_to_remove)
+        self._remove_collapsed_paragraphs(paras_to_remove)
         if items:
             self._expand_mediciones_table(root, items, "[[DESCRIPCION_PARTIDA]]")
         if items_a:
@@ -86,9 +100,17 @@ class DocxGenerator:
         except etree.XMLSyntaxError:
             return raw
         self._merge_split_placeholders(root)
+        paras_to_remove = []
         for para in root.iter(_w("p")):
-            self._replace_in_paragraph(para, data)
+            self._replace_in_paragraph(para, data, paras_to_remove)
+        self._remove_collapsed_paragraphs(paras_to_remove)
         return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+    def _remove_collapsed_paragraphs(self, paras_to_remove: list):
+        for para in paras_to_remove:
+            parent = para.getparent()
+            if parent is not None:
+                parent.remove(para)
 
     # ------------------------------------------------------------------
     # Step 1: merge ONLY the runs where [[PLACEHOLDER]] is split
@@ -124,11 +146,13 @@ class DocxGenerator:
     # ------------------------------------------------------------------
     # Step 2: replace variables in a paragraph
     # ------------------------------------------------------------------
-    def _replace_in_paragraph(self, para, data: dict):
+    def _replace_in_paragraph(self, para, data: dict, paras_to_remove: list | None = None):
         for run in para.findall(_w("r")):
             for t in run.findall(_w("t")):
                 if not t.text:
                     continue
+                original_text = t.text
+                stripped = original_text.strip()
                 new_text = t.text
                 matched_ph = None
                 for placeholder, value in data.items():
@@ -141,6 +165,15 @@ class DocxGenerator:
                     # Apply forced formatting if configured
                     if matched_ph and matched_ph in _FORCED_FORMAT:
                         self._apply_run_format(run, *_FORCED_FORMAT[matched_ph])
+                # Si el run es EXACTAMENTE uno o varios placeholders marcados para
+                # colapsar (p.ej. "[[ADMINISTRACION]] [[ADMINISTRACION_PROVINCIA]]")
+                # y TODOS sus valores resueltos estan vacios, elimina el parrafo
+                # entero (no solo el texto), para no dejar lineas/etiquetas huerfanas.
+                if paras_to_remove is not None and stripped:
+                    tokens = stripped.split()
+                    if tokens and all(tok in _COLLAPSE_IF_EMPTY for tok in tokens):
+                        if all(not (data.get(tok) and str(data.get(tok)).strip()) for tok in tokens):
+                            paras_to_remove.append(para)
 
     def _apply_run_format(self, run, font_name: str, sz_halfpt: str, bold: bool):
         """Force font/size/color on a run."""

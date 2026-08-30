@@ -17,6 +17,9 @@ from pathlib import Path
 
 from flask import (Flask, abort, jsonify, redirect, render_template,
                    request, send_file, url_for)
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent / ".env")
 
 from core.ai_analyst import (extract_partidas_from_subcontrata, extract_solicitud_data,
                              extract_subcontrata_datos, extract_full_presupuesto)
@@ -330,6 +333,7 @@ def _build_common_data(f) -> tuple[dict, str, str, str, str]:
     num_contrato = f.get("num_contrato", "").strip()
     obra = f.get("obra", "").strip()
     servicio = f.get("servicio", "").strip()
+    admin_val = f.get("administracion", "").strip()
     current_year = str(datetime.now().year)
     data = {
         "[[CONTRATO_NUM]]":          num_contrato,
@@ -350,7 +354,9 @@ def _build_common_data(f) -> tuple[dict, str, str, str, str]:
         "[[CLIENTE_CORREO ELECTRONICO]]": f.get("cliente_email", "").strip(),
         "[[CLIENTE_CORREOELECTRONICO]]":  f.get("cliente_email", "").strip(),
         "[[PROVINCIA]]":             f.get("provincia", "Madrid").strip(),
-        "[[ADMINISTRACION]]":        f.get("administracion", "").strip() or "—",
+        "[[ADMINISTRACION]]":        admin_val,
+        "[[ADMINISTRACION_LABEL]]":  "ADMINISTRACION:" if admin_val else "",
+        "[[ADMINISTRACION_PROVINCIA]]": f.get("provincia", "Madrid").strip() if admin_val else "",
         "[[ADMINISTRACION_TELEFONO]]":           f.get("admin_tel", "").strip(),
         "[[ADMINISTRACION_CORREO ELECTRONICO]]": f.get("admin_email", "").strip(),
         "[[ADMINISTRACION_CORREOELECTRONICO]]":  f.get("admin_email", "").strip(),
@@ -569,59 +575,53 @@ def croquis():
     return render_template("croquis.html", api_key_set=api_key_set)
 
 
-@app.route("/api/generar_plano_ia", methods=["POST"])
-def api_generar_plano_ia():
-    """Analiza un boceto/croquis con IA y genera un plano tecnico SVG limpio."""
+ALLOWED_PLANO = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".pdf"}
+
+
+def _plano_svg_desde_archivo(src: Path, api_key: str = "", contexto: str = "") -> tuple[str, dict]:
+    """Analiza un boceto/croquis (imagen o PDF) y devuelve (svg, estructura).
+
+    Extraido de la vista /api/generar_plano_ia para poder reutilizarlo desde el
+    analizador CCTV, que genera el plano tecnico cuando se aporta un croquis.
+    Lanza ValueError con un mensaje legible si el formato o la clave fallan.
+    """
     import base64
     import re
-    import traceback as _tb
-    tmp_dir = None
-    try:
-        import anthropic as _ant
+    import anthropic as _ant
 
-        img_file = request.files.get("imagen")
-        contexto = request.form.get("contexto", "").strip()
-        api_key  = request.form.get("api_key", "").strip()
+    key = (api_key or "").strip() or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        raise ValueError("API Key no configurada.")
 
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        if not key:
-            return jsonify({"error": "API Key no configurada."}), 400
-        if not img_file or not img_file.filename:
-            return jsonify({"error": "No se recibio ninguna imagen."}), 400
+    suffix = src.suffix.lower()
+    if suffix not in ALLOWED_PLANO:
+        raise ValueError("Formato no soportado. Usa JPG, PNG, WEBP, BMP o PDF.")
 
-        suffix = Path(img_file.filename).suffix.lower()
-        ALLOWED_PLANO = {".jpg",".jpeg",".png",".gif",".webp",".bmp",".tiff",".tif",".pdf"}
-        if suffix not in ALLOWED_PLANO:
-            return jsonify({"error": "Formato no soportado. Usa JPG, PNG, WEBP, BMP o PDF."}), 400
+    img_b64 = base64.b64encode(src.read_bytes()).decode()
+    contexto = (contexto or "").strip()
+    ctx_extra = f"\nIndicaciones adicionales: {contexto}" if contexto else ""
 
-        tmp_dir = Path(tempfile.mkdtemp(prefix="plano_ia_"))
-        dest = tmp_dir / f"boceto{suffix}"
-        img_file.save(str(dest))
-        img_b64 = base64.b64encode(dest.read_bytes()).decode()
+    client = _ant.Anthropic(api_key=key)
 
-        ctx_extra = f"\nIndicaciones adicionales: {contexto}" if contexto else ""
+    # Construir bloque de contenido segun tipo de archivo
+    if suffix == ".pdf":
+        content_block = {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": img_b64},
+        }
+    else:
+        mime_map = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
+                    ".gif":"image/gif",".webp":"image/webp",".bmp":"image/bmp",
+                    ".tiff":"image/tiff",".tif":"image/tiff"}
+        content_block = {
+            "type": "image",
+            "source": {"type": "base64",
+                       "media_type": mime_map.get(suffix, "image/jpeg"),
+                       "data": img_b64},
+        }
 
-        client = _ant.Anthropic(api_key=key)
-
-        # Construir bloque de contenido segun tipo de archivo
-        if suffix == ".pdf":
-            content_block = {
-                "type": "document",
-                "source": {"type": "base64", "media_type": "application/pdf", "data": img_b64},
-            }
-        else:
-            mime_map = {".jpg":"image/jpeg",".jpeg":"image/jpeg",".png":"image/png",
-                        ".gif":"image/gif",".webp":"image/webp",".bmp":"image/bmp",
-                        ".tiff":"image/tiff",".tif":"image/tiff"}
-            content_block = {
-                "type": "image",
-                "source": {"type": "base64",
-                           "media_type": mime_map.get(suffix, "image/jpeg"),
-                           "data": img_b64},
-            }
-
-        # ── PASO 1: extraer estructura como JSON con posiciones en % ──────────
-        PROMPT_PASO1 = """Analiza este croquis/plano con mucha atencion. Extrae TODOS los elementos visibles.
+    # ── PASO 1: extraer estructura como JSON con posiciones en % ──────────
+    PROMPT_PASO1 = """Analiza este croquis/plano con mucha atencion. Extrae TODOS los elementos visibles.
 Para cada elemento indica su posicion como porcentaje del ancho (x) y alto (y) de la imagen, de 0 a 100.
 Sé muy preciso con las posiciones relativas: si un pozo esta a la izquierda de otro, el x del primero debe ser menor.
 
@@ -637,40 +637,40 @@ Devuelve UNICAMENTE este JSON (sin markdown, sin texto adicional):
 }
 Omite claves cuyo array este vacio. Si un campo es desconocido usa null."""
 
-        def _api_create(client, **kwargs):
-            """Llama a messages.create con reintentos en caso de 529 (overloaded)."""
-            delays = [5, 15, 30]
-            for attempt, delay in enumerate(delays, 1):
-                try:
-                    return client.messages.create(**kwargs)
-                except Exception as exc:
-                    code = getattr(exc, "status_code", None)
-                    if code == 529 and attempt < len(delays):
-                        time.sleep(delay)
-                        continue
-                    raise
-
-        resp1 = _api_create(
-            client,
-            model="claude-sonnet-4-6",
-            max_tokens=4000,
-            messages=[{"role": "user", "content": [content_block, {"type": "text", "text": PROMPT_PASO1}]}],
-        )
-
-        raw1 = resp1.content[0].text.strip()
-        json_m = re.search(r"\{[\s\S]*\}", raw1)
-        estructura = {}
-        if json_m:
+    def _api_create(client, **kwargs):
+        """Llama a messages.create con reintentos en caso de 529 (overloaded)."""
+        delays = [5, 15, 30]
+        for attempt, delay in enumerate(delays, 1):
             try:
-                estructura = json.loads(json_m.group(0))
-            except Exception:
-                estructura = {}
+                return client.messages.create(**kwargs)
+            except Exception as exc:
+                code = getattr(exc, "status_code", None)
+                if code == 529 and attempt < len(delays):
+                    time.sleep(delay)
+                    continue
+                raise
 
-        desc = estructura.get("descripcion", "Red de saneamiento")[:60]
-        fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+    resp1 = _api_create(
+        client,
+        model="claude-sonnet-4-6",
+        max_tokens=4000,
+        messages=[{"role": "user", "content": [content_block, {"type": "text", "text": PROMPT_PASO1}]}],
+    )
 
-        # ── PASO 2: generar SVG fiel a las coordenadas extraidas ──────────────
-        PROMPT_PASO2 = f"""Genera un plano tecnico SVG usando EXACTAMENTE estas coordenadas extraidas del boceto original:
+    raw1 = resp1.content[0].text.strip()
+    json_m = re.search(r"\{[\s\S]*\}", raw1)
+    estructura = {}
+    if json_m:
+        try:
+            estructura = json.loads(json_m.group(0))
+        except Exception:
+            estructura = {}
+
+    desc = estructura.get("descripcion", "Red de saneamiento")[:60]
+    fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+
+    # ── PASO 2: generar SVG fiel a las coordenadas extraidas ──────────────
+    PROMPT_PASO2 = f"""Genera un plano tecnico SVG usando EXACTAMENTE estas coordenadas extraidas del boceto original:
 
 {json.dumps(estructura, ensure_ascii=False, indent=2)}{ctx_extra}
 
@@ -732,24 +732,163 @@ LEYENDA (x=12, y=555, 160x92): muestra solo simbolos presentes en el plano gener
 
 DEVUELVE UNICAMENTE el SVG. Empieza con <svg y termina con </svg>. Sin markdown."""
 
-        resp2 = _api_create(
-            client,
-            model="claude-sonnet-4-6",
-            max_tokens=16000,
-            messages=[{
-                "role": "user",
-                "content": [content_block, {"type": "text", "text": PROMPT_PASO2}],
-            }],
+    resp2 = _api_create(
+        client,
+        model="claude-sonnet-4-6",
+        max_tokens=16000,
+        messages=[{
+            "role": "user",
+            "content": [content_block, {"type": "text", "text": PROMPT_PASO2}],
+        }],
+    )
+
+    raw = resp2.content[0].text.strip()
+    svg_match = re.search(r"<svg[\s\S]*?</svg>", raw, re.IGNORECASE)
+    if not svg_match:
+        raise ValueError("La IA no genero un SVG valido.")
+
+    return svg_match.group(0), estructura
+
+
+def _svg_a_png(svg_text: str, dpi: int = 170) -> Path:
+    """Rasteriza un SVG a PNG con PyMuPDF.
+
+    Se usa PyMuPDF (ya presente para leer PDFs) porque WeasyPrint/cairo no estan
+    operativos en este equipo: faltan las librerias GTK y su import falla.
+    """
+    import fitz
+
+    tmp = Path(tempfile.mkdtemp(prefix="plano_png_"))
+    svg_path = tmp / "plano.svg"
+    svg_path.write_text(svg_text, encoding="utf-8")
+    doc = fitz.open(str(svg_path))
+    pix = doc[0].get_pixmap(dpi=dpi)
+    png_path = tmp / "plano.png"
+    pix.save(str(png_path))
+    doc.close()
+    return png_path
+
+
+def _croquis_docx_desde_png(png_path: Path, titulo: str = "Croquis de red",
+                            num_ref: str = "", direccion: str = "",
+                            fecha_display: str = "", notas: str = "",
+                            stem: str = "") -> tuple[Path, Path | None]:
+    """Monta el documento del plano (DOCX + PDF) a partir del PNG del plano.
+
+    Devuelve (docx_path, pdf_path|None). El PDF sale por Microsoft Word (COM),
+    que es la via que funciona en este equipo.
+    """
+    from docx import Document
+    from docx.shared import Pt, Cm, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.section import WD_ORIENT
+
+    AZUL = RGBColor(0x1F, 0x4E, 0x79)
+    GRIS = RGBColor(0x6B, 0x72, 0x80)
+
+    doc = Document()
+    sec = doc.sections[0]
+    # Apaisado: el plano es mucho mas ancho que alto
+    sec.orientation = WD_ORIENT.LANDSCAPE
+    sec.page_width, sec.page_height = sec.page_height, sec.page_width
+    sec.top_margin = sec.bottom_margin = Cm(1.5)
+    sec.left_margin = sec.right_margin = Cm(1.8)
+
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(2)
+    r = p.add_run("ACOMETIDAS EUROPA SANEAMIENTO TECNICO S.L.")
+    r.bold = True
+    r.font.size = Pt(9)
+    r.font.color.rgb = AZUL
+
+    t = doc.add_paragraph()
+    t.paragraph_format.space_after = Pt(6)
+    tr = t.add_run((titulo or "Croquis de red").upper())
+    tr.bold = True
+    tr.font.size = Pt(15)
+    tr.font.color.rgb = AZUL
+
+    meta = "   |   ".join(x for x in (
+        (f"Ref: {num_ref}" if num_ref else ""),
+        direccion, fecha_display,
+    ) if x)
+    if meta:
+        m = doc.add_paragraph()
+        m.paragraph_format.space_after = Pt(10)
+        mr = m.add_run(meta)
+        mr.font.size = Pt(9)
+        mr.font.color.rgb = GRIS
+
+    # El plano debe caber en UNA pagina: se escala por ancho y por alto util
+    # (si solo se fija el ancho, un plano poco apaisado desborda a la pagina 2).
+    ancho_disp = sec.page_width - sec.left_margin - sec.right_margin
+    alto_disp = sec.page_height - sec.top_margin - sec.bottom_margin - Cm(4.2)
+    try:
+        from PIL import Image as _Img
+        with _Img.open(png_path) as _im:
+            ratio = _im.height / _im.width
+    except Exception:
+        ratio = 660 / 900
+    ancho = ancho_disp
+    if int(ancho * ratio) > int(alto_disp):
+        ancho = int(alto_disp / ratio)
+
+    ip = doc.add_paragraph()
+    ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    ip.add_run().add_picture(str(png_path), width=ancho)
+
+    cap = doc.add_paragraph()
+    cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    cr = cap.add_run("Plano tecnico generado con IA a partir del croquis aportado. "
+                     "Representacion esquematica sin escala.")
+    cr.italic = True
+    cr.font.size = Pt(8)
+    cr.font.color.rgb = GRIS
+
+    if notas:
+        np_ = doc.add_paragraph()
+        np_.paragraph_format.space_before = Pt(10)
+        nr1 = np_.add_run("Observaciones: ")
+        nr1.bold = True
+        nr1.font.size = Pt(9)
+        nr1.font.color.rgb = AZUL
+        nr2 = np_.add_run(notas)
+        nr2.font.size = Pt(9)
+
+    stem = stem or _safe_filename(f"Croquis_{num_ref or titulo}", maxlen=50)
+    docx_path = SALIDAS_DIR / f"{stem}.docx"
+    doc.save(str(docx_path))
+
+    pdf_path = None
+    try:
+        pdf_path = PdfConverter().convert(docx_path, SALIDAS_DIR)
+    except Exception:
+        pdf_path = None
+    return docx_path, pdf_path
+
+
+@app.route("/api/generar_plano_ia", methods=["POST"])
+def api_generar_plano_ia():
+    """Analiza un boceto/croquis con IA y genera un plano tecnico SVG limpio."""
+    import traceback as _tb
+    tmp_dir = None
+    try:
+        img_file = request.files.get("imagen")
+        if not img_file or not img_file.filename:
+            return jsonify({"error": "No se recibio ninguna imagen."}), 400
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="plano_ia_"))
+        dest = tmp_dir / f"boceto{Path(img_file.filename).suffix.lower()}"
+        img_file.save(str(dest))
+
+        svg, estructura = _plano_svg_desde_archivo(
+            dest,
+            api_key=request.form.get("api_key", ""),
+            contexto=request.form.get("contexto", ""),
         )
-
-        raw = resp2.content[0].text.strip()
-        svg_match = re.search(r"<svg[\s\S]*?</svg>", raw, re.IGNORECASE)
-        if not svg_match:
-            return jsonify({"error": "La IA no genero un SVG valido.", "_raw": raw[:1000]}), 500
-
-        svg = svg_match.group(0)
         return jsonify({"svg": svg, "estructura": estructura})
-
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
     finally:
@@ -916,10 +1055,27 @@ def api_generar_croquis():
         html_path = tmp_dir / "croquis.html"
         html_path.write_text(html, encoding="utf-8")
 
-        import weasyprint
         stem = _safe_filename(f"Croquis_{num_ref or titulo}", maxlen=50)
         pdf_path = SALIDAS_DIR / f"{stem}.pdf"
-        weasyprint.HTML(filename=str(html_path)).write_pdf(str(pdf_path))
+
+        # Via preferente: WeasyPrint (HTML -> PDF). En equipos sin las librerias
+        # GTK su import falla, asi que se cae al camino DOCX -> PDF por Word.
+        try:
+            import weasyprint
+            weasyprint.HTML(filename=str(html_path)).write_pdf(str(pdf_path))
+        except Exception as e_weasy:
+            if svg_data:
+                png_path = _svg_a_png(svg_data)
+            else:
+                png_path = img_path
+            cx_docx, cx_pdf = _croquis_docx_desde_png(
+                png_path, titulo=titulo, num_ref=num_ref, direccion=direccion,
+                fecha_display=fecha_display, notas=notas, stem=stem)
+            if not cx_pdf:
+                return jsonify({"error": f"No se pudo generar el PDF ({e_weasy}). "
+                                         f"Se ha guardado el documento Word: {cx_docx.name}",
+                                "docx": cx_docx.name}), 500
+            return jsonify({"pdf": cx_pdf.name, "docx": cx_docx.name})
 
         if not pdf_path.exists():
             return jsonify({"error": "No se pudo generar el PDF."}), 500
@@ -950,7 +1106,8 @@ def api_analizar():
 
     try:
         from core.ai_analyst import (analyze, generate_report_docx,
-                                      analyze_wincam, generate_wincam_docx)
+                                      analyze_wincam, generate_wincam_docx,
+                                      attach_wincam_diagramas)
     except Exception as e:
         tb = _tb_mod.format_exc()
         _write_log("ERROR IMPORTANDO ai_analyst:\n" + tb)
@@ -966,6 +1123,18 @@ def api_analizar():
         proyecto = request.form.get("proyecto", num_ref).strip()
         calle = request.form.get("calle", "").strip()
         poblacion = request.form.get("poblacion", "").strip()
+
+        # Nombre de archivo de los informes: "N.o - INFORME NOMBRE DE LA CALLE N.o DE LA CALLE"
+        _direccion_informe = ", ".join(x for x in (calle, poblacion) if x)
+        _label_informe = _safe_filename(_direccion_informe, maxlen=60) if _direccion_informe else ""
+        if num_ref and _label_informe:
+            _informe_stem = f"{_safe_filename(num_ref, maxlen=20)} - INFORME {_label_informe}"
+        elif num_ref:
+            _informe_stem = f"{_safe_filename(num_ref, maxlen=20)} - INFORME"
+        elif _label_informe:
+            _informe_stem = f"INFORME {_label_informe}"
+        else:
+            _informe_stem = ""
 
         _write_log(f"tipo={tipo} formato={formato} api_key={'SET' if api_key else 'ENV'}")
 
@@ -1094,7 +1263,7 @@ def api_analizar():
             report = analyze(saved_files, tipo, context, api_key, croquis_path=croquis_path)
             _write_log("analyze() OK")
             result.update(report)
-            docx_name = f"Informe_IA_{session_id}.docx"
+            docx_name = f"{_informe_stem}.docx" if _informe_stem else f"Informe_IA_{session_id}.docx"
             docx_path = SALIDAS_DIR / docx_name
             try:
                 generate_report_docx(report, docx_path, num_ref=num_ref, cliente=cliente,
@@ -1118,6 +1287,7 @@ def api_analizar():
                                        calle=calle, poblacion=poblacion,
                                        croquis_path=croquis_path)
             _write_log("analyze_wincam() OK")
+            attach_wincam_diagramas(wc_report)
             result["_videos"] = _marcar_timestamps_video(wc_report, session_id, videos_persistidos)
             result["_wincam"] = wc_report
 
@@ -1140,7 +1310,7 @@ def api_analizar():
             except Exception as e:
                 _write_log(f"No se pudo guardar el informe compartible: {e}")
 
-            wc_name = f"Informe_WinCam_{session_id}.docx"
+            wc_name = f"{_informe_stem} WINCAM.docx" if _informe_stem else f"Informe_WinCam_{session_id}.docx"
             wc_path = SALIDAS_DIR / wc_name
             try:
                 generate_wincam_docx(wc_report, wc_path, num_ref=num_ref, cliente=cliente,
@@ -1160,12 +1330,72 @@ def api_analizar():
                 for web_name in videos_persistidos.values()
             ]
 
+        # Plano tecnico del croquis aportado (DOCX + PDF). Antes el croquis solo
+        # se usaba como referencia para la IA y no producia ningun documento.
+        if croquis_path:
+            _write_log("Generando plano tecnico del croquis...")
+            try:
+                svg, _estructura = _plano_svg_desde_archivo(
+                    croquis_path, api_key=api_key,
+                    contexto=f"{proyecto} {calle} {poblacion}".strip())
+                titulo_plano = f"Croquis de red - {proyecto}" if proyecto else "Croquis de red"
+                direccion_plano = ", ".join(x for x in (calle, poblacion) if x)
+                fecha_plano = datetime.now().strftime("%d/%m/%Y")
+                stem_plano = f"Croquis_{session_id}"
+                png = _svg_a_png(svg)
+                cx_docx, cx_pdf = _croquis_docx_desde_png(
+                    png, titulo=titulo_plano, num_ref=num_ref,
+                    direccion=direccion_plano, fecha_display=fecha_plano,
+                    stem=stem_plano,
+                )
+                result["_croquis_docx"] = cx_docx.name
+                if cx_pdf:
+                    result["_croquis_pdf"] = cx_pdf.name
+                result["_croquis_svg"] = svg
+                result["_croquis_meta"] = {
+                    "titulo": titulo_plano, "num_ref": num_ref,
+                    "direccion": direccion_plano, "fecha_display": fecha_plano,
+                    "stem": stem_plano,
+                }
+                _write_log(f"Plano OK: {cx_docx.name} / {cx_pdf.name if cx_pdf else 'sin PDF'}")
+            except Exception as e:
+                result["_croquis_error"] = str(e)
+                _write_log(f"Plano croquis error: {e}")
+
         return jsonify(result)
 
     except Exception as e:
         tb = _tb_mod.format_exc()
         _write_log("=== EXCEPCION ===\n" + tb)
         return jsonify({"error": f"{str(e)}\n\n--- TRACEBACK ---\n{tb}", "traceback": tb}), 500
+
+
+@app.route("/api/regenerar_plano_svg", methods=["POST"])
+def api_regenerar_plano_svg():
+    """Rasteriza un SVG de plano ya editado en el navegador y regenera el DOCX/PDF,
+    sin volver a analizar el croquis original con la IA."""
+    import traceback as _tb
+    try:
+        data = request.get_json(force=True) or {}
+        svg = (data.get("svg") or "").strip()
+        if not svg.startswith("<svg"):
+            return jsonify({"error": "SVG no valido."}), 400
+        titulo = data.get("titulo") or "Croquis de red"
+        num_ref = data.get("num_ref", "")
+        direccion = data.get("direccion", "")
+        fecha_display = data.get("fecha_display") or datetime.now().strftime("%d/%m/%Y")
+        stem = data.get("stem") or _safe_filename(f"Croquis_{num_ref or titulo}", maxlen=50)
+
+        png = _svg_a_png(svg)
+        cx_docx, cx_pdf = _croquis_docx_desde_png(
+            png, titulo=titulo, num_ref=num_ref, direccion=direccion,
+            fecha_display=fecha_display, stem=stem)
+        return jsonify({
+            "croquis_docx": cx_docx.name,
+            "croquis_pdf": cx_pdf.name if cx_pdf else None,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
 
 
 @app.route("/api/generar_partidas_ia", methods=["POST"])
@@ -1213,24 +1443,39 @@ def api_generar_partidas_ia():
         if "_error" in result:
             return jsonify({"error": result["_error"], "raw": result.get("_raw", "")}), 500
 
-        # Enrich partidas: lookup by exact code, fallback fuzzy by nota/codigo text
+        # Enrich partidas: lookup por codigo exacto en tarifas; si no hay codigo o no
+        # se encuentra, usa la estimacion de precio de mercado que ya aporta la IA
+        # (descripcion_libre/unidad_libre/precio_estimado) en vez de dejarla a 0.
         def _enrich(partidas: list) -> list:
             enriched = []
             for p in (partidas or []):
                 codigo = p.get("codigo", "").strip()
                 found = tarifas.lookup(codigo) if codigo else None
-                if not found:
+                if not found and codigo:
                     # Fallback: fuzzy search on the code string itself
                     found = tarifas.search(codigo)
-                enriched.append({
-                    "codigo":          found["codigo"]      if found else codigo,
-                    "descripcion":     found["descripcion"] if found else codigo,
-                    "unidad":          found["unidad"]      if found else "ud",
-                    "cantidad":        float(p.get("cantidad", 1)),
-                    "precio_unitario": found["precio"]      if found else 0.0,
-                    "tarifa_encontrada": bool(found),
-                    "nota":            p.get("nota", ""),
-                })
+                if found:
+                    enriched.append({
+                        "codigo":          found["codigo"],
+                        "descripcion":     found["descripcion"],
+                        "unidad":          found["unidad"],
+                        "cantidad":        float(p.get("cantidad", 1)),
+                        "precio_unitario": found["precio"],
+                        "tarifa_encontrada": True,
+                        "nota":            p.get("nota", ""),
+                    })
+                else:
+                    precio_est = float(p.get("precio_estimado", 0) or 0)
+                    enriched.append({
+                        "codigo":          "",
+                        "descripcion":     p.get("descripcion_libre", "").strip() or codigo or "Partida sin catalogar",
+                        "unidad":          p.get("unidad_libre", "").strip() or "ud",
+                        "cantidad":        float(p.get("cantidad", 1)),
+                        "precio_unitario": precio_est,
+                        "tarifa_encontrada": False,
+                        "nota":            p.get("nota", "") or (
+                            "Precio estimado de mercado (sin referencia en catalogo)" if precio_est else ""),
+                    })
             return enriched
 
         if tipo == "obra_2":
@@ -1356,7 +1601,16 @@ def api_chat_informe():
                 updated["_evidencia_img"] = merged_ev
             # Regenerar DOCX con el informe actualizado
             session_id = uuid.uuid4().hex[:8]
-            docx_name = f"Informe_IA_{session_id}.docx"
+            # Este endpoint (regeneracion via chat) no recibe calle/poblacion por
+            # separado; se usa el titulo del informe (normalmente ya incluye la
+            # direccion) como mejor aproximacion al formato "N.o - INFORME DIRECCION".
+            _titulo_informe = _safe_filename(updated.get("titulo", "") or "", maxlen=60)
+            if num_ref and _titulo_informe:
+                docx_name = f"{_safe_filename(num_ref, maxlen=20)} - INFORME {_titulo_informe}.docx"
+            elif num_ref:
+                docx_name = f"{_safe_filename(num_ref, maxlen=20)} - INFORME.docx"
+            else:
+                docx_name = f"Informe_IA_{session_id}.docx"
             docx_path = SALIDAS_DIR / docx_name
             try:
                 generate_report_docx(updated, docx_path, num_ref=num_ref, cliente=cliente)
@@ -2256,9 +2510,10 @@ def generar():
             data["[[TOTAL_PARTIDAS_ADICIONALES]]"] = fmt_euro_plain(extra_total)
 
     # File naming - sanitized to avoid Windows path length / accent issues
+    # Formato pedido: "N.o - NOMBRE DE LA CALLE N.o DE LA CALLE" (direccion tal cual)
     num_safe = _safe_filename(num_contrato.replace("/", "-"), maxlen=20)
-    label = _safe_filename((servicio or obra).upper(), maxlen=40)
-    stem = f"{num_safe}- {label} - PRESUPUESTO"
+    label = _safe_filename(obra, maxlen=60)
+    stem = f"{num_safe} - {label}" if label else f"{num_safe} - PRESUPUESTO"
     folder_name = stem
     output_dir = SALIDAS_DIR / folder_name
     output_dir.mkdir(parents=True, exist_ok=True)

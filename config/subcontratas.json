@@ -1,0 +1,32 @@
+[
+  {
+    "empresa": "GRUPO NOOR SL",
+    "cif": "B26665299",
+    "domicilio": "C/ Travesia de Getafe, 5, 28981 Parla, Madrid",
+    "telefono": "690681073",
+    "email": "info@gruponoor.es",
+    "rep_nombre": "MOKHTAR BENHAMMOU",
+    "rep_dni": "X2053252L",
+    "rep_domicilio": "Madrid, calle Naranjo 5 – 28500 Arganda del Rey",
+    "notario": "D. Domingo Paniagua Santamaria",
+    "notario_loc": "Arganda del Rey",
+    "fecha_escritura": "08/07/2013",
+    "protocolo": "908",
+    "registro": "Tomo 31208, Folio 190, Hoja M-561719"
+  },
+  {
+    "empresa": "POCERÍAS Y CONSTRUCCIONES LYANA S.L.U.",
+    "cif": "B-86776226",
+    "domicilio": "c/ Naranjo 5 - 28500 Arganda del Rey",
+    "telefono": "918 279 114",
+    "email": "info@poceriaslyana.com",
+    "rep_nombre": "Noemí del Pino Martínez",
+    "rep_dni": "50869839A",
+    "rep_domicilio": "Madrid, calle Naranjo 5 – 28500 Arganda del Rey",
+    "notario": "D. Domingo Paniagua Santamaria",
+    "notario_loc": "Arganda del Rey",
+    "fecha_escritura": "08/07/2013",
+    "protocolo": "908",
+    "registro": "Tomo 31208, Folio 190, Hoja M-561719"
+  }
+]

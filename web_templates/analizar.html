@@ -180,6 +180,18 @@
     50%      { box-shadow:0 0 0 6px rgba(220,53,69,.0); }
   }
   .mic-wrap textarea, .mic-wrap input[type="text"] { padding-right:36px; }
+
+  /* Editor del plano SVG (analisis CCTV) */
+  #plano-el-toolbar {
+    position:fixed; background:white; border:1px solid #c8daf0; border-radius:8px;
+    padding:5px 8px; box-shadow:0 4px 16px rgba(0,0,0,.18); z-index:1000;
+    display:none; gap:6px; align-items:center;
+  }
+  #plano-sel-box {
+    pointer-events:none; fill:none; stroke:#4F84B5; stroke-width:2;
+    stroke-dasharray:6,3; display:none;
+  }
+  [data-plano-el]:hover { cursor:move; }
 </style>
 </head>
 <body>
@@ -409,6 +421,20 @@
   </div>
 
 </div><!-- main-wrap -->
+
+<!-- Floating toolbar for selected plano SVG element -->
+<div id="plano-el-toolbar" class="d-flex">
+  <span id="plano-el-label" class="text-muted small me-2" style="align-self:center;font-size:.75rem"></span>
+  <button class="btn btn-sm btn-light border" id="plano-el-edit-text" onclick="planoEditText()" style="display:none;font-size:.78rem;padding:4px 8px" title="Editar texto">
+    <i class="bi bi-pencil me-1"></i>Texto
+  </button>
+  <button class="btn btn-sm btn-light border" onclick="planoDuplicate()" style="font-size:.78rem;padding:4px 8px" title="Duplicar">
+    <i class="bi bi-copy"></i>
+  </button>
+  <button class="btn btn-sm btn-light border text-danger" onclick="planoDeleteEl()" style="font-size:.78rem;padding:4px 8px" title="Borrar (Del)">
+    <i class="bi bi-trash"></i>
+  </button>
+</div>
 
 <script>
 // ── State
@@ -733,13 +759,14 @@ async function compartirInforme(sessionId, btn, urlYaGenerada) {
 }
 
 function showResult(r) {
-  const urgencia = r.nivel_urgencia_global || 'Medio';
-  const inmediata = r.requiere_intervencion_inmediata;
+  const wc = r._wincam || null;
+  const urgencia = r.nivel_urgencia_global || (wc && wc.nivel_urgencia_global) || 'Medio';
+  const inmediata = r.requiere_intervencion_inmediata || (wc && wc.requiere_intervencion_inmediata);
 
   let html = `
     <div class="d-flex align-items-center gap-3 mb-4">
       <div>
-        <h3 class="mb-1">${esc(r.titulo || 'Informe Tecnico')}</h3>
+        <h3 class="mb-1">${esc(r.titulo || (wc && wc.proyecto) || 'Informe Tecnico')}</h3>
         <div>
           <span class="urgencia-badge urg-${urgencia}">${urgencia.toUpperCase()}</span>
           ${inmediata ? '<span class="ms-2 badge bg-danger">Intervencion Inmediata</span>' : ''}
@@ -748,12 +775,14 @@ function showResult(r) {
     </div>`;
 
   // Downloads
-  const hasDl = r._docx || r._pdf || r._docx_wincam;
+  const hasDl = r._docx || r._pdf || r._docx_wincam || r._croquis_docx || r._croquis_pdf;
   if (hasDl) {
     html += `<div class="d-flex gap-2 mb-4 flex-wrap">`;
     if (r._docx)       html += `<a href="/descargar/${esc(r._docx)}" class="btn btn-dl btn-word"><i class="bi bi-file-earmark-word me-1"></i>Word Descriptivo</a>`;
     if (r._pdf)        html += `<a href="/descargar/${esc(r._pdf)}"  class="btn btn-dl btn-pdf"><i class="bi bi-file-earmark-pdf me-1"></i>PDF Descriptivo</a>`;
     if (r._docx_wincam) html += `<a href="/descargar/${esc(r._docx_wincam)}" class="btn btn-dl" style="background:#2E74B5;color:white;border:none"><i class="bi bi-table me-1"></i>Word WinCam</a>`;
+    if (r._croquis_pdf)  html += `<a href="/descargar/${esc(r._croquis_pdf)}" class="btn btn-dl" style="background:#0f766e;color:white;border:none"><i class="bi bi-map me-1"></i>PDF Plano</a>`;
+    if (r._croquis_docx) html += `<a href="/descargar/${esc(r._croquis_docx)}" class="btn btn-dl" style="background:#0f766e;color:white;border:none"><i class="bi bi-map me-1"></i>Word Plano</a>`;
     html += `</div>`;
   }
 
@@ -783,6 +812,75 @@ function showResult(r) {
       </div>`;
     });
     html += `</div>`;
+  }
+
+  if (r._croquis_error) {
+    html += `<div class="alert alert-warning py-2 mb-4" style="font-size:.85rem">
+      <i class="bi bi-exclamation-triangle me-1"></i>No se pudo generar el plano tecnico del croquis: ${esc(r._croquis_error)}
+    </div>`;
+  }
+
+  // Vista previa del informe WinCam (solo lectura; las correcciones se piden por el chat)
+  if (wc && (wc.secciones || []).length) {
+    const GRAV_COLOR = {A:'#C00000', B:'#E26B0A', C:'#BF9000', D:'#548235'};
+    const GRAV_LBL = {A:'Urgente', B:'Corto plazo', C:'Preventivo', D:'Informativo'};
+    html += `<div class="section-title"><i class="bi bi-table me-2"></i>Informe WinCam - Tramos (${wc.secciones.length})</div>`;
+    wc.secciones.forEach(sec => {
+      const obs = sec.observaciones_tabla || [];
+      html += `<div class="mb-4 p-3" style="border:1px solid #dbe3ec;border-radius:12px;background:#fafcfe">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+          <div class="fw-bold" style="color:#1F4E79">Tramo ${esc(sec.num)} - ${esc(sec.nombre||'')}</div>
+          <div class="small text-muted">
+            ${esc(sec.pozo_inicio||'-')} &rarr; ${esc(sec.pozo_fin||'-')}
+            &nbsp;|&nbsp; ${Number(sec.longitud_m||0).toFixed(2)} m
+            ${sec.diametro_mm ? `&nbsp;|&nbsp; DN ${esc(sec.diametro_mm)}` : ''}
+            ${sec.material ? `&nbsp;|&nbsp; ${esc(sec.material)}` : ''}
+          </div>
+        </div>`;
+      if (obs.length) {
+        html += `<div class="table-responsive"><table class="table table-sm table-bordered mb-2" style="font-size:.8rem">
+          <thead class="table-light"><tr><th>Posicion</th><th>Codigo</th><th>Descripcion</th><th>Gravedad</th><th></th></tr></thead><tbody>`;
+        obs.forEach(o => {
+          const grav = (o.gravedad||'').trim().toUpperCase();
+          const puedeVer = o._video && typeof o._t === 'number';
+          html += `<tr>
+            <td class="text-center">${Number(o.posicion_m||0).toFixed(2)} m</td>
+            <td class="text-center fw-bold" style="${grav && GRAV_COLOR[grav] ? `color:${GRAV_COLOR[grav]}` : ''}">${esc(o.codigo||'')}</td>
+            <td>${esc(o.descripcion||'')}</td>
+            <td class="text-center">${grav && GRAV_LBL[grav] ? `${grav} - ${esc(GRAV_LBL[grav])}` : '-'}</td>
+            <td class="text-center">${puedeVer
+              ? `<button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" onclick="verEnVideo('${esc(videoElId(o._video))}', ${o._t})" title="Ir al momento del video (aprox.)"><i class="bi bi-play-fill"></i></button>`
+              : ''}</td>
+          </tr>`;
+        });
+        html += `</tbody></table></div>`;
+      }
+      if (sec._diagrama_png_b64) {
+        html += `<div class="text-center mt-2">
+          <div class="small fw-semibold text-muted mb-1">Esquema del tramo y sentido del flujo</div>
+          <img src="data:image/png;base64,${sec._diagrama_png_b64}" style="max-height:320px;max-width:100%" alt="Esquema tramo ${esc(sec.nombre||'')}">`;
+        if ((sec.sentido_flujo||'').trim().toLowerCase() === 'desconocido') {
+          html += `<div class="small fst-italic text-muted mt-1">* Sentido del flujo no confirmado en la inspeccion</div>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+    });
+  }
+
+  // Vista previa editable del plano tecnico (SVG generado a partir del croquis)
+  if (r._croquis_svg) {
+    html += `<div class="section-title"><i class="bi bi-map me-2"></i>Plano tecnico del croquis</div>
+      <div class="d-flex gap-2 mb-2 flex-wrap">
+        <button class="btn btn-sm btn-outline-dark" id="btn-plano-edit" onclick="togglePlanoEdit()">
+          <i class="bi bi-cursor me-1"></i>Editar elementos
+        </button>
+        <button class="btn btn-sm btn-success" onclick="regenerarPlanoDesdeEdicion(this)">
+          <i class="bi bi-arrow-repeat me-1"></i>Guardar cambios y regenerar Word/PDF
+        </button>
+      </div>
+      <div id="plano-svg-content" style="background:white;border:2px solid #c8daf0;border-radius:10px;padding:12px;overflow:auto"></div>
+      <div class="small text-muted mt-1 mb-3"><i class="bi bi-info-circle me-1"></i>Doble clic sobre un texto para editarlo, arrastra elementos para moverlos, o selecciona uno y pulsa Supr para borrarlo.</div>`;
   }
 
   // Seccion 1: Objeto
@@ -916,6 +1014,7 @@ function showResult(r) {
     <button class="btn btn-new-analysis" onclick="newAnalysis()"><i class="bi bi-arrow-left me-1"></i>Nuevo Analisis</button>
     ${r._docx ? `<a href="/descargar/${esc(r._docx)}" class="btn btn-dl btn-word"><i class="bi bi-download me-1"></i>Descargar Word</a>` : ''}
     ${r._pdf  ? `<a href="/descargar/${esc(r._pdf)}"  class="btn btn-dl btn-pdf"><i class="bi bi-download me-1"></i>Descargar PDF</a>` : ''}
+    ${r._croquis_pdf ? `<a href="/descargar/${esc(r._croquis_pdf)}" class="btn btn-dl" style="background:#0f766e;color:white;border:none"><i class="bi bi-map me-1"></i>Descargar Plano</a>` : ''}
   </div>`;
 
   // CTA presupuesto
@@ -941,6 +1040,17 @@ function showResult(r) {
   const wrap = document.getElementById('result-wrap');
   wrap.innerHTML = html;
   wrap.style.display = 'block';
+
+  if (r._croquis_svg) {
+    _planoDisableEdit();
+    const cont = document.getElementById('plano-svg-content');
+    if (cont) {
+      cont.innerHTML = r._croquis_svg;
+      const svgEl = cont.querySelector('svg');
+      if (svgEl) { svgEl.style.maxWidth = '100%'; svgEl.style.height = 'auto'; }
+    }
+  }
+
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -1041,6 +1151,248 @@ function goToPresupuesto() {
 
 function esc(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Editor del plano SVG (vista previa del croquis analizado) ───────────────
+let planoEditMode = false;
+let planoSelected = null;
+let planoDragData = null;
+
+function _getPlanoSvg() { return document.querySelector('#plano-svg-content svg'); }
+
+function _planoScreenToSvg(svg, ex, ey) {
+  const pt = svg.createSVGPoint();
+  pt.x = ex; pt.y = ey;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+function _planoGetTranslate(el) {
+  const m = (el.getAttribute('transform') || '')
+    .match(/translate\(\s*([+-]?\d*\.?\d+)[,\s]+([+-]?\d*\.?\d+)/);
+  return m ? [parseFloat(m[1]), parseFloat(m[2])] : [0, 0];
+}
+
+function _planoSetTranslate(el, x, y) {
+  const rest = (el.getAttribute('transform') || '')
+    .replace(/translate\([^)]*\)/g, '').trim();
+  el.setAttribute('transform',
+    `translate(${x.toFixed(1)},${y.toFixed(1)})${rest ? ' '+rest : ''}`);
+}
+
+function _planoUpdateSelBox() {
+  const svg = _getPlanoSvg();
+  const box = document.getElementById('plano-sel-box');
+  if (!svg || !box || !planoSelected) { if (box) box.style.display = 'none'; return; }
+  try {
+    const bb = planoSelected.getBBox();
+    const p = 5;
+    box.setAttribute('x', bb.x - p);
+    box.setAttribute('y', bb.y - p);
+    box.setAttribute('width', bb.width + p*2);
+    box.setAttribute('height', bb.height + p*2);
+    box.style.display = '';
+  } catch(e) { box.style.display = 'none'; }
+}
+
+function _planoPosToolbar() {
+  if (!planoSelected) return;
+  const tb = document.getElementById('plano-el-toolbar');
+  try {
+    const bb = planoSelected.getBoundingClientRect();
+    const top = bb.top + window.scrollY - tb.offsetHeight - 10;
+    tb.style.left = Math.max(4, bb.left + window.scrollX) + 'px';
+    tb.style.top  = Math.max(4, top) + 'px';
+  } catch(e) {}
+}
+
+function _planoSelect(el) {
+  _planoDeselect();
+  planoSelected = el;
+  _planoUpdateSelBox();
+  const tb = document.getElementById('plano-el-toolbar');
+  const tag = el.tagName.toLowerCase();
+  const hasText = tag === 'text' || !!el.querySelector('text');
+  document.getElementById('plano-el-edit-text').style.display = hasText ? 'inline-flex' : 'none';
+  document.getElementById('plano-el-label').textContent =
+    tag === 'g' ? 'Grupo' : tag === 'text' ? 'Texto' :
+    tag === 'line' || tag === 'polyline' ? 'Linea' :
+    tag === 'rect' ? 'Rectangulo' : tag === 'path' ? 'Trazo' : tag.toUpperCase();
+  tb.style.display = 'flex';
+  requestAnimationFrame(_planoPosToolbar);
+}
+
+function _planoDeselect() {
+  planoSelected = null;
+  const box = document.getElementById('plano-sel-box');
+  if (box) box.style.display = 'none';
+  const tb = document.getElementById('plano-el-toolbar');
+  if (tb) tb.style.display = 'none';
+}
+
+function _planoGetTarget(e) {
+  let el = e.target;
+  while (el && el.tagName !== 'svg') {
+    if (el.id === 'plano-sel-box') return null;
+    if (el.dataset && el.dataset.planoEl) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+function _planoMD(e) {
+  if (e.button !== 0) return;
+  const el = _planoGetTarget(e);
+  if (!el) { _planoDeselect(); return; }
+  e.preventDefault();
+  e.stopPropagation();
+  _planoSelect(el);
+  const svg = _getPlanoSvg();
+  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  const [tx, ty] = _planoGetTranslate(el);
+  planoDragData = { el, startX: sp.x, startY: sp.y, tx, ty };
+}
+
+function _planoMV(e) {
+  if (!planoDragData) return;
+  e.preventDefault();
+  const svg = _getPlanoSvg();
+  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  _planoSetTranslate(planoDragData.el,
+    planoDragData.tx + sp.x - planoDragData.startX,
+    planoDragData.ty + sp.y - planoDragData.startY);
+  _planoUpdateSelBox();
+  _planoPosToolbar();
+}
+
+function _planoMU() { planoDragData = null; }
+
+function _planoDbl(e) {
+  const el = _planoGetTarget(e);
+  if (!el) return;
+  const textEl = el.tagName.toLowerCase() === 'text' ? el : el.querySelector('text');
+  if (!textEl) return;
+  e.preventDefault();
+  const val = prompt('Editar texto:', textEl.textContent);
+  if (val !== null) {
+    textEl.textContent = val;
+    _planoUpdateSelBox();
+  }
+}
+
+function _planoKey(e) {
+  if (!planoEditMode) return;
+  if (document.activeElement && ['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') { planoDeleteEl(); return; }
+  if (e.key === 'Escape') { _planoDeselect(); return; }
+  if (!planoSelected) return;
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    const [tx, ty] = _planoGetTranslate(planoSelected);
+    _planoSetTranslate(planoSelected,
+      tx + (e.key==='ArrowLeft' ? -step : e.key==='ArrowRight' ? step : 0),
+      ty + (e.key==='ArrowUp'   ? -step : e.key==='ArrowDown'  ? step : 0));
+    _planoUpdateSelBox();
+  }
+}
+
+function togglePlanoEdit() {
+  planoEditMode = !planoEditMode;
+  const btn = document.getElementById('btn-plano-edit');
+  if (planoEditMode) {
+    btn.classList.remove('btn-outline-dark');
+    btn.classList.add('btn-primary');
+    btn.innerHTML = '<i class="bi bi-cursor-fill me-1"></i>Editando...';
+    _planoEnableEdit();
+  } else {
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-outline-dark');
+    btn.innerHTML = '<i class="bi bi-cursor me-1"></i>Editar elementos';
+    _planoDisableEdit();
+  }
+}
+
+function _planoEnableEdit() {
+  const svg = _getPlanoSvg();
+  if (!svg) return;
+  if (!document.getElementById('plano-sel-box')) {
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.id = 'plano-sel-box';
+    svg.appendChild(rect);
+  }
+  [...svg.children].forEach(el => {
+    if (el.tagName === 'defs' || el.tagName === 'style' || el.id === 'plano-sel-box') return;
+    el.dataset.planoEl = '1';
+  });
+  svg.addEventListener('mousedown', _planoMD);
+  svg.addEventListener('mousemove', _planoMV);
+  svg.addEventListener('mouseup', _planoMU);
+  svg.addEventListener('mouseleave', _planoMU);
+  svg.addEventListener('dblclick', _planoDbl);
+  document.addEventListener('keydown', _planoKey);
+  svg.style.cursor = 'default';
+}
+
+function _planoDisableEdit() {
+  planoEditMode = false;
+  _planoDeselect();
+  const svg = _getPlanoSvg();
+  if (!svg) return;
+  svg.removeEventListener('mousedown', _planoMD);
+  svg.removeEventListener('mousemove', _planoMV);
+  svg.removeEventListener('mouseup', _planoMU);
+  svg.removeEventListener('mouseleave', _planoMU);
+  svg.removeEventListener('dblclick', _planoDbl);
+  document.removeEventListener('keydown', _planoKey);
+  svg.querySelectorAll('[data-plano-el]').forEach(el => delete el.dataset.planoEl);
+  svg.style.cursor = '';
+}
+
+function planoDeleteEl() {
+  if (!planoSelected) return;
+  const el = planoSelected;
+  _planoDeselect();
+  el.remove();
+}
+
+function planoEditText() {
+  if (!planoSelected) return;
+  _planoDbl({ target: planoSelected, preventDefault: ()=>{} });
+}
+
+function planoDuplicate() {
+  if (!planoSelected) return;
+  const svg = _getPlanoSvg();
+  const clone = planoSelected.cloneNode(true);
+  const [tx, ty] = _planoGetTranslate(clone);
+  _planoSetTranslate(clone, tx + 15, ty + 15);
+  svg.appendChild(clone);
+  clone.dataset.planoEl = '1';
+  _planoSelect(clone);
+}
+
+async function regenerarPlanoDesdeEdicion(btn) {
+  const svgEl = _getPlanoSvg();
+  if (!svgEl || !currentReport) return;
+  const meta = currentReport._croquis_meta || {};
+  if (btn) btn.disabled = true;
+  try {
+    const resp = await fetch('/api/regenerar_plano_svg', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ svg: svgEl.outerHTML, ...meta })
+    });
+    const data = await resp.json();
+    if (data.error) { alert('Error: ' + data.error); return; }
+    currentReport._croquis_docx = data.croquis_docx;
+    if (data.croquis_pdf) currentReport._croquis_pdf = data.croquis_pdf;
+    currentReport._croquis_svg = svgEl.outerHTML;
+    showResult(currentReport);
+  } catch(e) {
+    alert('Error de conexion: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ── Chat perito ──────────────────────────────────────────
