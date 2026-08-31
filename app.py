@@ -1093,9 +1093,10 @@ def api_generar_croquis():
 @app.route("/api/analizar", methods=["POST"])
 def api_analizar():
     import traceback as _tb_mod
-    _log = Path("C:/debug_analizar.log")
+    _log = Path(tempfile.gettempdir()) / "debug_analizar.log"
 
     def _write_log(msg: str):
+        print(f"[analizar] {msg}", flush=True)
         try:
             with open(_log, "a", encoding="utf-8") as _f:
                 _f.write(msg + "\n")
@@ -1276,8 +1277,8 @@ def api_analizar():
                 pdf_path = PdfConverter().convert(docx_path, SALIDAS_DIR)
                 if pdf_path:
                     result["_pdf"] = pdf_path.name
-            except Exception:
-                pass
+            except Exception as e:
+                _write_log(f"PDF descriptivo error: {e}")
 
         # Formato WinCam (o ambos)
         if formato in ("wincam", "ambos"):
