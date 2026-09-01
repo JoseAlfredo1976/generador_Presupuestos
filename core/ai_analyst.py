@@ -18,8 +18,13 @@ import anthropic
 MODEL = "claude-sonnet-4-6"
 
 # Maximo de imagenes (fotogramas de video + imagenes) por peticion a Claude.
-# La API tiene un limite duro de 100 imagenes; dejamos margen para no fallar.
-MAX_IMGS_IA = 80
+# La API tiene un limite duro de 100 imagenes; dejamos un margen de seguridad
+# de 4 para no fallar por redondeos. Con muchos videos en una misma peticion,
+# el reparto (ver _frames_por_video en analyze/analyze_wincam) sigue siendo el
+# cuello de botella real: 96 imagenes entre 16 videos son solo 6 fotogramas
+# por video. Para mas detalle por video, la solucion es subir menos videos
+# juntos, no subir este numero (ya esta cerca del limite duro de la API).
+MAX_IMGS_IA = 96
 
 
 def _safe_parse_json(raw: str):
