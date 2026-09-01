@@ -186,6 +186,14 @@ input[type=number].tb-num {
 
 <div class="main-wrap">
 
+  <div class="d-flex justify-content-end mb-3">
+    <button class="tb-btn" id="btn-toggle-lote" onclick="toggleModoLote()" style="font-size:.8rem">
+      <i class="bi bi-collection me-1"></i>Generar varios planos a la vez (lote)
+    </button>
+  </div>
+
+  <div id="modo-individual">
+
   <!-- Drop zone (solo al inicio) -->
   <div id="drop-wrap">
     <div class="section-title"><i class="bi bi-image me-2"></i>Imagen del croquis o plano</div>
@@ -448,6 +456,71 @@ input[type=number].tb-num {
         </button>
       </div>
     </div>
+  </div>
+
+  </div><!-- /modo-individual -->
+
+  <!-- Modo lote: varios PDF/imagenes -> un Word con un plano por pagina -->
+  <div id="modo-lote" style="display:none">
+    <div class="section-title"><i class="bi bi-collection me-2"></i>Varios planos a la vez</div>
+    <p class="text-muted small">Sube varios PDF o imagenes; se genera un unico Word con un plano tecnico por pagina, uno por archivo.</p>
+
+    <div class="drop-zone" id="lote-zone" style="padding:20px" onclick="document.getElementById('lote-input').click()">
+      <div class="dz-icon" style="font-size:2rem"><i class="bi bi-collection"></i></div>
+      <p id="lote-dz-text"><strong>Arrastra varios archivos aqui</strong> o haz clic para seleccionar</p>
+      <small>JPG, PNG, WEBP, BMP o PDF &middot; varios archivos a la vez</small>
+    </div>
+    <input type="file" id="lote-input" accept=".jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif,.pdf"
+           multiple style="display:none" onchange="onLoteFilesSelected(this.files)">
+    <div id="lote-lista" class="mt-2"></div>
+
+    <div class="form-check mt-3">
+      <input class="form-check-input" type="checkbox" id="lote-conservar-fondo">
+      <label class="form-check-label small" for="lote-conservar-fondo">
+        Son planos/fotos reales con anotaciones a boligrafo encima: conservar cada plano original tal cual de fondo y solo redibujar en limpio las anotaciones
+        <span class="text-muted">(sin marcar: se regenera cada plano completo desde cero, para bocetos a mano alzada)</span>
+      </label>
+    </div>
+
+    <div class="row g-2 mt-1">
+      <div class="col-md-4">
+        <label class="form-label small mb-1">Titulo</label>
+        <input type="text" id="lote-titulo" class="form-control form-control-sm" value="Croquis de Red">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small mb-1">Referencia</label>
+        <input type="text" id="lote-num-ref" class="form-control form-control-sm">
+      </div>
+      <div class="col-md-5">
+        <label class="form-label small mb-1">Ubicacion</label>
+        <input type="text" id="lote-direccion" class="form-control form-control-sm">
+      </div>
+    </div>
+    <div class="mt-2">
+      <label class="form-label small mb-1">Contexto adicional para la IA (opcional)</label>
+      <input type="text" id="lote-contexto" class="form-control form-control-sm" placeholder="Ej: todos los planos son de la misma comunidad, plantas 1 a 3">
+    </div>
+
+    {% if not api_key_set %}
+    <div class="mt-2">
+      <label class="form-label small mb-1">API Key de Anthropic</label>
+      <input type="password" id="lote-apikey" class="form-control form-control-sm">
+    </div>
+    {% endif %}
+
+    <button class="btn btn-analyze mt-3" id="btn-lote-generar" onclick="generarPlanosLote()"
+      style="background:linear-gradient(135deg,#4F84B5,#3a6a96)">
+      <i class="bi bi-stars me-2"></i>Generar Word con todos los planos
+    </button>
+
+    <div id="lote-progreso" class="mt-3" style="display:none">
+      <div class="d-flex align-items-center gap-2">
+        <div class="spinner-border spinner-border-sm text-primary"></div>
+        <span id="lote-progreso-texto">Procesando planos...</span>
+      </div>
+    </div>
+
+    <div id="lote-resultado" class="mt-3" style="display:none"></div>
   </div>
 
 </div><!-- /main-wrap -->
@@ -1353,6 +1426,129 @@ window.addEventListener('resize', () => {
   canvas.height = Math.round(baseCanvas.height * scale);
   redraw();
 });
+
+// ── Modo lote: varios PDF/imagenes -> un Word con un plano por pagina ───────
+let loteFiles = [];
+
+function toggleModoLote() {
+  const individual = document.getElementById('modo-individual');
+  const lote = document.getElementById('modo-lote');
+  const enLote = lote.style.display === 'none';
+  individual.style.display = enLote ? 'none' : '';
+  lote.style.display = enLote ? '' : 'none';
+  document.getElementById('btn-toggle-lote').innerHTML = enLote
+    ? '<i class="bi bi-arrow-left me-1"></i>Volver al editor de un plano'
+    : '<i class="bi bi-collection me-1"></i>Generar varios planos a la vez (lote)';
+}
+
+function onLoteFilesSelected(fileList) {
+  loteFiles = Array.from(fileList || []);
+  const cont = document.getElementById('lote-lista');
+  if (!loteFiles.length) { cont.innerHTML = ''; return; }
+  cont.innerHTML = '<div class="small text-muted mb-1">' + loteFiles.length + ' archivo(s):</div>' +
+    loteFiles.map((f, i) => `
+      <div class="d-flex align-items-center gap-2 small py-1">
+        <i class="bi bi-file-earmark"></i>
+        <span class="flex-grow-1">${esc(f.name)}</span>
+        <button class="tb-btn danger" style="font-size:.7rem;padding:2px 7px" onclick="quitarLoteFile(${i})"><i class="bi bi-x"></i></button>
+      </div>`).join('');
+}
+
+function quitarLoteFile(idx) {
+  loteFiles.splice(idx, 1);
+  onLoteFilesSelected(loteFiles);
+}
+
+async function generarPlanosLote() {
+  if (!loteFiles.length) { alert('Selecciona al menos un archivo.'); return; }
+
+  {% if not api_key_set %}
+  const apiKey = document.getElementById('lote-apikey').value.trim();
+  if (!apiKey) { document.getElementById('lote-apikey').focus(); return; }
+  {% endif %}
+
+  const btn = document.getElementById('btn-lote-generar');
+  btn.disabled = true;
+  document.getElementById('lote-progreso').style.display = 'block';
+  document.getElementById('lote-progreso-texto').textContent = `Procesando ${loteFiles.length} plano(s)...`;
+  document.getElementById('lote-resultado').style.display = 'none';
+  document.getElementById('lote-resultado').innerHTML = '';
+
+  const fd = new FormData();
+  loteFiles.forEach(f => fd.append('imagenes', f, f.name));
+  fd.append('titulo', document.getElementById('lote-titulo').value.trim() || 'Croquis de Red');
+  fd.append('num_ref', document.getElementById('lote-num-ref').value.trim());
+  fd.append('direccion', document.getElementById('lote-direccion').value.trim());
+  fd.append('contexto', document.getElementById('lote-contexto').value.trim());
+  if (document.getElementById('lote-conservar-fondo').checked) fd.append('conservar_fondo', '1');
+  {% if not api_key_set %}
+  fd.append('api_key', document.getElementById('lote-apikey').value.trim());
+  {% endif %}
+
+  try {
+    const resp = await fetch('/api/generar_planos_multiples', { method:'POST', body:fd });
+    const data = await resp.json();
+    if (data.error) {
+      mostrarErrorLote(data.error);
+      return;
+    }
+    await pollPlanosLote(data._job_id);
+  } catch (e) {
+    mostrarErrorLote('Error de conexion: ' + e.message);
+  }
+}
+
+async function pollPlanosLote(jobId) {
+  const inicio = Date.now();
+  while (true) {
+    await new Promise(r => setTimeout(r, 3000));
+    let resp;
+    try {
+      resp = await fetch('/api/generar_planos_multiples_status/' + encodeURIComponent(jobId));
+    } catch (e) {
+      continue;
+    }
+    if (resp.status === 404) {
+      mostrarErrorLote('El trabajo no se encontro (puede haber caducado tras un reinicio del servidor). Vuelve a intentarlo.');
+      return;
+    }
+    let job;
+    try { job = await resp.json(); } catch (e) { continue; }
+
+    const s = Math.floor((Date.now() - inicio) / 1000);
+    document.getElementById('lote-progreso-texto').textContent =
+      `Procesando ${loteFiles.length} plano(s)... ${s}s (una llamada a la IA por archivo, puede tardar varios minutos)`;
+
+    if (job.status === 'done') {
+      document.getElementById('lote-progreso').style.display = 'none';
+      document.getElementById('btn-lote-generar').disabled = false;
+      const avisoErrores = job.num_errores
+        ? `<div class="alert alert-warning py-2 px-3 small mb-2"><i class="bi bi-exclamation-triangle me-1"></i>${job.num_errores} de ${job.num_errores + job.num_planos} plano(s) no se pudieron generar (revisa el Word: llevan una pagina con el error).</div>`
+        : '';
+      document.getElementById('lote-resultado').style.display = 'block';
+      document.getElementById('lote-resultado').innerHTML = `
+        ${avisoErrores}
+        <div class="alert alert-success py-2 px-3 small mb-2"><i class="bi bi-check-circle me-1"></i>${job.num_planos} plano(s) generados correctamente.</div>
+        <div class="d-flex gap-2 flex-wrap">
+          <a href="/descargar/${esc(job.docx)}" class="btn btn-dl btn-word"><i class="bi bi-file-earmark-word me-1"></i>Descargar Word</a>
+          ${job.pdf ? `<a href="/descargar/${esc(job.pdf)}" class="btn btn-dl btn-pdf"><i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF</a>` : ''}
+        </div>`;
+      return;
+    }
+    if (job.status === 'error') {
+      mostrarErrorLote(job.error);
+      return;
+    }
+  }
+}
+
+function mostrarErrorLote(msg) {
+  document.getElementById('lote-progreso').style.display = 'none';
+  document.getElementById('btn-lote-generar').disabled = false;
+  document.getElementById('lote-resultado').style.display = 'block';
+  document.getElementById('lote-resultado').innerHTML =
+    `<div class="alert alert-danger small">${esc(msg)}</div>`;
+}
 </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>

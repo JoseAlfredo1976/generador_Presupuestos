@@ -117,12 +117,18 @@ app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB
 _ANALYSIS_JOBS: dict[str, dict] = {}
 _ANALYSIS_JOBS_LOCK = threading.Lock()
 
+# Mismo patron para /api/generar_planos_multiples (varios PDF/imagenes -> un
+# Word con un plano por pagina): tambien puede tardar varios minutos (una
+# llamada a Claude por archivo) y necesita procesarse en segundo plano.
+_PLANOS_JOBS: dict[str, dict] = {}
+_PLANOS_JOBS_LOCK = threading.Lock()
 
-def _limpiar_jobs_antiguos(max_edad_seg: int = 3 * 3600) -> None:
+
+def _limpiar_jobs_antiguos(jobs: dict, lock: threading.Lock, max_edad_seg: int = 3 * 3600) -> None:
     corte = time.time() - max_edad_seg
-    with _ANALYSIS_JOBS_LOCK:
-        for jid in [j for j, v in _ANALYSIS_JOBS.items() if v.get("_ts", 0) < corte]:
-            del _ANALYSIS_JOBS[jid]
+    with lock:
+        for jid in [j for j, v in jobs.items() if v.get("_ts", 0) < corte]:
+            del jobs[jid]
 
 
 @app.errorhandler(413)
@@ -1021,6 +1027,118 @@ def _croquis_docx_desde_png(png_path: Path, titulo: str = "Croquis de red",
     return docx_path, pdf_path
 
 
+def _croquis_docx_multiple(paginas: list[tuple[Path | None, str]], titulo: str = "Croquis de red",
+                           num_ref: str = "", direccion: str = "", fecha_display: str = "",
+                           notas: str = "", stem: str = "") -> tuple[Path, Path | None]:
+    """Como _croquis_docx_desde_png pero para VARIOS planos, uno por pagina,
+    en un unico DOCX. `paginas` es una lista de (png_path, subtitulo); si
+    png_path es None (el plano de ese archivo fallo) se deja constancia del
+    error en esa pagina en vez de la imagen."""
+    from docx import Document
+    from docx.shared import Pt, Cm, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.section import WD_ORIENT
+
+    AZUL = RGBColor(0x1F, 0x4E, 0x79)
+    GRIS = RGBColor(0x6B, 0x72, 0x80)
+    ROJO = RGBColor(0xC0, 0x00, 0x00)
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.orientation = WD_ORIENT.LANDSCAPE
+    sec.page_width, sec.page_height = sec.page_height, sec.page_width
+    sec.top_margin = sec.bottom_margin = Cm(1.5)
+    sec.left_margin = sec.right_margin = Cm(1.8)
+
+    for idx, (png_path, subtitulo) in enumerate(paginas):
+        if idx > 0:
+            doc.add_page_break()
+
+        p = doc.add_paragraph()
+        p.paragraph_format.space_after = Pt(2)
+        r = p.add_run("ACOMETIDAS EUROPA SANEAMIENTO TECNICO S.L.")
+        r.bold = True
+        r.font.size = Pt(9)
+        r.font.color.rgb = AZUL
+
+        t = doc.add_paragraph()
+        t.paragraph_format.space_after = Pt(2)
+        tr = t.add_run((titulo or "Croquis de red").upper())
+        tr.bold = True
+        tr.font.size = Pt(15)
+        tr.font.color.rgb = AZUL
+
+        st = doc.add_paragraph()
+        st.paragraph_format.space_after = Pt(6)
+        sr = st.add_run(f"Plano {idx + 1} de {len(paginas)} — {subtitulo}")
+        sr.bold = True
+        sr.font.size = Pt(10)
+        sr.font.color.rgb = GRIS
+
+        meta = "   |   ".join(x for x in (
+            (f"Ref: {num_ref}" if num_ref else ""),
+            direccion, fecha_display,
+        ) if x)
+        if meta:
+            m = doc.add_paragraph()
+            m.paragraph_format.space_after = Pt(10)
+            mr = m.add_run(meta)
+            mr.font.size = Pt(9)
+            mr.font.color.rgb = GRIS
+
+        if png_path is None:
+            ep = doc.add_paragraph()
+            er = ep.add_run(f"No se pudo generar este plano ({subtitulo}). Revisa el archivo original.")
+            er.font.size = Pt(11)
+            er.font.color.rgb = ROJO
+            continue
+
+        ancho_disp = sec.page_width - sec.left_margin - sec.right_margin
+        alto_disp = sec.page_height - sec.top_margin - sec.bottom_margin - Cm(4.6)
+        try:
+            from PIL import Image as _Img
+            with _Img.open(png_path) as _im:
+                ratio = _im.height / _im.width
+        except Exception:
+            ratio = 660 / 900
+        ancho = ancho_disp
+        if int(ancho * ratio) > int(alto_disp):
+            ancho = int(alto_disp / ratio)
+
+        ip = doc.add_paragraph()
+        ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        ip.add_run().add_picture(str(png_path), width=ancho)
+
+        cap = doc.add_paragraph()
+        cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cr = cap.add_run("Plano tecnico generado con IA a partir del croquis aportado. "
+                         "Representacion esquematica sin escala.")
+        cr.italic = True
+        cr.font.size = Pt(8)
+        cr.font.color.rgb = GRIS
+
+    if notas:
+        doc.add_page_break()
+        np_ = doc.add_paragraph()
+        nr1 = np_.add_run("Observaciones: ")
+        nr1.bold = True
+        nr1.font.size = Pt(9)
+        nr1.font.color.rgb = AZUL
+        nr2 = np_.add_run(notas)
+        nr2.font.size = Pt(9)
+
+    stem = stem or _safe_filename(f"Planos_{num_ref or titulo}", maxlen=50)
+    docx_path = SALIDAS_DIR / f"{stem}.docx"
+    doc.save(str(docx_path))
+
+    pdf_path = None
+    try:
+        pdf_path = PdfConverter().convert(docx_path, SALIDAS_DIR)
+    except Exception:
+        pdf_path = None
+    return docx_path, pdf_path
+
+
 @app.route("/api/generar_plano_ia", methods=["POST"])
 def api_generar_plano_ia():
     """Analiza un boceto/croquis con IA y genera un plano tecnico SVG limpio."""
@@ -1050,6 +1168,122 @@ def api_generar_plano_ia():
         if tmp_dir and tmp_dir.exists():
             import shutil
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.route("/api/generar_planos_multiples", methods=["POST"])
+def api_generar_planos_multiples():
+    """Recibe varios PDF/imagenes a la vez y genera UN Word con un plano
+    tecnico por pagina (uno por archivo). Se procesa en segundo plano (igual
+    que /api/analizar) porque cada archivo supone una llamada a Claude y con
+    varios archivos juntos se supera facilmente el limite de Railway de 5
+    minutos sin datos transferidos."""
+    import traceback as _tb
+    try:
+        archivos_subidos = [f for f in request.files.getlist("imagenes") if f and f.filename]
+        if not archivos_subidos:
+            return jsonify({"error": "No se recibio ningun archivo."}), 400
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="planos_multi_"))
+        archivos: list[tuple[Path, str]] = []
+        for f in archivos_subidos:
+            suf = Path(f.filename).suffix.lower()
+            if suf not in ALLOWED_PLANO:
+                continue
+            dest = tmp_dir / f"{uuid.uuid4().hex[:8]}{suf}"
+            f.save(str(dest))
+            archivos.append((dest, f.filename))
+
+        if not archivos:
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            return jsonify({"error": "Ningun archivo tiene un formato soportado (JPG, PNG, WEBP, BMP o PDF)."}), 400
+
+        job_id = uuid.uuid4().hex[:8]
+        with _PLANOS_JOBS_LOCK:
+            _PLANOS_JOBS[job_id] = {"status": "processing", "_ts": time.time()}
+        _limpiar_jobs_antiguos(_PLANOS_JOBS, _PLANOS_JOBS_LOCK)
+
+        threading.Thread(
+            target=_procesar_planos_multiples_bg,
+            kwargs=dict(
+                job_id=job_id, archivos=archivos, tmp_dir=tmp_dir,
+                api_key=request.form.get("api_key", ""),
+                contexto=request.form.get("contexto", ""),
+                conservar_fondo=request.form.get("conservar_fondo", "0") == "1",
+                titulo=request.form.get("titulo", "Croquis de Red"),
+                num_ref=request.form.get("num_ref", ""),
+                direccion=request.form.get("direccion", ""),
+                fecha_raw=request.form.get("fecha", datetime.now().strftime("%Y-%m-%d")),
+                notas=request.form.get("notas", ""),
+                base_url=request.url_root,
+            ),
+            daemon=True,
+        ).start()
+        return jsonify({"_job_id": job_id, "_polling": True})
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
+
+
+def _procesar_planos_multiples_bg(job_id, archivos, tmp_dir, api_key, contexto, conservar_fondo,
+                                   titulo, num_ref, direccion, fecha_raw, notas, base_url):
+    import traceback as _tb_mod
+    import shutil as _sh
+
+    with app.test_request_context(base_url=base_url):
+        try:
+            paginas: list[tuple[Path | None, str]] = []
+            for dest, nombre_original in archivos:
+                subtitulo = Path(nombre_original).stem
+                try:
+                    svg, _estructura = _plano_svg_desde_archivo(
+                        dest, api_key=api_key, contexto=contexto, conservar_fondo=conservar_fondo)
+                    png = _svg_a_png(svg)
+                    paginas.append((png, subtitulo))
+                except Exception as e:
+                    paginas.append((None, f"{subtitulo} — ERROR: {e}"))
+
+            try:
+                dt = datetime.strptime(fecha_raw, "%Y-%m-%d")
+                meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+                         "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+                fecha_display = f"{dt.day} de {meses[dt.month - 1]} de {dt.year}"
+            except ValueError:
+                fecha_display = fecha_raw
+
+            docx_path, pdf_path = _croquis_docx_multiple(
+                paginas, titulo=titulo, num_ref=num_ref, direccion=direccion,
+                fecha_display=fecha_display, notas=notas,
+                stem=_safe_filename(f"Planos_{num_ref or titulo}", maxlen=50),
+            )
+            with _PLANOS_JOBS_LOCK:
+                _PLANOS_JOBS[job_id] = {
+                    "status": "done",
+                    "docx": docx_path.name,
+                    "pdf": pdf_path.name if pdf_path else None,
+                    "num_planos": sum(1 for p, _ in paginas if p is not None),
+                    "num_errores": sum(1 for p, _ in paginas if p is None),
+                    "_ts": time.time(),
+                }
+        except Exception as e:
+            tb = _tb_mod.format_exc()
+            with _PLANOS_JOBS_LOCK:
+                _PLANOS_JOBS[job_id] = {
+                    "status": "error",
+                    "error": f"{str(e)}\n\n--- TRACEBACK ---\n{tb}",
+                    "traceback": tb,
+                    "_ts": time.time(),
+                }
+        finally:
+            _sh.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.route("/api/generar_planos_multiples_status/<job_id>")
+def api_generar_planos_multiples_status(job_id):
+    with _PLANOS_JOBS_LOCK:
+        job = _PLANOS_JOBS.get(job_id)
+    if not job:
+        return jsonify({"status": "not_found", "error": "Trabajo no encontrado (puede haber caducado)."}), 404
+    return jsonify(job)
 
 
 @app.route("/api/generar_croquis", methods=["POST"])
@@ -1360,7 +1594,7 @@ def api_analizar():
 
         with _ANALYSIS_JOBS_LOCK:
             _ANALYSIS_JOBS[session_id] = {"status": "processing", "_ts": time.time()}
-        _limpiar_jobs_antiguos()
+        _limpiar_jobs_antiguos(_ANALYSIS_JOBS, _ANALYSIS_JOBS_LOCK)
 
         threading.Thread(
             target=_procesar_analisis_bg,
