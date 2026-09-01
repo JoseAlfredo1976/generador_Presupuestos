@@ -630,6 +630,28 @@ def _fondo_png_desde_archivo(src: Path) -> tuple[Path, int, int]:
     return png_path, w, h
 
 
+def _quitar_tinta_azul(png_path: Path, tolerancia: float = 1.15, minimo_azul: int = 60) -> None:
+    """Blanquea (in-place) los pixeles de tinta de boligrafo AZUL en un PNG,
+    dejando intacto el resto del plano (lineas negras/grises impresas).
+
+    Heuristica de color: un pixel se considera "tinta azul" si el canal azul
+    domina claramente sobre rojo y verde (ratio > tolerancia) y no es
+    demasiado tenue. Pensada para bolografo azul sobre plano en blanco y
+    negro; con otro color de tinta no aplicaria (habria que ajustar el color
+    de referencia)."""
+    import numpy as np
+    from PIL import Image as _PILImage
+
+    with _PILImage.open(png_path) as im:
+        arr = np.array(im.convert("RGB"), dtype=np.float32)
+
+    r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
+    es_tinta_azul = (b > r * tolerancia) & (b > g * tolerancia) & (b > minimo_azul)
+    arr[es_tinta_azul] = (255.0, 255.0, 255.0)
+
+    _PILImage.fromarray(arr.astype("uint8"), "RGB").save(png_path)
+
+
 def _plano_svg_desde_archivo(src: Path, api_key: str = "", contexto: str = "",
                               conservar_fondo: bool = False) -> tuple[str, dict]:
     """Analiza un boceto/croquis (imagen o PDF) y devuelve (svg, estructura).
@@ -733,6 +755,10 @@ Omite claves cuyo array este vacio. Si un campo es desconocido usa null."""
         # El original se conserva EXACTO como fondo; la IA solo regenera en
         # limpio la capa de anotaciones, superpuesta.
         fondo_png, bg_w, bg_h = _fondo_png_desde_archivo(src)
+        # Las anotaciones a boligrafo AZUL se borran del fondo (se blanquean)
+        # porque se redibujan en limpio como capa superpuesta: si no, se
+        # verian dos veces (la tinta original + el trazo limpio encima).
+        _quitar_tinta_azul(fondo_png)
         fondo_b64 = base64.b64encode(fondo_png.read_bytes()).decode()
 
         PROMPT_PASO2 = f"""Genera UNICAMENTE una capa de anotaciones tecnicas en SVG, para superponer

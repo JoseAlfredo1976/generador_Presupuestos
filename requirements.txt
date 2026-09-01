@@ -13,3 +13,4 @@ gspread>=6.0.0
 google-auth>=2.0.0
 qrcode[pil]>=7.4
 PyMuPDF>=1.24.0
+numpy>=1.26.0
