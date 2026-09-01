@@ -9,6 +9,7 @@ import os
 import secrets
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 import uuid
@@ -105,6 +106,24 @@ if not _secret_key:
     _secret_key = secrets.token_hex(32)
 app.secret_key = _secret_key
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB
+
+# El proxy de Railway cierra la conexion si el servidor no manda ningun byte
+# de vuelta durante 5 minutos (ver docs.railway.com/networking/public-networking/
+# specs-and-limits), y el analisis de varios videos (transcodificar + IA) puede
+# tardar mas que eso facilmente. Por eso /api/analizar ya no procesa en la
+# propia peticion: guarda los archivos, lanza el trabajo pesado en un hilo en
+# segundo plano y responde al instante con un _job_id; el frontend pregunta el
+# resultado con /api/analizar_status/<job_id> (polling), evitando el timeout.
+_ANALYSIS_JOBS: dict[str, dict] = {}
+_ANALYSIS_JOBS_LOCK = threading.Lock()
+
+
+def _limpiar_jobs_antiguos(max_edad_seg: int = 3 * 3600) -> None:
+    corte = time.time() - max_edad_seg
+    with _ANALYSIS_JOBS_LOCK:
+        for jid in [j for j, v in _ANALYSIS_JOBS.items() if v.get("_ts", 0) < corte]:
+            del _ANALYSIS_JOBS[jid]
+
 
 @app.errorhandler(413)
 def _too_large(_e):
@@ -1111,9 +1130,9 @@ def api_analizar():
     _write_log("=== NUEVA PETICION /api/analizar ===")
 
     try:
-        from core.ai_analyst import (analyze, generate_report_docx,
-                                      analyze_wincam, generate_wincam_docx,
-                                      attach_wincam_diagramas)
+        # Comprobacion temprana de que el modulo carga bien (el import real
+        # que se usa esta dentro de _procesar_analisis_bg, en segundo plano).
+        import core.ai_analyst  # noqa: F401
     except Exception as e:
         tb = _tb_mod.format_exc()
         _write_log("ERROR IMPORTANDO ai_analyst:\n" + tb)
@@ -1208,174 +1227,242 @@ def api_analizar():
         if not saved_files:
             return jsonify({"error": "No se recibieron archivos validos o no se pudieron guardar."}), 400
 
-        # Copia persistente de los videos, TRANSCODIFICADOS a H.264/MP4 (ver
-        # _transcodificar_video_web): las camaras CCTV suelen grabar en codecs
-        # que ningun navegador reproduce, y de paso queda una version
-        # comprimida lista para compartir con el cliente. videos_persistidos
-        # mapea nombre_original (el que usa "_evidencia_src" del informe) ->
-        # nombre_web (el .mp4 ya transcodificado y realmente servido).
-        video_ext_persist = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
-        videos_persistidos: dict[str, str] = {}
-        video_session_dir = VIDEOS_DIR / session_id
-        for sf in saved_files:
-            if sf.suffix.lower() in video_ext_persist:
-                video_session_dir.mkdir(parents=True, exist_ok=True)
-                destino_web = video_session_dir / f"{sf.stem}.mp4"
-                if _transcodificar_video_web(sf, destino_web):
-                    videos_persistidos[sf.name] = destino_web.name
-                    _write_log(f"Video transcodificado: {sf.name} -> {destino_web.name}")
-                else:
-                    import shutil as _sh_video
-                    destino_fallback = video_session_dir / sf.name
-                    try:
-                        _sh_video.copy2(sf, destino_fallback)
-                        videos_persistidos[sf.name] = destino_fallback.name
-                        _write_log(f"Video persistido SIN transcodificar (fallback): {sf.name}")
-                    except Exception as e:
-                        _write_log(f"No se pudo persistir video {sf.name}: {e}")
+        with _ANALYSIS_JOBS_LOCK:
+            _ANALYSIS_JOBS[session_id] = {"status": "processing", "_ts": time.time()}
+        _limpiar_jobs_antiguos()
 
-        # Enlace publico de solo-video, generado YA (independientemente del
-        # formato elegido) para poder incrustarlo como texto+QR en el DOCX que
-        # se genere: asi viaja siempre pegado al informe. Se guarda tambien
-        # una version minima del informe compartible (por si el formato es
-        # solo "descriptivo", sin secciones/observaciones); el bloque WinCam
-        # de mas abajo la enriquece si aplica.
-        enlace_video = None
-        if videos_persistidos:
-            try:
-                _token_video = compartidos.crear_o_reusar(session_id)
-                enlace_video = url_for("ver_publico", token=_token_video, _external=True)
-                INFORMES_COMPARTIDOS_DIR.mkdir(parents=True, exist_ok=True)
-                (INFORMES_COMPARTIDOS_DIR / f"Informe_WinCam_{session_id}.json").write_text(
-                    json.dumps({
-                        "proyecto": proyecto, "num_ref": num_ref, "cliente": cliente,
-                        "nivel_urgencia_global": None, "secciones": [], "totales": {},
-                        "videos": [
-                            {"nombre": web_name, "url": url_for("servir_video_ia", session_id=session_id, filename=web_name)}
-                            for web_name in videos_persistidos.values()
-                        ],
-                    }, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-            except Exception as e:
-                _write_log(f"No se pudo generar el enlace publico: {e}")
-
-        result = {"_formato": formato, "_session_id": session_id}
-        if enlace_video:
-            result["_enlace_video"] = enlace_video
-
-        # Formato descriptivo (o ambos)
-        if formato in ("descriptivo", "ambos"):
-            _write_log("Llamando a analyze() descriptivo...")
-            report = analyze(saved_files, tipo, context, api_key, croquis_path=croquis_path)
-            _write_log("analyze() OK")
-            result.update(report)
-            docx_name = f"{_informe_stem}.docx" if _informe_stem else f"Informe_IA_{session_id}.docx"
-            docx_path = SALIDAS_DIR / docx_name
-            try:
-                generate_report_docx(report, docx_path, num_ref=num_ref, cliente=cliente,
-                                     enlace_video=enlace_video)
-                result["_docx"] = docx_name
-            except Exception as e:
-                result["_docx_error"] = str(e)
-                _write_log(f"DOCX descriptivo error: {e}")
-            try:
-                pdf_path = PdfConverter().convert(docx_path, SALIDAS_DIR)
-                if pdf_path:
-                    result["_pdf"] = pdf_path.name
-            except Exception as e:
-                _write_log(f"PDF descriptivo error: {e}")
-
-        # Formato WinCam (o ambos)
-        if formato in ("wincam", "ambos"):
-            _write_log("Llamando a analyze_wincam()...")
-            wc_report = analyze_wincam(saved_files, context, api_key,
-                                       proyecto=proyecto or num_ref,
-                                       calle=calle, poblacion=poblacion,
-                                       croquis_path=croquis_path)
-            _write_log("analyze_wincam() OK")
-            attach_wincam_diagramas(wc_report)
-            result["_videos"] = _marcar_timestamps_video(wc_report, session_id, videos_persistidos)
-            result["_wincam"] = wc_report
-
-            # Copia reducida del informe (solo lo necesario para el visor
-            # publico de solo-video: secciones/observaciones + videos) para
-            # poder recuperarla despues desde /ver/<token>.
-            try:
-                informe_compartible = {
-                    "proyecto": wc_report.get("proyecto") or proyecto,
-                    "num_ref": num_ref,
-                    "cliente": cliente,
-                    "nivel_urgencia_global": wc_report.get("nivel_urgencia_global"),
-                    "secciones": wc_report.get("secciones") or [],
-                    "totales": wc_report.get("totales") or {},
-                    "videos": result.get("_videos") or [],
-                }
-                INFORMES_COMPARTIDOS_DIR.mkdir(parents=True, exist_ok=True)
-                (INFORMES_COMPARTIDOS_DIR / f"Informe_WinCam_{session_id}.json").write_text(
-                    json.dumps(informe_compartible, ensure_ascii=False), encoding="utf-8"
-                )
-            except Exception as e:
-                _write_log(f"No se pudo guardar el informe compartible: {e}")
-
-            wc_name = f"{_informe_stem} WINCAM.docx" if _informe_stem else f"Informe_WinCam_{session_id}.docx"
-            wc_path = SALIDAS_DIR / wc_name
-            try:
-                generate_wincam_docx(wc_report, wc_path, num_ref=num_ref, cliente=cliente,
-                                     enlace_video=enlace_video)
-                result["_docx_wincam"] = wc_name
-            except Exception as e:
-                result["_wincam_docx_error"] = str(e)
-                _write_log(f"DOCX WinCam error: {e}")
-
-        # Si no se genero el formato WinCam (p.ej. formato="descriptivo")
-        # igualmente se listan los videos persistidos para poder revisarlos
-        # en el visor, aunque sin marcadores de observaciones (esos requieren
-        # el mapeo de fotogramas del informe WinCam).
-        if "_videos" not in result and videos_persistidos:
-            result["_videos"] = [
-                {"nombre": web_name, "url": url_for("servir_video_ia", session_id=session_id, filename=web_name)}
-                for web_name in videos_persistidos.values()
-            ]
-
-        # Plano tecnico del croquis aportado (DOCX + PDF). Antes el croquis solo
-        # se usaba como referencia para la IA y no producia ningun documento.
-        if croquis_path:
-            _write_log("Generando plano tecnico del croquis...")
-            try:
-                svg, _estructura = _plano_svg_desde_archivo(
-                    croquis_path, api_key=api_key,
-                    contexto=f"{proyecto} {calle} {poblacion}".strip())
-                titulo_plano = f"Croquis de red - {proyecto}" if proyecto else "Croquis de red"
-                direccion_plano = ", ".join(x for x in (calle, poblacion) if x)
-                fecha_plano = datetime.now().strftime("%d/%m/%Y")
-                stem_plano = f"Croquis_{session_id}"
-                png = _svg_a_png(svg)
-                cx_docx, cx_pdf = _croquis_docx_desde_png(
-                    png, titulo=titulo_plano, num_ref=num_ref,
-                    direccion=direccion_plano, fecha_display=fecha_plano,
-                    stem=stem_plano,
-                )
-                result["_croquis_docx"] = cx_docx.name
-                if cx_pdf:
-                    result["_croquis_pdf"] = cx_pdf.name
-                result["_croquis_svg"] = svg
-                result["_croquis_meta"] = {
-                    "titulo": titulo_plano, "num_ref": num_ref,
-                    "direccion": direccion_plano, "fecha_display": fecha_plano,
-                    "stem": stem_plano,
-                }
-                _write_log(f"Plano OK: {cx_docx.name} / {cx_pdf.name if cx_pdf else 'sin PDF'}")
-            except Exception as e:
-                result["_croquis_error"] = str(e)
-                _write_log(f"Plano croquis error: {e}")
-
-        return jsonify(result)
+        threading.Thread(
+            target=_procesar_analisis_bg,
+            kwargs=dict(
+                session_id=session_id, saved_files=saved_files, croquis_path=croquis_path,
+                tipo=tipo, formato=formato, context=context, api_key=api_key,
+                num_ref=num_ref, cliente=cliente, proyecto=proyecto, calle=calle,
+                poblacion=poblacion, informe_stem=_informe_stem, base_url=request.url_root,
+            ),
+            daemon=True,
+        ).start()
+        _write_log(f"Trabajo {session_id} lanzado en segundo plano")
+        return jsonify({"_job_id": session_id, "_polling": True})
 
     except Exception as e:
         tb = _tb_mod.format_exc()
         _write_log("=== EXCEPCION ===\n" + tb)
         return jsonify({"error": f"{str(e)}\n\n--- TRACEBACK ---\n{tb}", "traceback": tb}), 500
+
+
+def _procesar_analisis_bg(session_id, saved_files, croquis_path, tipo, formato, context,
+                           api_key, num_ref, cliente, proyecto, calle, poblacion,
+                           informe_stem, base_url):
+    """Trabajo pesado de /api/analizar (transcodificar videos, llamar a Claude,
+    generar DOCX/PDF/croquis), ejecutado en un hilo aparte para no bloquear la
+    respuesta HTTP: el proxy de Railway corta la conexion si el servidor no
+    manda ningun byte de vuelta durante 5 minutos, y esto puede tardar mas.
+    El resultado se deja en _ANALYSIS_JOBS[session_id] para que lo recoja
+    /api/analizar_status (polling desde el frontend)."""
+    import traceback as _tb_mod
+    _log = Path(tempfile.gettempdir()) / "debug_analizar.log"
+
+    def _write_log(msg: str):
+        print(f"[analizar:{session_id}] {msg}", flush=True)
+        try:
+            with open(_log, "a", encoding="utf-8") as _f:
+                _f.write(msg + "\n")
+        except Exception:
+            pass
+
+    with app.test_request_context(base_url=base_url):
+        try:
+            from core.ai_analyst import (analyze, generate_report_docx,
+                                          analyze_wincam, generate_wincam_docx,
+                                          attach_wincam_diagramas)
+
+            # Copia persistente de los videos, TRANSCODIFICADOS a H.264/MP4 (ver
+            # _transcodificar_video_web): las camaras CCTV suelen grabar en codecs
+            # que ningun navegador reproduce, y de paso queda una version
+            # comprimida lista para compartir con el cliente. videos_persistidos
+            # mapea nombre_original (el que usa "_evidencia_src" del informe) ->
+            # nombre_web (el .mp4 ya transcodificado y realmente servido).
+            video_ext_persist = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
+            videos_persistidos: dict[str, str] = {}
+            video_session_dir = VIDEOS_DIR / session_id
+            for sf in saved_files:
+                if sf.suffix.lower() in video_ext_persist:
+                    video_session_dir.mkdir(parents=True, exist_ok=True)
+                    destino_web = video_session_dir / f"{sf.stem}.mp4"
+                    if _transcodificar_video_web(sf, destino_web):
+                        videos_persistidos[sf.name] = destino_web.name
+                        _write_log(f"Video transcodificado: {sf.name} -> {destino_web.name}")
+                    else:
+                        import shutil as _sh_video
+                        destino_fallback = video_session_dir / sf.name
+                        try:
+                            _sh_video.copy2(sf, destino_fallback)
+                            videos_persistidos[sf.name] = destino_fallback.name
+                            _write_log(f"Video persistido SIN transcodificar (fallback): {sf.name}")
+                        except Exception as e:
+                            _write_log(f"No se pudo persistir video {sf.name}: {e}")
+
+            # Enlace publico de solo-video, generado YA (independientemente del
+            # formato elegido) para poder incrustarlo como texto+QR en el DOCX que
+            # se genere: asi viaja siempre pegado al informe. Se guarda tambien
+            # una version minima del informe compartible (por si el formato es
+            # solo "descriptivo", sin secciones/observaciones); el bloque WinCam
+            # de mas abajo la enriquece si aplica.
+            enlace_video = None
+            if videos_persistidos:
+                try:
+                    _token_video = compartidos.crear_o_reusar(session_id)
+                    enlace_video = url_for("ver_publico", token=_token_video, _external=True)
+                    INFORMES_COMPARTIDOS_DIR.mkdir(parents=True, exist_ok=True)
+                    (INFORMES_COMPARTIDOS_DIR / f"Informe_WinCam_{session_id}.json").write_text(
+                        json.dumps({
+                            "proyecto": proyecto, "num_ref": num_ref, "cliente": cliente,
+                            "nivel_urgencia_global": None, "secciones": [], "totales": {},
+                            "videos": [
+                                {"nombre": web_name, "url": url_for("servir_video_ia", session_id=session_id, filename=web_name)}
+                                for web_name in videos_persistidos.values()
+                            ],
+                        }, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                except Exception as e:
+                    _write_log(f"No se pudo generar el enlace publico: {e}")
+
+            result = {"_formato": formato, "_session_id": session_id}
+            if enlace_video:
+                result["_enlace_video"] = enlace_video
+
+            # Formato descriptivo (o ambos)
+            if formato in ("descriptivo", "ambos"):
+                _write_log("Llamando a analyze() descriptivo...")
+                report = analyze(saved_files, tipo, context, api_key, croquis_path=croquis_path)
+                _write_log("analyze() OK")
+                result.update(report)
+                docx_name = f"{informe_stem}.docx" if informe_stem else f"Informe_IA_{session_id}.docx"
+                docx_path = SALIDAS_DIR / docx_name
+                try:
+                    generate_report_docx(report, docx_path, num_ref=num_ref, cliente=cliente,
+                                         enlace_video=enlace_video)
+                    result["_docx"] = docx_name
+                except Exception as e:
+                    result["_docx_error"] = str(e)
+                    _write_log(f"DOCX descriptivo error: {e}")
+                try:
+                    pdf_path = PdfConverter().convert(docx_path, SALIDAS_DIR)
+                    if pdf_path:
+                        result["_pdf"] = pdf_path.name
+                except Exception as e:
+                    _write_log(f"PDF descriptivo error: {e}")
+
+            # Formato WinCam (o ambos)
+            if formato in ("wincam", "ambos"):
+                _write_log("Llamando a analyze_wincam()...")
+                wc_report = analyze_wincam(saved_files, context, api_key,
+                                           proyecto=proyecto or num_ref,
+                                           calle=calle, poblacion=poblacion,
+                                           croquis_path=croquis_path)
+                _write_log("analyze_wincam() OK")
+                attach_wincam_diagramas(wc_report)
+                result["_videos"] = _marcar_timestamps_video(wc_report, session_id, videos_persistidos)
+                result["_wincam"] = wc_report
+
+                # Copia reducida del informe (solo lo necesario para el visor
+                # publico de solo-video: secciones/observaciones + videos) para
+                # poder recuperarla despues desde /ver/<token>.
+                try:
+                    informe_compartible = {
+                        "proyecto": wc_report.get("proyecto") or proyecto,
+                        "num_ref": num_ref,
+                        "cliente": cliente,
+                        "nivel_urgencia_global": wc_report.get("nivel_urgencia_global"),
+                        "secciones": wc_report.get("secciones") or [],
+                        "totales": wc_report.get("totales") or {},
+                        "videos": result.get("_videos") or [],
+                    }
+                    INFORMES_COMPARTIDOS_DIR.mkdir(parents=True, exist_ok=True)
+                    (INFORMES_COMPARTIDOS_DIR / f"Informe_WinCam_{session_id}.json").write_text(
+                        json.dumps(informe_compartible, ensure_ascii=False), encoding="utf-8"
+                    )
+                except Exception as e:
+                    _write_log(f"No se pudo guardar el informe compartible: {e}")
+
+                wc_name = f"{informe_stem} WINCAM.docx" if informe_stem else f"Informe_WinCam_{session_id}.docx"
+                wc_path = SALIDAS_DIR / wc_name
+                try:
+                    generate_wincam_docx(wc_report, wc_path, num_ref=num_ref, cliente=cliente,
+                                         enlace_video=enlace_video)
+                    result["_docx_wincam"] = wc_name
+                except Exception as e:
+                    result["_wincam_docx_error"] = str(e)
+                    _write_log(f"DOCX WinCam error: {e}")
+
+            # Si no se genero el formato WinCam (p.ej. formato="descriptivo")
+            # igualmente se listan los videos persistidos para poder revisarlos
+            # en el visor, aunque sin marcadores de observaciones (esos requieren
+            # el mapeo de fotogramas del informe WinCam).
+            if "_videos" not in result and videos_persistidos:
+                result["_videos"] = [
+                    {"nombre": web_name, "url": url_for("servir_video_ia", session_id=session_id, filename=web_name)}
+                    for web_name in videos_persistidos.values()
+                ]
+
+            # Plano tecnico del croquis aportado (DOCX + PDF). Antes el croquis solo
+            # se usaba como referencia para la IA y no producia ningun documento.
+            if croquis_path:
+                _write_log("Generando plano tecnico del croquis...")
+                try:
+                    svg, _estructura = _plano_svg_desde_archivo(
+                        croquis_path, api_key=api_key,
+                        contexto=f"{proyecto} {calle} {poblacion}".strip())
+                    titulo_plano = f"Croquis de red - {proyecto}" if proyecto else "Croquis de red"
+                    direccion_plano = ", ".join(x for x in (calle, poblacion) if x)
+                    fecha_plano = datetime.now().strftime("%d/%m/%Y")
+                    stem_plano = f"Croquis_{session_id}"
+                    png = _svg_a_png(svg)
+                    cx_docx, cx_pdf = _croquis_docx_desde_png(
+                        png, titulo=titulo_plano, num_ref=num_ref,
+                        direccion=direccion_plano, fecha_display=fecha_plano,
+                        stem=stem_plano,
+                    )
+                    result["_croquis_docx"] = cx_docx.name
+                    if cx_pdf:
+                        result["_croquis_pdf"] = cx_pdf.name
+                    result["_croquis_svg"] = svg
+                    result["_croquis_meta"] = {
+                        "titulo": titulo_plano, "num_ref": num_ref,
+                        "direccion": direccion_plano, "fecha_display": fecha_plano,
+                        "stem": stem_plano,
+                    }
+                    _write_log(f"Plano OK: {cx_docx.name} / {cx_pdf.name if cx_pdf else 'sin PDF'}")
+                except Exception as e:
+                    result["_croquis_error"] = str(e)
+                    _write_log(f"Plano croquis error: {e}")
+
+            _write_log(f"Trabajo {session_id} terminado OK")
+            with _ANALYSIS_JOBS_LOCK:
+                _ANALYSIS_JOBS[session_id] = {"status": "done", "result": result, "_ts": time.time()}
+
+        except Exception as e:
+            tb = _tb_mod.format_exc()
+            _write_log("=== EXCEPCION (segundo plano) ===\n" + tb)
+            with _ANALYSIS_JOBS_LOCK:
+                _ANALYSIS_JOBS[session_id] = {
+                    "status": "error",
+                    "error": f"{str(e)}\n\n--- TRACEBACK ---\n{tb}",
+                    "traceback": tb,
+                    "_ts": time.time(),
+                }
+
+
+@app.route("/api/analizar_status/<job_id>")
+def api_analizar_status(job_id):
+    """Sondeado por el frontend tras /api/analizar para recoger el resultado
+    del trabajo en segundo plano (ver _procesar_analisis_bg)."""
+    with _ANALYSIS_JOBS_LOCK:
+        job = _ANALYSIS_JOBS.get(job_id)
+    if not job:
+        return jsonify({"status": "not_found", "error": "Trabajo no encontrado (puede haber caducado)."}), 404
+    return jsonify(job)
 
 
 @app.route("/api/regenerar_plano_svg", methods=["POST"])

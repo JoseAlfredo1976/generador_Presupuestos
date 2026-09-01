@@ -682,15 +682,15 @@ async function startAnalysis() {
   try {
     const resp = await fetch('/api/analizar', { method:'POST', body:fd });
     const ct = resp.headers.get('content-type') || '';
-    document.getElementById('progress-wrap').style.display = 'none';
 
     if (!ct.includes('application/json')) {
       const text = await resp.text();
+      document.getElementById('progress-wrap').style.display = 'none';
       let msg = `El servidor devolvio ${resp.status} ${resp.statusText} (no JSON).`;
       if (resp.status === 413) {
         msg += '\n\nMOTIVO: los archivos subidos superan el limite (500 MB total).\nSube menos videos o comprimelos.';
       } else if (resp.status === 504 || resp.status === 502) {
-        msg += '\n\nMOTIVO: el servidor tardo demasiado o se reinicio durante el analisis.';
+        msg += '\n\nMOTIVO: la SUBIDA tardo demasiado (Railway corta la conexion a los 5 minutos de subida). Comprime los videos o sube menos a la vez.';
       }
       msg += '\n\n--- Respuesta del servidor ---\n' + text.substring(0, 800);
       showError(msg);
@@ -699,16 +699,78 @@ async function startAnalysis() {
 
     const data = await resp.json();
     if (data.error) {
+      document.getElementById('progress-wrap').style.display = 'none';
       showError(data.error, data.traceback);
-    } else {
-      currentReport = data;
-      chatHistory = [];
-      showResult(data);
-      initChat();
+      return;
     }
+
+    if (data._job_id) {
+      await pollAnalisis(data._job_id);
+      return;
+    }
+
+    // Por si el backend respondiera ya resuelto (no deberia pasar)
+    document.getElementById('progress-wrap').style.display = 'none';
+    currentReport = data;
+    chatHistory = [];
+    showResult(data);
+    initChat();
   } catch(e) {
     document.getElementById('progress-wrap').style.display = 'none';
     showError('Error de conexion: ' + e.message + '\n\n(Posibles causas: servidor caido, archivos demasiado grandes, o red interrumpida)');
+  }
+}
+
+// El analisis se procesa en segundo plano en el servidor (ver
+// _procesar_analisis_bg en app.py) para no toparse con el limite de Railway
+// de 5 minutos sin datos transferidos. Aqui se pregunta periodicamente si ya
+// termino, en vez de esperar la respuesta de una unica peticion larga.
+async function pollAnalisis(jobId) {
+  const inicio = Date.now();
+  while (true) {
+    await new Promise(r => setTimeout(r, 3000));
+    let resp;
+    try {
+      resp = await fetch('/api/analizar_status/' + encodeURIComponent(jobId));
+    } catch (e) {
+      continue; // fallo de red puntual, reintenta en el siguiente ciclo
+    }
+    if (resp.status === 404) {
+      document.getElementById('progress-wrap').style.display = 'none';
+      showError('El trabajo de analisis no se encontro (puede haber caducado tras un reinicio del servidor). Vuelve a intentarlo.');
+      return;
+    }
+    let job;
+    try { job = await resp.json(); } catch (e) { continue; }
+
+    const transcurrido = Date.now() - inicio;
+    const mins = Math.floor(transcurrido / 60000);
+    const secs = Math.floor((transcurrido % 60000) / 1000);
+    const prog = document.getElementById('progress-wrap');
+    if (prog) {
+      let info = prog.querySelector('.progress-tiempo-live');
+      if (!info) {
+        info = document.createElement('div');
+        info.className = 'progress-tiempo-live small text-muted mt-2 text-center';
+        prog.appendChild(info);
+      }
+      info.textContent = `Analizando... ${mins}m ${secs}s (con varios videos puede tardar varios minutos)`;
+    }
+
+    if (job.status === 'done') {
+      document.getElementById('progress-wrap').style.display = 'none';
+      currentReport = job.result;
+      chatHistory = [];
+      showResult(job.result);
+      initChat();
+      return;
+    }
+    if (job.status === 'error') {
+      document.getElementById('progress-wrap').style.display = 'none';
+      showError(job.error, job.traceback);
+      return;
+    }
+    // status === 'processing' -> seguir esperando
   }
 }
 
