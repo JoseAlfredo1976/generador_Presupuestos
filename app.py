@@ -602,6 +602,28 @@ def croquis():
 ALLOWED_PLANO = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".pdf"}
 
 
+def _fondo_png_desde_archivo(src: Path) -> tuple[Path, int, int]:
+    """Rasteriza el PDF/imagen ORIGINAL a PNG sin modificarlo (recorte, color,
+    contenido: identico), para usarlo como fondo exacto del croquis. Devuelve
+    (ruta_png, ancho_px, alto_px)."""
+    from PIL import Image as _PILImage
+
+    tmp = Path(tempfile.mkdtemp(prefix="plano_fondo_"))
+    png_path = tmp / "fondo.png"
+    if src.suffix.lower() == ".pdf":
+        import fitz
+        doc = fitz.open(str(src))
+        pix = doc[0].get_pixmap(dpi=200)
+        pix.save(str(png_path))
+        doc.close()
+    else:
+        with _PILImage.open(src) as im:
+            im.convert("RGB").save(png_path)
+    with _PILImage.open(png_path) as im:
+        w, h = im.size
+    return png_path, w, h
+
+
 def _plano_svg_desde_archivo(src: Path, api_key: str = "", contexto: str = "") -> tuple[str, dict]:
     """Analiza un boceto/croquis (imagen o PDF) y devuelve (svg, estructura).
 
@@ -690,71 +712,73 @@ Omite claves cuyo array este vacio. Si un campo es desconocido usa null."""
         except Exception:
             estructura = {}
 
-    desc = estructura.get("descripcion", "Red de saneamiento")[:60]
-    fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+    # Fondo: el PDF/imagen ORIGINAL, rasterizado tal cual (sin recrear el
+    # plano desde cero), para que el resultado final coincida exactamente con
+    # el plano real. Solo las anotaciones (lo dibujado a boligrafo) se
+    # regeneran en limpio, como una capa superpuesta encima de este fondo.
+    fondo_png, bg_w, bg_h = _fondo_png_desde_archivo(src)
+    fondo_b64 = base64.b64encode(fondo_png.read_bytes()).decode()
 
-    # ── PASO 2: generar SVG fiel a las coordenadas extraidas ──────────────
-    PROMPT_PASO2 = f"""Genera un plano tecnico SVG usando EXACTAMENTE estas coordenadas extraidas del boceto original:
+    # ── PASO 2: generar SOLO la capa de anotaciones en limpio ─────────────
+    PROMPT_PASO2 = f"""Genera UNICAMENTE una capa de anotaciones tecnicas en SVG, para superponer
+sobre el plano original (que se anadira por separado, no lo incluyas tu).
+Usa EXACTAMENTE estas coordenadas extraidas del boceto original:
 
 {json.dumps(estructura, ensure_ascii=False, indent=2)}{ctx_extra}
 
-ESCALA obligatoria:
-  Area util del plano: x=[30,850], y=[30,560]  (820 px ancho, 530 px alto)
-  svg_x = 30 + (campo_x / 100.0) * 820
-  svg_y = 30 + (campo_y / 100.0) * 530
+ESCALA obligatoria (el plano original ocupa el lienzo completo, sin margenes):
+  svg_x = (campo_x / 100.0) * {bg_w}
+  svg_y = (campo_y / 100.0) * {bg_h}
   Aplica esta formula a TODOS los campos x, y, x1, y1, x2, y2.
 
 ESPECIFICACION SVG:
-viewBox="0 0 900 660" width="900" height="660"
-<rect width="900" height="660" fill="#ffffff"/>
+viewBox="0 0 {bg_w} {bg_h}" width="{bg_w}" height="{bg_h}"
+NO incluyas ningun <rect> de fondo ni nada opaco a pantalla completa: esta
+capa debe quedar TRANSPARENTE salvo los trazos y textos que dibujes, porque
+se vera el plano original a traves de ella.
+
+Usa el color azul tecnico #1F4E79 para TODOS los trazos, iconos y textos de
+esta capa (para que se distingan claramente del plano original en blanco y
+negro). Escala el grosor de trazo y el tamano de fuente de forma proporcional
+al tamano del lienzo (referencia: stroke-width 2-3 y font-size equivalente a
+min({bg_w},{bg_h})/55 en un plano tipico).
 
 <defs>
   <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-    <path d="M0,0 L8,3 L0,6 Z" fill="#1a2a3a"/>
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1F4E79"/>
   </marker>
 </defs>
 
-TUBERIAS: <line x1="..." y1="..." x2="..." y2="..." stroke="#1a2a3a" stroke-width="2.5" marker-end="url(#arr)"/>
-  Etiqueta DN junto a punto medio de la linea, font-size="10" fill="#1a2a3a"
+TUBERIAS: <line x1="..." y1="..." x2="..." y2="..." stroke="#1F4E79" stroke-width="..." marker-end="url(#arr)"/>
+  Etiqueta DN junto a punto medio de la linea, fill="#1F4E79"
   Si flecha=false omite marker-end
 
 POZOS: <g transform="translate(svg_x,svg_y)">
-  <circle r="12" fill="white" stroke="#1a2a3a" stroke-width="2"/>
-  <circle r="4" fill="#555"/>
-  <text text-anchor="middle" dy="-18" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
+  <circle r="..." fill="none" stroke="#1F4E79" stroke-width="2"/>
+  <circle r="..." fill="#1F4E79"/>
+  <text text-anchor="middle" dy="-..." font-family="Arial" fill="#1F4E79">id</text>
 </g>
 
 BAJANTES: <g transform="translate(svg_x,svg_y)">
-  <rect x="-8" y="-8" width="16" height="16" fill="white" stroke="#1a2a3a" stroke-width="2"/>
-  <line x1="-6" y1="-6" x2="6" y2="6" stroke="#1a2a3a" stroke-width="1.5"/>
-  <line x1="6" y1="-6" x2="-6" y2="6" stroke="#1a2a3a" stroke-width="1.5"/>
-  <text text-anchor="middle" dy="-14" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
+  <rect fill="none" stroke="#1F4E79" stroke-width="2"/>
+  <line ... stroke="#1F4E79" stroke-width="1.5"/>
+  <line ... stroke="#1F4E79" stroke-width="1.5"/>
+  <text text-anchor="middle" font-family="Arial" fill="#1F4E79">id</text>
 </g>
 
 ARQUETAS: <g transform="translate(svg_x,svg_y)">
-  <rect x="-10" y="-10" width="20" height="20" fill="white" stroke="#1a2a3a" stroke-width="2"/>
-  <text text-anchor="middle" dy="-16" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
+  <rect fill="none" stroke="#1F4E79" stroke-width="2"/>
+  <text text-anchor="middle" font-family="Arial" fill="#1F4E79">id</text>
 </g>
 
-ETIQUETAS: <text x="svg_x" y="svg_y" font-family="Arial" font-size="11" fill="#333">texto</text>
+ETIQUETAS: <text x="svg_x" y="svg_y" font-family="Arial" fill="#1F4E79">texto</text>
 
-COTAS: <line x1="..." y1="..." x2="..." y2="..." stroke="#aaa" stroke-width="0.8"/>
-  + marcas perpendiculares en extremos (4px) + <text font-size="9" fill="#666">valor</text>
+COTAS: <line x1="..." y1="..." x2="..." y2="..." stroke="#1F4E79" stroke-width="0.8"/>
+  + marcas perpendiculares en extremos + <text font-family="Arial" fill="#1F4E79">valor</text>
 
-CAJETIN (x=688, y=555, 200x92):
-<rect x="688" y="555" width="200" height="92" fill="white" stroke="#1a2a3a" stroke-width="1.5"/>
-<line x1="688" y1="580" x2="888" y2="580" stroke="#1a2a3a" stroke-width="0.8"/>
-<line x1="688" y1="600" x2="888" y2="600" stroke="#1a2a3a" stroke-width="0.8"/>
-<line x1="688" y1="622" x2="888" y2="622" stroke="#1a2a3a" stroke-width="0.8"/>
-<text x="788" y="572" text-anchor="middle" font-family="Arial" font-size="9" font-weight="bold" fill="#1a2a3a">RED DE SANEAMIENTO</text>
-<text x="788" y="592" text-anchor="middle" font-family="Arial" font-size="8" fill="#333">{desc}</text>
-<text x="700" y="613" font-family="Arial" font-size="8" fill="#555">Fecha: {fecha_hoy}</text>
-<text x="820" y="613" font-family="Arial" font-size="8" fill="#555">Esc: S/E</text>
-<text x="788" y="638" text-anchor="middle" font-family="Arial" font-size="8" fill="#555">Acometidas Europa S.L.</text>
-
-LEYENDA (x=12, y=555, 160x92): muestra solo simbolos presentes en el plano generado.
-
-DEVUELVE UNICAMENTE el SVG. Empieza con <svg y termina con </svg>. Sin markdown."""
+DEVUELVE UNICAMENTE el SVG de esta capa de anotaciones (sin el plano de
+fondo, sin cajetin, sin leyenda: eso ya se muestra por separado). Empieza
+con <svg y termina con </svg>. Sin markdown."""
 
     resp2 = _api_create(
         client,
@@ -771,7 +795,19 @@ DEVUELVE UNICAMENTE el SVG. Empieza con <svg y termina con </svg>. Sin markdown.
     if not svg_match:
         raise ValueError("La IA no genero un SVG valido.")
 
-    return svg_match.group(0), estructura
+    overlay_svg = svg_match.group(0)
+
+    # Inserta el plano original como primer elemento del SVG (justo tras la
+    # etiqueta <svg ...> de apertura), para que quede DEBAJO de la capa de
+    # anotaciones. Asi el SVG resultante sigue siendo uno solo: se rasteriza
+    # igual que antes (_svg_a_png) y se puede seguir editando en el editor
+    # interactivo del navegador.
+    fondo_tag = (f'<image x="0" y="0" width="{bg_w}" height="{bg_h}" '
+                 f'href="data:image/png;base64,{fondo_b64}"/>')
+    insert_pos = overlay_svg.index(">") + 1
+    svg_final = overlay_svg[:insert_pos] + fondo_tag + overlay_svg[insert_pos:]
+
+    return svg_final, estructura
 
 
 def _svg_a_png(svg_text: str, dpi: int = 170) -> Path:
