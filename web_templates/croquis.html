@@ -217,6 +217,13 @@ input[type=number].tb-num {
       <i class="bi bi-info-circle me-2"></i>
       Los PDFs y escaneos OCR no se pueden editar directamente. Pulsa <strong>"Generar plano con IA"</strong> para que la IA analice el documento y genere un plano tecnico limpio.
     </div>
+    <div class="form-check mt-2 mb-1">
+      <input class="form-check-input" type="checkbox" id="chk-conservar-fondo-pdf">
+      <label class="form-check-label small" for="chk-conservar-fondo-pdf">
+        Es un plano/foto real con anotaciones a boligrafo encima: conservar el plano original tal cual de fondo y solo redibujar en limpio las anotaciones
+        <span class="text-muted">(sin marcar: se regenera el plano completo desde cero, para bocetos a mano alzada)</span>
+      </label>
+    </div>
     <button class="btn btn-analyze mt-1" onclick="generarPlanoIA()"
       style="background:linear-gradient(135deg,#4F84B5,#3a6a96)">
       <i class="bi bi-stars me-2"></i>Generar plano con IA desde este documento
@@ -289,6 +296,12 @@ input[type=number].tb-num {
 
       <!-- Generar plano IA -->
       <div class="tb-sep"></div>
+      <div class="form-check d-inline-flex align-items-center me-2" style="font-size:.78rem">
+        <input class="form-check-input" type="checkbox" id="chk-conservar-fondo-img" style="margin-top:0">
+        <label class="form-check-label ms-1" for="chk-conservar-fondo-img" title="Conserva la foto/plano original de fondo y solo redibuja en limpio las anotaciones a boligrafo, en vez de regenerar el plano completo desde cero">
+          Conservar fondo original
+        </label>
+      </div>
       <button class="tb-btn" id="btn-ia-plano" onclick="generarPlanoIA()"
         style="background:linear-gradient(135deg,#4F84B5,#3a6a96);color:white;border-color:#3a6a96;font-weight:600"
         title="Generar plano tecnico limpio con IA">
@@ -934,6 +947,8 @@ async function generarPlanoIA() {
   document.getElementById('plano-ia-modo').style.display    = 'none';
 
   const ctx_txt = document.getElementById('plano-ia-ctx')?.value.trim() || '';
+  const conservarFondo = !!(document.getElementById('chk-conservar-fondo-pdf')?.checked
+                          || document.getElementById('chk-conservar-fondo-img')?.checked);
 
   const _doRequest = async blob => {
     const fd = new FormData();
@@ -943,6 +958,7 @@ async function generarPlanoIA() {
       fd.append('imagen', blob, 'boceto.jpg');      // canvas exportado
     }
     if (ctx_txt) fd.append('contexto', ctx_txt);
+    if (conservarFondo) fd.append('conservar_fondo', '1');
     {% if not api_key_set %}
     fd.append('api_key', document.getElementById('f-apikey-plano').value.trim());
     {% endif %}

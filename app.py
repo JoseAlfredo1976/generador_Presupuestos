@@ -624,8 +624,18 @@ def _fondo_png_desde_archivo(src: Path) -> tuple[Path, int, int]:
     return png_path, w, h
 
 
-def _plano_svg_desde_archivo(src: Path, api_key: str = "", contexto: str = "") -> tuple[str, dict]:
+def _plano_svg_desde_archivo(src: Path, api_key: str = "", contexto: str = "",
+                              conservar_fondo: bool = False) -> tuple[str, dict]:
     """Analiza un boceto/croquis (imagen o PDF) y devuelve (svg, estructura).
+
+    Dos escenarios distintos, seleccionados por `conservar_fondo`:
+    - False (boceto a mano alzada, sin plano real detras): se REGENERA el
+      plano tecnico completo desde cero con IA, prestando atencion a las
+      coordenadas/vectores extraidos para que se parezca al dibujo original.
+    - True (el usuario aporta un plano/foto real, con anotaciones a
+      boligrafo encima): el plano original se conserva EXACTO como fondo
+      (_fondo_png_desde_archivo) y la IA solo regenera en limpio la capa de
+      anotaciones (lo dibujado a mano), superpuesta encima.
 
     Extraido de la vista /api/generar_plano_ia para poder reutilizarlo desde el
     analizador CCTV, que genera el plano tecnico cuando se aporta un croquis.
@@ -712,15 +722,14 @@ Omite claves cuyo array este vacio. Si un campo es desconocido usa null."""
         except Exception:
             estructura = {}
 
-    # Fondo: el PDF/imagen ORIGINAL, rasterizado tal cual (sin recrear el
-    # plano desde cero), para que el resultado final coincida exactamente con
-    # el plano real. Solo las anotaciones (lo dibujado a boligrafo) se
-    # regeneran en limpio, como una capa superpuesta encima de este fondo.
-    fondo_png, bg_w, bg_h = _fondo_png_desde_archivo(src)
-    fondo_b64 = base64.b64encode(fondo_png.read_bytes()).decode()
+    if conservar_fondo:
+        # ESCENARIO 2: plano/foto real con anotaciones a boligrafo encima.
+        # El original se conserva EXACTO como fondo; la IA solo regenera en
+        # limpio la capa de anotaciones, superpuesta.
+        fondo_png, bg_w, bg_h = _fondo_png_desde_archivo(src)
+        fondo_b64 = base64.b64encode(fondo_png.read_bytes()).decode()
 
-    # ── PASO 2: generar SOLO la capa de anotaciones en limpio ─────────────
-    PROMPT_PASO2 = f"""Genera UNICAMENTE una capa de anotaciones tecnicas en SVG, para superponer
+        PROMPT_PASO2 = f"""Genera UNICAMENTE una capa de anotaciones tecnicas en SVG, para superponer
 sobre el plano original (que se anadira por separado, no lo incluyas tu).
 Usa EXACTAMENTE estas coordenadas extraidas del boceto original:
 
@@ -780,6 +789,103 @@ DEVUELVE UNICAMENTE el SVG de esta capa de anotaciones (sin el plano de
 fondo, sin cajetin, sin leyenda: eso ya se muestra por separado). Empieza
 con <svg y termina con </svg>. Sin markdown."""
 
+        resp2 = _api_create(
+            client,
+            model="claude-sonnet-4-6",
+            max_tokens=16000,
+            messages=[{
+                "role": "user",
+                "content": [content_block, {"type": "text", "text": PROMPT_PASO2}],
+            }],
+        )
+
+        raw = resp2.content[0].text.strip()
+        svg_match = re.search(r"<svg[\s\S]*?</svg>", raw, re.IGNORECASE)
+        if not svg_match:
+            raise ValueError("La IA no genero un SVG valido.")
+
+        overlay_svg = svg_match.group(0)
+
+        # Inserta el plano original como primer elemento del SVG (justo tras
+        # la etiqueta <svg ...> de apertura), para que quede DEBAJO de la
+        # capa de anotaciones. Asi el SVG resultante sigue siendo uno solo:
+        # se rasteriza igual que siempre (_svg_a_png) y se puede seguir
+        # editando en el editor interactivo del navegador.
+        fondo_tag = (f'<image x="0" y="0" width="{bg_w}" height="{bg_h}" '
+                     f'href="data:image/png;base64,{fondo_b64}"/>')
+        insert_pos = overlay_svg.index(">") + 1
+        svg_final = overlay_svg[:insert_pos] + fondo_tag + overlay_svg[insert_pos:]
+        return svg_final, estructura
+
+    # ESCENARIO 1 (por defecto): boceto a mano alzada, sin plano real detras.
+    # Se regenera el plano tecnico COMPLETO desde cero con IA, prestando
+    # atencion a las coordenadas/vectores extraidos para que el resultado se
+    # parezca lo maximo posible al dibujo original.
+    desc = estructura.get("descripcion", "Red de saneamiento")[:60]
+    fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+
+    PROMPT_PASO2 = f"""Genera un plano tecnico SVG usando EXACTAMENTE estas coordenadas extraidas del boceto original:
+
+{json.dumps(estructura, ensure_ascii=False, indent=2)}{ctx_extra}
+
+ESCALA obligatoria:
+  Area util del plano: x=[30,850], y=[30,560]  (820 px ancho, 530 px alto)
+  svg_x = 30 + (campo_x / 100.0) * 820
+  svg_y = 30 + (campo_y / 100.0) * 530
+  Aplica esta formula a TODOS los campos x, y, x1, y1, x2, y2.
+
+ESPECIFICACION SVG:
+viewBox="0 0 900 660" width="900" height="660"
+<rect width="900" height="660" fill="#ffffff"/>
+
+<defs>
+  <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a2a3a"/>
+  </marker>
+</defs>
+
+TUBERIAS: <line x1="..." y1="..." x2="..." y2="..." stroke="#1a2a3a" stroke-width="2.5" marker-end="url(#arr)"/>
+  Etiqueta DN junto a punto medio de la linea, font-size="10" fill="#1a2a3a"
+  Si flecha=false omite marker-end
+
+POZOS: <g transform="translate(svg_x,svg_y)">
+  <circle r="12" fill="white" stroke="#1a2a3a" stroke-width="2"/>
+  <circle r="4" fill="#555"/>
+  <text text-anchor="middle" dy="-18" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
+</g>
+
+BAJANTES: <g transform="translate(svg_x,svg_y)">
+  <rect x="-8" y="-8" width="16" height="16" fill="white" stroke="#1a2a3a" stroke-width="2"/>
+  <line x1="-6" y1="-6" x2="6" y2="6" stroke="#1a2a3a" stroke-width="1.5"/>
+  <line x1="6" y1="-6" x2="-6" y2="6" stroke="#1a2a3a" stroke-width="1.5"/>
+  <text text-anchor="middle" dy="-14" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
+</g>
+
+ARQUETAS: <g transform="translate(svg_x,svg_y)">
+  <rect x="-10" y="-10" width="20" height="20" fill="white" stroke="#1a2a3a" stroke-width="2"/>
+  <text text-anchor="middle" dy="-16" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
+</g>
+
+ETIQUETAS: <text x="svg_x" y="svg_y" font-family="Arial" font-size="11" fill="#333">texto</text>
+
+COTAS: <line x1="..." y1="..." x2="..." y2="..." stroke="#aaa" stroke-width="0.8"/>
+  + marcas perpendiculares en extremos (4px) + <text font-size="9" fill="#666">valor</text>
+
+CAJETIN (x=688, y=555, 200x92):
+<rect x="688" y="555" width="200" height="92" fill="white" stroke="#1a2a3a" stroke-width="1.5"/>
+<line x1="688" y1="580" x2="888" y2="580" stroke="#1a2a3a" stroke-width="0.8"/>
+<line x1="688" y1="600" x2="888" y2="600" stroke="#1a2a3a" stroke-width="0.8"/>
+<line x1="688" y1="622" x2="888" y2="622" stroke="#1a2a3a" stroke-width="0.8"/>
+<text x="788" y="572" text-anchor="middle" font-family="Arial" font-size="9" font-weight="bold" fill="#1a2a3a">RED DE SANEAMIENTO</text>
+<text x="788" y="592" text-anchor="middle" font-family="Arial" font-size="8" fill="#333">{desc}</text>
+<text x="700" y="613" font-family="Arial" font-size="8" fill="#555">Fecha: {fecha_hoy}</text>
+<text x="820" y="613" font-family="Arial" font-size="8" fill="#555">Esc: S/E</text>
+<text x="788" y="638" text-anchor="middle" font-family="Arial" font-size="8" fill="#555">Acometidas Europa S.L.</text>
+
+LEYENDA (x=12, y=555, 160x92): muestra solo simbolos presentes en el plano generado.
+
+DEVUELVE UNICAMENTE el SVG. Empieza con <svg y termina con </svg>. Sin markdown."""
+
     resp2 = _api_create(
         client,
         model="claude-sonnet-4-6",
@@ -795,19 +901,7 @@ con <svg y termina con </svg>. Sin markdown."""
     if not svg_match:
         raise ValueError("La IA no genero un SVG valido.")
 
-    overlay_svg = svg_match.group(0)
-
-    # Inserta el plano original como primer elemento del SVG (justo tras la
-    # etiqueta <svg ...> de apertura), para que quede DEBAJO de la capa de
-    # anotaciones. Asi el SVG resultante sigue siendo uno solo: se rasteriza
-    # igual que antes (_svg_a_png) y se puede seguir editando en el editor
-    # interactivo del navegador.
-    fondo_tag = (f'<image x="0" y="0" width="{bg_w}" height="{bg_h}" '
-                 f'href="data:image/png;base64,{fondo_b64}"/>')
-    insert_pos = overlay_svg.index(">") + 1
-    svg_final = overlay_svg[:insert_pos] + fondo_tag + overlay_svg[insert_pos:]
-
-    return svg_final, estructura
+    return svg_match.group(0), estructura
 
 
 def _svg_a_png(svg_text: str, dpi: int = 170) -> Path:
@@ -945,6 +1039,7 @@ def api_generar_plano_ia():
             dest,
             api_key=request.form.get("api_key", ""),
             contexto=request.form.get("contexto", ""),
+            conservar_fondo=request.form.get("conservar_fondo", "0") == "1",
         )
         return jsonify({"svg": svg, "estructura": estructura})
     except ValueError as e:
@@ -1274,6 +1369,7 @@ def api_analizar():
                 tipo=tipo, formato=formato, context=context, api_key=api_key,
                 num_ref=num_ref, cliente=cliente, proyecto=proyecto, calle=calle,
                 poblacion=poblacion, informe_stem=_informe_stem, base_url=request.url_root,
+                croquis_conservar_fondo=request.form.get("croquis_conservar_fondo", "0") == "1",
             ),
             daemon=True,
         ).start()
@@ -1288,7 +1384,7 @@ def api_analizar():
 
 def _procesar_analisis_bg(session_id, saved_files, croquis_path, tipo, formato, context,
                            api_key, num_ref, cliente, proyecto, calle, poblacion,
-                           informe_stem, base_url):
+                           informe_stem, base_url, croquis_conservar_fondo=False):
     """Trabajo pesado de /api/analizar (transcodificar videos, llamar a Claude,
     generar DOCX/PDF/croquis), ejecutado en un hilo aparte para no bloquear la
     respuesta HTTP: el proxy de Railway corta la conexion si el servidor no
@@ -1449,7 +1545,8 @@ def _procesar_analisis_bg(session_id, saved_files, croquis_path, tipo, formato, 
                 try:
                     svg, _estructura = _plano_svg_desde_archivo(
                         croquis_path, api_key=api_key,
-                        contexto=f"{proyecto} {calle} {poblacion}".strip())
+                        contexto=f"{proyecto} {calle} {poblacion}".strip(),
+                        conservar_fondo=croquis_conservar_fondo)
                     titulo_plano = f"Croquis de red - {proyecto}" if proyecto else "Croquis de red"
                     direccion_plano = ", ".join(x for x in (calle, poblacion) if x)
                     fecha_plano = datetime.now().strftime("%d/%m/%Y")
