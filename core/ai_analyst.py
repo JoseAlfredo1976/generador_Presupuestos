@@ -300,11 +300,29 @@ REPORT_SCHEMA = """{
 # ---------------------------------------------------------------------------
 
 def _encode_image(path: Path) -> tuple[str, str]:
+    # La API de Claude exige, en peticiones con muchas imagenes (como el
+    # analisis CCTV, que puede llevar hasta MAX_IMGS_IA), que ninguna imagen
+    # supere 2000px en su dimension mayor (error 400 "exceed max allowed size
+    # for many-image requests"). Las fotos subidas directamente (movil, camara)
+    # suelen venir mucho mas grandes que eso, a diferencia de los fotogramas de
+    # video que ya se reescalan al extraerlos con ffmpeg. Se reescalan aqui a
+    # un maximo seguro y se recodifican a JPEG.
     media_types = {
         ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
     }
     mt = media_types.get(path.suffix.lower(), "image/jpeg")
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            if max(im.size) > 1568:
+                im = im.convert("RGB")
+                im.thumbnail((1568, 1568), Image.LANCZOS)
+                buf = io.BytesIO()
+                im.save(buf, format="JPEG", quality=88)
+                return base64.standard_b64encode(buf.getvalue()).decode("utf-8"), "image/jpeg"
+    except Exception:
+        pass
     data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
     return data, mt
 
