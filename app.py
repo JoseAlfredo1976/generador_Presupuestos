@@ -46,6 +46,11 @@ UPLOADS_DIR = Path(tempfile.gettempdir()) / "acometidas_uploads_ia"
 # redeploys; si no se monta ningun volumen aqui, se perderan igual que ya le
 # pasa hoy a SALIDAS_DIR/UPLOADS_DIR en cada reinicio.
 VIDEOS_DIR = BASE_DIR / "config" / "videos_ia"
+# Igual que VIDEOS_DIR: el JSON que necesita /ver/<token> para renderizar el
+# informe debe sobrevivir a los redeploys tanto como el propio video y el
+# token (este ultimo ya vive en config/enlaces.db), o el enlace del cliente
+# se rompe (404) en el primer reinicio del contenedor aunque el video siga ahi.
+INFORMES_COMPARTIDOS_DIR = BASE_DIR / "config" / "informes_compartidos"
 TARIFAS_FILE = TARIFAS_DIR / "TARIFAS.xlsx"
 
 SALIDAS_DIR.mkdir(exist_ok=True)
@@ -1240,7 +1245,8 @@ def api_analizar():
             try:
                 _token_video = compartidos.crear_o_reusar(session_id)
                 enlace_video = url_for("ver_publico", token=_token_video, _external=True)
-                (SALIDAS_DIR / f"Informe_WinCam_{session_id}.json").write_text(
+                INFORMES_COMPARTIDOS_DIR.mkdir(parents=True, exist_ok=True)
+                (INFORMES_COMPARTIDOS_DIR / f"Informe_WinCam_{session_id}.json").write_text(
                     json.dumps({
                         "proyecto": proyecto, "num_ref": num_ref, "cliente": cliente,
                         "nivel_urgencia_global": None, "secciones": [], "totales": {},
@@ -1305,7 +1311,8 @@ def api_analizar():
                     "totales": wc_report.get("totales") or {},
                     "videos": result.get("_videos") or [],
                 }
-                (SALIDAS_DIR / f"Informe_WinCam_{session_id}.json").write_text(
+                INFORMES_COMPARTIDOS_DIR.mkdir(parents=True, exist_ok=True)
+                (INFORMES_COMPARTIDOS_DIR / f"Informe_WinCam_{session_id}.json").write_text(
                     json.dumps(informe_compartible, ensure_ascii=False), encoding="utf-8"
                 )
             except Exception as e:
@@ -2685,7 +2692,7 @@ def api_compartir_informe():
     session_id = (data.get("session_id") or "").strip()
     if not session_id or "/" in session_id or ".." in session_id:
         return jsonify({"error": "session_id invalido."}), 400
-    informe_path = SALIDAS_DIR / f"Informe_WinCam_{session_id}.json"
+    informe_path = INFORMES_COMPARTIDOS_DIR / f"Informe_WinCam_{session_id}.json"
     if not informe_path.exists():
         return jsonify({"error": "No se encontro ese informe."}), 404
     token = compartidos.crear_o_reusar(session_id)
@@ -2698,7 +2705,7 @@ def ver_publico(token):
     session_id = compartidos.resolver(token)
     if not session_id:
         abort(404)
-    informe_path = SALIDAS_DIR / f"Informe_WinCam_{session_id}.json"
+    informe_path = INFORMES_COMPARTIDOS_DIR / f"Informe_WinCam_{session_id}.json"
     if not informe_path.exists():
         abort(404)
     try:
