@@ -953,6 +953,19 @@ function showResult(r) {
         <button class="btn btn-sm btn-outline-dark" id="btn-plano-edit" onclick="togglePlanoEdit()">
           <i class="bi bi-cursor me-1"></i>Editar elementos
         </button>
+        <button class="btn btn-sm btn-outline-dark" onclick="planoAddText()">
+          <i class="bi bi-fonts me-1"></i>Anadir texto
+        </button>
+        <button class="btn btn-sm btn-outline-dark" id="btn-plano-add-flecha" onclick="togglePlanoAddFlecha()">
+          <i class="bi bi-arrow-up-right me-1"></i>Anadir flecha
+        </button>
+        <button class="btn btn-sm btn-outline-danger" id="btn-plano-borrar-fondo" onclick="togglePlanoBorrarFondo()">
+          <i class="bi bi-eraser me-1"></i>Borrar zonas del fondo
+        </button>
+        <span id="plano-borrar-fondo-grosor-wrap" class="d-inline-flex align-items-center gap-1" style="display:none!important;font-size:.78rem">
+          <label class="mb-0 text-muted">Grosor</label>
+          <input type="range" id="plano-borrar-fondo-grosor" min="5" max="60" value="20" style="width:80px">
+        </span>
         <button class="btn btn-sm btn-success" onclick="regenerarPlanoDesdeEdicion(this)">
           <i class="bi bi-arrow-repeat me-1"></i>Guardar cambios y regenerar Word/PDF
         </button>
@@ -1375,6 +1388,8 @@ function _planoKey(e) {
 }
 
 function togglePlanoEdit() {
+  if (!planoEditMode && borrandoFondoPlano) togglePlanoBorrarFondo();
+  if (!planoEditMode && dibujandoFlechaPlano) togglePlanoAddFlecha();
   planoEditMode = !planoEditMode;
   const btn = document.getElementById('btn-plano-edit');
   if (planoEditMode) {
@@ -1447,6 +1462,185 @@ function planoDuplicate() {
   svg.appendChild(clone);
   clone.dataset.planoEl = '1';
   _planoSelect(clone);
+}
+
+// Anade un <text> nuevo, centrado en el plano, listo para arrastrarlo a su sitio.
+function planoAddText() {
+  const svg = _getPlanoSvg();
+  if (!svg) { alert('No hay plano generado.'); return; }
+  const texto = prompt('Texto a anadir:', '');
+  if (!texto) return;
+  if (!planoEditMode) togglePlanoEdit();
+
+  let vb = null;
+  try { const b = svg.viewBox.baseVal; if (b && b.width) vb = b; } catch (e) {}
+  if (!vb) vb = { x: 0, y: 0, width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  el.setAttribute('x', vb.x + vb.width / 2);
+  el.setAttribute('y', vb.y + vb.height / 2);
+  el.setAttribute('font-family', 'Arial');
+  el.setAttribute('font-size', Math.max(12, Math.min(vb.width, vb.height) / 45));
+  el.setAttribute('fill', '#1F4E79');
+  el.setAttribute('text-anchor', 'middle');
+  el.textContent = texto;
+  svg.appendChild(el);
+  el.dataset.planoEl = '1';
+  el.style.cursor = 'move';
+  _planoSelect(el);
+}
+
+// Anadir flecha: arrastra desde el punto de inicio hasta el punto final.
+let dibujandoFlechaPlano = false;
+let flechaPlanoEl = null;
+
+function _asegurarMarkerFlechaPlano(svg) {
+  if (svg.querySelector('marker#arr')) return;
+  let defs = svg.querySelector('defs');
+  if (!defs) {
+    defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    svg.insertBefore(defs, svg.firstChild);
+  }
+  defs.insertAdjacentHTML('beforeend',
+    '<marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
+    '<path d="M0,0 L8,3 L0,6 Z" fill="#1F4E79"/></marker>');
+}
+
+function togglePlanoAddFlecha() {
+  const svg = _getPlanoSvg();
+  if (!svg) { alert('No hay plano generado.'); return; }
+  dibujandoFlechaPlano = !dibujandoFlechaPlano;
+  const btn = document.getElementById('btn-plano-add-flecha');
+  if (dibujandoFlechaPlano) {
+    if (planoEditMode) togglePlanoEdit();
+    if (borrandoFondoPlano) togglePlanoBorrarFondo();
+    _asegurarMarkerFlechaPlano(svg);
+    btn.classList.add('btn-primary');
+    btn.classList.remove('btn-outline-dark');
+    btn.innerHTML = '<i class="bi bi-arrow-up-right me-1"></i>Arrastra para dibujar (clic aqui para salir)';
+    svg.style.cursor = 'crosshair';
+    svg.addEventListener('mousedown', _flechaPlanoMD);
+    svg.addEventListener('mousemove', _flechaPlanoMV);
+    window.addEventListener('mouseup', _flechaPlanoMU);
+  } else {
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-outline-dark');
+    btn.innerHTML = '<i class="bi bi-arrow-up-right me-1"></i>Anadir flecha';
+    svg.style.cursor = '';
+    svg.removeEventListener('mousedown', _flechaPlanoMD);
+    svg.removeEventListener('mousemove', _flechaPlanoMV);
+    window.removeEventListener('mouseup', _flechaPlanoMU);
+  }
+}
+
+function _flechaPlanoMD(e) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const svg = _getPlanoSvg();
+  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  let vb = null;
+  try { const b = svg.viewBox.baseVal; if (b && b.width) vb = b; } catch (err) {}
+  if (!vb) vb = { width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+
+  flechaPlanoEl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  flechaPlanoEl.setAttribute('x1', sp.x.toFixed(1));
+  flechaPlanoEl.setAttribute('y1', sp.y.toFixed(1));
+  flechaPlanoEl.setAttribute('x2', sp.x.toFixed(1));
+  flechaPlanoEl.setAttribute('y2', sp.y.toFixed(1));
+  flechaPlanoEl.setAttribute('stroke', '#1F4E79');
+  flechaPlanoEl.setAttribute('stroke-width', Math.max(2, Math.min(vb.width, vb.height) / 220));
+  flechaPlanoEl.setAttribute('marker-end', 'url(#arr)');
+  svg.appendChild(flechaPlanoEl);
+}
+
+function _flechaPlanoMV(e) {
+  if (!flechaPlanoEl) return;
+  e.preventDefault();
+  const svg = _getPlanoSvg();
+  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  flechaPlanoEl.setAttribute('x2', sp.x.toFixed(1));
+  flechaPlanoEl.setAttribute('y2', sp.y.toFixed(1));
+}
+
+function _flechaPlanoMU() {
+  if (!flechaPlanoEl) return;
+  const x1 = parseFloat(flechaPlanoEl.getAttribute('x1')), y1 = parseFloat(flechaPlanoEl.getAttribute('y1'));
+  const x2 = parseFloat(flechaPlanoEl.getAttribute('x2')), y2 = parseFloat(flechaPlanoEl.getAttribute('y2'));
+  if (Math.hypot(x2 - x1, y2 - y1) < 3) {
+    flechaPlanoEl.remove();
+  } else {
+    flechaPlanoEl.dataset.planoEl = '1';
+    flechaPlanoEl.style.cursor = 'move';
+  }
+  flechaPlanoEl = null;
+}
+
+// Pincel manual para blanquear zonas concretas del fondo (plano/foto original).
+let borrandoFondoPlano = false;
+let borrarFondoPlanoPath = null;
+
+function togglePlanoBorrarFondo() {
+  const svg = _getPlanoSvg();
+  if (!svg) { alert('No hay plano generado.'); return; }
+  borrandoFondoPlano = !borrandoFondoPlano;
+  const btn = document.getElementById('btn-plano-borrar-fondo');
+  const grosorWrap = document.getElementById('plano-borrar-fondo-grosor-wrap');
+  if (borrandoFondoPlano) {
+    if (planoEditMode) togglePlanoEdit();
+    if (dibujandoFlechaPlano) togglePlanoAddFlecha();
+    btn.classList.add('btn-danger');
+    btn.classList.remove('btn-outline-danger');
+    btn.innerHTML = '<i class="bi bi-eraser-fill me-1"></i>Borrando... (clic aqui para salir)';
+    grosorWrap.style.setProperty('display', 'inline-flex', 'important');
+    svg.style.cursor = 'crosshair';
+    svg.addEventListener('mousedown', _borrarFondoPlanoMD);
+    svg.addEventListener('mousemove', _borrarFondoPlanoMV);
+    window.addEventListener('mouseup', _borrarFondoPlanoMU);
+  } else {
+    btn.classList.remove('btn-danger');
+    btn.classList.add('btn-outline-danger');
+    btn.innerHTML = '<i class="bi bi-eraser me-1"></i>Borrar zonas del fondo';
+    grosorWrap.style.setProperty('display', 'none', 'important');
+    svg.style.cursor = '';
+    svg.removeEventListener('mousedown', _borrarFondoPlanoMD);
+    svg.removeEventListener('mousemove', _borrarFondoPlanoMV);
+    window.removeEventListener('mouseup', _borrarFondoPlanoMU);
+  }
+}
+
+function _borrarFondoPlanoMD(e) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const svg = _getPlanoSvg();
+  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  const grosor = document.getElementById('plano-borrar-fondo-grosor').value;
+  borrarFondoPlanoPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  borrarFondoPlanoPath.setAttribute('d', `M ${sp.x.toFixed(1)} ${sp.y.toFixed(1)}`);
+  borrarFondoPlanoPath.setAttribute('stroke', '#ffffff');
+  borrarFondoPlanoPath.setAttribute('stroke-width', grosor);
+  borrarFondoPlanoPath.setAttribute('fill', 'none');
+  borrarFondoPlanoPath.setAttribute('stroke-linecap', 'round');
+  borrarFondoPlanoPath.setAttribute('stroke-linejoin', 'round');
+  const fondoImg = svg.querySelector('image');
+  if (fondoImg && fondoImg.nextSibling) {
+    svg.insertBefore(borrarFondoPlanoPath, fondoImg.nextSibling);
+  } else {
+    svg.appendChild(borrarFondoPlanoPath);
+  }
+  borrarFondoPlanoPath.dataset.planoEl = '1';
+}
+
+function _borrarFondoPlanoMV(e) {
+  if (!borrarFondoPlanoPath) return;
+  e.preventDefault();
+  const svg = _getPlanoSvg();
+  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  borrarFondoPlanoPath.setAttribute('d',
+    borrarFondoPlanoPath.getAttribute('d') + ` L ${sp.x.toFixed(1)} ${sp.y.toFixed(1)}`);
+}
+
+function _borrarFondoPlanoMU() {
+  borrarFondoPlanoPath = null;
 }
 
 async function regenerarPlanoDesdeEdicion(btn) {
