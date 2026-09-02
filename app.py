@@ -652,6 +652,24 @@ def _quitar_tinta_azul(png_path: Path, tolerancia: float = 1.15, minimo_azul: in
     _PILImage.fromarray(arr.astype("uint8"), "RGB").save(png_path)
 
 
+def _quitar_rect_fondo_indeseado(svg_text: str, bg_w: float, bg_h: float) -> str:
+    """Quita cualquier <rect> que cubra casi todo el lienzo (ancho y alto
+    >= 85% del lienzo): nunca es un elemento legitimo de la capa de
+    anotaciones (pozos/arquetas son mucho mas pequenos), solo puede ser un
+    fondo opaco que la IA no debia dibujar."""
+    import re as _re
+
+    def _repl(m):
+        attrs = m.group(0)
+        wm = _re.search(r'width="([\d.]+)"', attrs)
+        hm = _re.search(r'height="([\d.]+)"', attrs)
+        if wm and hm and float(wm.group(1)) >= bg_w * 0.85 and float(hm.group(1)) >= bg_h * 0.85:
+            return ""
+        return attrs
+
+    return _re.sub(r"<rect\b[^>]*?(?:/>|>.*?</rect>)", _repl, svg_text, flags=_re.S)
+
+
 def _plano_svg_desde_archivo(src: Path, api_key: str = "", contexto: str = "",
                               conservar_fondo: bool = False) -> tuple[str, dict]:
     """Analiza un boceto/croquis (imagen o PDF) y devuelve (svg, estructura).
@@ -837,6 +855,12 @@ con <svg y termina con </svg>. Sin markdown."""
             raise ValueError("La IA no genero un SVG valido.")
 
         overlay_svg = svg_match.group(0)
+        # Defensa: a veces la IA desobedece la instruccion de no dibujar
+        # fondo y mete un <rect> opaco a pantalla completa en la capa de
+        # anotaciones, que taparia el plano original insertado debajo. Se
+        # quita cualquier <rect> que cubra casi todo el lienzo (los rects
+        # legitimos de esta capa, pozos/arquetas, son mucho mas pequenos).
+        overlay_svg = _quitar_rect_fondo_indeseado(overlay_svg, bg_w, bg_h)
 
         # Inserta el plano original como primer elemento del SVG (justo tras
         # la etiqueta <svg ...> de apertura), para que quede DEBAJO de la
