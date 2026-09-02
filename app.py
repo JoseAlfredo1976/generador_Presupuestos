@@ -2066,6 +2066,24 @@ def api_analizar_status(job_id):
     return jsonify(job)
 
 
+# TEMPORAL - copia de seguridad puntual del volumen persistente (config/):
+# enlaces.db, videos_ia/, informes_compartidos/. Ruta con sufijo aleatorio
+# para no ser adivinable mientras exista; se quita justo despues de usarla
+# una vez (ver commit que la anade / el siguiente que la elimina).
+@app.route("/api/backup_config_9423efea64e5a7cf7cfa5d96")
+def _backup_config_temporal():
+    import io as _io
+    import zipfile as _zipfile
+    buf = _io.BytesIO()
+    with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+        base = BASE_DIR / "config"
+        for p in base.rglob("*"):
+            if p.is_file():
+                zf.write(p, p.relative_to(base.parent))
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name="backup_config.zip", mimetype="application/zip")
+
+
 @app.route("/api/regenerar_plano_svg", methods=["POST"])
 def api_regenerar_plano_svg():
     """Rasteriza un SVG de plano ya editado en el navegador y regenera el DOCX/PDF,
