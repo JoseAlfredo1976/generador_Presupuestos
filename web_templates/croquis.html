@@ -408,6 +408,11 @@ input[type=number].tb-num {
       </button>
     </div>
 
+    <div class="mt-2">
+      <div class="small text-muted mb-1">Paleta de simbolos (clic para colocar; "Tuberia" se arrastra):</div>
+      <div class="d-flex gap-1 flex-wrap" id="paleta-simbolos"></div>
+    </div>
+
     <div id="plano-ia-modo" class="mt-2" style="display:none">
       <div class="alert alert-success py-2 px-3 mb-0" style="font-size:.85rem">
         <i class="bi bi-check-circle-fill me-2"></i>
@@ -1104,6 +1109,7 @@ async function generarPlanoIA() {
 
       document.getElementById('plano-ia-actions').style.display = 'flex';
       document.getElementById('plano-ia-ctx-wrap').style.display = 'none';
+      _initPaletaSimbolos('paleta-simbolos', svgPickSimbolo);
       window.scrollTo({top: document.getElementById('plano-ia-wrap').offsetTop - 20, behavior:'smooth'});
 
     } catch(e) {
@@ -1377,6 +1383,7 @@ function _svgKey(e) {
 function setSvgEditMode(on) {
   if (on && borrandoFondo) toggleBorrarFondo();
   if (on && dibujandoFlecha) toggleAddFlecha();
+  if (on) _cancelarSimboloActivo();
   svgEditMode = on;
   const btn = document.getElementById('btn-svg-edit');
   if (on) {
@@ -1427,25 +1434,25 @@ function svgAddText() {
   _svgSelect(el);
 }
 
-// Asegura que exista el marker de flecha "#arr" en <defs> (la IA lo suele
-// incluir para las tuberias, pero si el plano no tiene ninguna puede faltar).
-function _asegurarMarkerFlecha(svg) {
-  if (svg.querySelector('marker#arr')) return;
-  let defs = svg.querySelector('defs');
-  if (!defs) {
-    defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-    svg.insertBefore(defs, svg.firstChild);
-  }
-  defs.insertAdjacentHTML('beforeend',
-    '<marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
-    '<path d="M0,0 L8,3 L0,6 Z" fill="#1F4E79"/></marker>');
+// Punta de flecha como triangulo explicito (NO marker-end/<marker>): se ve
+// bien en el navegador pero PyMuPDF (usado para convertir el plano a PNG
+// para el Word) no renderiza markers SVG, asi que la flecha desaparecia en
+// el documento final aunque se viera perfecta en pantalla.
+function _flechaTrianguloD(x1, y1, x2, y2, tip) {
+  const ang = Math.atan2(y2 - y1, x2 - x1);
+  const back = tip * 1.4, half = tip * 0.8;
+  const bx = x2 - back * Math.cos(ang), by = y2 - back * Math.sin(ang);
+  const px = -Math.sin(ang) * half, py = Math.cos(ang) * half;
+  return `M ${x2.toFixed(1)} ${y2.toFixed(1)} L ${(bx+px).toFixed(1)} ${(by+py).toFixed(1)} `
+       + `L ${(bx-px).toFixed(1)} ${(by-py).toFixed(1)} Z`;
 }
 
 // Anadir flecha: modo dibujo, arrastra desde el punto de inicio hasta el
 // punto final para crear una linea con punta de flecha (igual estilo que
 // las tuberias del plano).
 let dibujandoFlecha = false;
-let flechaEl = null;
+let flechaEl = null;      // <g> con la linea + el triangulo de la punta
+let flechaTip = 5;
 
 function toggleAddFlecha() {
   const svg = _getSvg();
@@ -1455,7 +1462,7 @@ function toggleAddFlecha() {
   if (dibujandoFlecha) {
     if (svgEditMode) setSvgEditMode(false);
     if (borrandoFondo) toggleBorrarFondo();
-    _asegurarMarkerFlecha(svg);
+    _cancelarSimboloActivo();
     btn.classList.add('btn-primary');
     btn.classList.remove('btn-outline-dark');
     btn.innerHTML = '<i class="bi bi-arrow-up-right me-1"></i>Arrastra para dibujar (clic aqui para salir)';
@@ -1482,15 +1489,14 @@ function _flechaMD(e) {
   let vb = null;
   try { const b = svg.viewBox.baseVal; if (b && b.width) vb = b; } catch (err) {}
   if (!vb) vb = { width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+  const sw = Math.max(2, Math.min(vb.width, vb.height) / 220);
+  flechaTip = sw * 2.6;
 
-  flechaEl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-  flechaEl.setAttribute('x1', sp.x.toFixed(1));
-  flechaEl.setAttribute('y1', sp.y.toFixed(1));
-  flechaEl.setAttribute('x2', sp.x.toFixed(1));
-  flechaEl.setAttribute('y2', sp.y.toFixed(1));
-  flechaEl.setAttribute('stroke', '#1F4E79');
-  flechaEl.setAttribute('stroke-width', Math.max(2, Math.min(vb.width, vb.height) / 220));
-  flechaEl.setAttribute('marker-end', 'url(#arr)');
+  flechaEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  flechaEl.dataset.x1 = sp.x; flechaEl.dataset.y1 = sp.y;
+  flechaEl.innerHTML =
+    `<line x1="${sp.x.toFixed(1)}" y1="${sp.y.toFixed(1)}" x2="${sp.x.toFixed(1)}" y2="${sp.y.toFixed(1)}" stroke="#1F4E79" stroke-width="${sw.toFixed(1)}"/>` +
+    `<path d="" fill="#1F4E79"/>`;
   svg.appendChild(flechaEl);
 }
 
@@ -1499,23 +1505,205 @@ function _flechaMV(e) {
   e.preventDefault();
   const svg = _getSvg();
   const sp = _screenToSvg(svg, e.clientX, e.clientY);
-  flechaEl.setAttribute('x2', sp.x.toFixed(1));
-  flechaEl.setAttribute('y2', sp.y.toFixed(1));
+  const x1 = parseFloat(flechaEl.dataset.x1), y1 = parseFloat(flechaEl.dataset.y1);
+  const line = flechaEl.querySelector('line'), path = flechaEl.querySelector('path');
+  line.setAttribute('x2', sp.x.toFixed(1));
+  line.setAttribute('y2', sp.y.toFixed(1));
+  path.setAttribute('d', _flechaTrianguloD(x1, y1, sp.x, sp.y, flechaTip));
 }
 
 function _flechaMU() {
   if (!flechaEl) return;
-  const x1 = parseFloat(flechaEl.getAttribute('x1')), y1 = parseFloat(flechaEl.getAttribute('y1'));
-  const x2 = parseFloat(flechaEl.getAttribute('x2')), y2 = parseFloat(flechaEl.getAttribute('y2'));
+  const line = flechaEl.querySelector('line');
+  const x1 = parseFloat(line.getAttribute('x1')), y1 = parseFloat(line.getAttribute('y1'));
+  const x2 = parseFloat(line.getAttribute('x2')), y2 = parseFloat(line.getAttribute('y2'));
   if (Math.hypot(x2 - x1, y2 - y1) < 3) {
     // Clic sin arrastrar: no crear una flecha de longitud casi nula
     flechaEl.remove();
   } else {
+    delete flechaEl.dataset.x1; delete flechaEl.dataset.y1;
     flechaEl.dataset.svgEl = '1';
     flechaEl.style.cursor = 'move';
   }
   svgGenerado = _getSvg()?.outerHTML || svgGenerado;
   flechaEl = null;
+}
+
+// ── Paleta de simbolos predefinidos ─────────────────────────────────────────
+// Catalogo fijo (ver SIMBOLOS_PLANO/_simbolo_svg en app.py: mismo dibujo,
+// mismo color, para que la leyenda y los simbolos colocados a mano
+// coincidan). "Direccion de tuberia" ya tiene su propio boton ("Anadir
+// flecha"), no se repite aqui.
+const PALETA_SIMBOLOS = [
+  { tipo: 'arqueta', label: 'Arqueta', modo: 'punto' },
+  { tipo: 'arqueta_oculta', label: 'Arqueta oculta', modo: 'punto' },
+  { tipo: 'pozo', label: 'Pozo', modo: 'punto' },
+  { tipo: 'pozo_oculto', label: 'Pozo oculto', modo: 'punto' },
+  { tipo: 'arqueton', label: 'Arqueton', modo: 'punto' },
+  { tipo: 'arqueton_oculto', label: 'Arqueton oculto', modo: 'punto' },
+  { tipo: 'bajante', label: 'Bajante', modo: 'punto' },
+  { tipo: 'tuberia', label: 'Tuberia', modo: 'linea' },
+];
+
+let simboloActivo = null;   // tipo del simbolo seleccionado en la paleta
+let simboloLineaEl = null;  // <g> en construccion, para modo 'linea'
+
+function _simboloSvgHtml(tipo, cx, cy, escala) {
+  const c = '#1F4E79';
+  const rPozo = 9 * escala, sArq = 15 * escala;
+  const wArgn = 24 * escala, hArgn = 16 * escala;
+  const sw = Math.max(1.1, 1.5 * escala), swAspa = Math.max(0.9, sw * 0.75);
+  const aspa = (x, y, hx, hy) =>
+    `<line x1="${(x-hx).toFixed(1)}" y1="${(y-hy).toFixed(1)}" x2="${(x+hx).toFixed(1)}" y2="${(y+hy).toFixed(1)}" stroke="${c}" stroke-width="${swAspa.toFixed(1)}"/>` +
+    `<line x1="${(x+hx).toFixed(1)}" y1="${(y-hy).toFixed(1)}" x2="${(x-hx).toFixed(1)}" y2="${(y+hy).toFixed(1)}" stroke="${c}" stroke-width="${swAspa.toFixed(1)}"/>`;
+
+  if (tipo === 'arqueta' || tipo === 'arqueta_oculta') {
+    const h = sArq / 2;
+    let s = `<rect x="${(cx-h).toFixed(1)}" y="${(cy-h).toFixed(1)}" width="${sArq.toFixed(1)}" height="${sArq.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${sw.toFixed(1)}"/>`;
+    if (tipo === 'arqueta_oculta') s += aspa(cx, cy, h, h);
+    return s;
+  }
+  if (tipo === 'pozo' || tipo === 'pozo_oculto') {
+    let s = `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${rPozo.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${sw.toFixed(1)}"/>`;
+    if (tipo === 'pozo_oculto') s += aspa(cx, cy, rPozo*0.7, rPozo*0.7);
+    return s;
+  }
+  if (tipo === 'arqueton' || tipo === 'arqueton_oculto') {
+    let s = `<rect x="${(cx-wArgn/2).toFixed(1)}" y="${(cy-hArgn/2).toFixed(1)}" width="${wArgn.toFixed(1)}" height="${hArgn.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${sw.toFixed(1)}"/>`;
+    if (tipo === 'arqueton_oculto') s += aspa(cx, cy, wArgn/2, hArgn/2);
+    return s;
+  }
+  if (tipo === 'bajante') {
+    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${Math.max(2.5, 3*escala).toFixed(1)}" fill="${c}"/>`;
+  }
+  return '';
+}
+
+function _initPaletaSimbolos(contId, onPick) {
+  const cont = document.getElementById(contId);
+  if (!cont || cont.dataset.init) return;
+  cont.dataset.init = '1';
+  PALETA_SIMBOLOS.forEach(s => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm btn-outline-dark';
+    btn.style.fontSize = '.72rem';
+    btn.style.padding = '3px 8px';
+    btn.textContent = s.label;
+    btn.dataset.tipo = s.tipo;
+    btn.onclick = () => onPick(s.tipo, btn);
+    cont.appendChild(btn);
+  });
+}
+
+function _resetPaletaBtns(contId) {
+  document.querySelectorAll(`#${contId} button`).forEach(b => {
+    b.classList.remove('btn-primary'); b.classList.add('btn-outline-dark');
+  });
+}
+
+function _cancelarSimboloActivo() {
+  if (!simboloActivo) return;
+  const svg = _getSvg();
+  if (svg) {
+    svg.removeEventListener('click', _simboloClick);
+    svg.removeEventListener('mousedown', _simboloLineaMD);
+    svg.removeEventListener('mousemove', _simboloLineaMV);
+    svg.style.cursor = '';
+  }
+  window.removeEventListener('mouseup', _simboloLineaMU);
+  _resetPaletaBtns('paleta-simbolos');
+  simboloActivo = null;
+}
+
+function svgPickSimbolo(tipo, btn) {
+  const svg = _getSvg();
+  if (!svg) { alert('Genera primero el plano con IA.'); return; }
+  const yaActivo = simboloActivo === tipo;
+  _resetPaletaBtns('paleta-simbolos');
+  svg.removeEventListener('click', _simboloClick);
+  svg.removeEventListener('mousedown', _simboloLineaMD);
+  svg.removeEventListener('mousemove', _simboloLineaMV);
+  window.removeEventListener('mouseup', _simboloLineaMU);
+  svg.style.cursor = '';
+
+  if (yaActivo) { simboloActivo = null; return; }
+
+  if (svgEditMode) setSvgEditMode(false);
+  if (borrandoFondo) toggleBorrarFondo();
+  if (dibujandoFlecha) toggleAddFlecha();
+  simboloActivo = tipo;
+  btn.classList.remove('btn-outline-dark'); btn.classList.add('btn-primary');
+  svg.style.cursor = 'crosshair';
+
+  const def = PALETA_SIMBOLOS.find(s => s.tipo === tipo);
+  if (def.modo === 'punto') {
+    svg.addEventListener('click', _simboloClick);
+  } else {
+    svg.addEventListener('mousedown', _simboloLineaMD);
+    svg.addEventListener('mousemove', _simboloLineaMV);
+    window.addEventListener('mouseup', _simboloLineaMU);
+  }
+}
+
+function _simboloClick(e) {
+  if (!simboloActivo) return;
+  const svg = _getSvg();
+  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  let vb = null;
+  try { const b = svg.viewBox.baseVal; if (b && b.width) vb = b; } catch (err) {}
+  if (!vb) vb = { width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+  const escala = Math.max(0.6, Math.min(vb.width, vb.height) / 900);
+
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  g.innerHTML = _simboloSvgHtml(simboloActivo, sp.x, sp.y, escala);
+  svg.appendChild(g);
+  g.dataset.svgEl = '1';
+  g.style.cursor = 'move';
+  svgGenerado = svg.outerHTML;
+  _svgSelect(g);
+}
+
+function _simboloLineaMD(e) {
+  if (e.button !== 0 || !simboloActivo) return;
+  e.preventDefault();
+  const svg = _getSvg();
+  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  let vb = null;
+  try { const b = svg.viewBox.baseVal; if (b && b.width) vb = b; } catch (err) {}
+  if (!vb) vb = { width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+  const sw = Math.max(2, Math.min(vb.width, vb.height) / 220);
+
+  simboloLineaEl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  simboloLineaEl.setAttribute('x1', sp.x.toFixed(1));
+  simboloLineaEl.setAttribute('y1', sp.y.toFixed(1));
+  simboloLineaEl.setAttribute('x2', sp.x.toFixed(1));
+  simboloLineaEl.setAttribute('y2', sp.y.toFixed(1));
+  simboloLineaEl.setAttribute('stroke', '#1F4E79');
+  simboloLineaEl.setAttribute('stroke-width', sw.toFixed(1));
+  svg.appendChild(simboloLineaEl);
+}
+
+function _simboloLineaMV(e) {
+  if (!simboloLineaEl) return;
+  e.preventDefault();
+  const svg = _getSvg();
+  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  simboloLineaEl.setAttribute('x2', sp.x.toFixed(1));
+  simboloLineaEl.setAttribute('y2', sp.y.toFixed(1));
+}
+
+function _simboloLineaMU() {
+  if (!simboloLineaEl) return;
+  const x1 = parseFloat(simboloLineaEl.getAttribute('x1')), y1 = parseFloat(simboloLineaEl.getAttribute('y1'));
+  const x2 = parseFloat(simboloLineaEl.getAttribute('x2')), y2 = parseFloat(simboloLineaEl.getAttribute('y2'));
+  if (Math.hypot(x2 - x1, y2 - y1) < 3) {
+    simboloLineaEl.remove();
+  } else {
+    simboloLineaEl.dataset.svgEl = '1';
+    simboloLineaEl.style.cursor = 'move';
+  }
+  svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+  simboloLineaEl = null;
 }
 
 // Pincel manual para blanquear zonas concretas del fondo (plano/foto
@@ -1531,6 +1719,7 @@ function toggleBorrarFondo() {
   const svg = _getSvg();
   if (!svg) { alert('Genera primero el plano con IA.'); return; }
   if (!borrandoFondo && dibujandoFlecha) toggleAddFlecha();
+  if (!borrandoFondo) _cancelarSimboloActivo();
   borrandoFondo = !borrandoFondo;
   const btn = document.getElementById('btn-borrar-fondo');
   const grosorWrap = document.getElementById('borrar-fondo-grosor-wrap');

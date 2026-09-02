@@ -680,6 +680,118 @@ def _quitar_rect_fondo_indeseado(svg_text: str, bg_w: float, bg_h: float) -> str
     return _re.sub(r"<rect\b[^>]*?(?:/>|>.*?</rect>)", _repl, svg_text, flags=_re.S)
 
 
+# Catalogo fijo de simbolos del plano: (clave, etiqueta para la leyenda).
+# Se usa tanto para la leyenda (generada por codigo, no por la IA, para que
+# salga siempre igual y correcta) como de referencia para los prompts.
+SIMBOLOS_PLANO = [
+    ("arqueta", "Arqueta"),
+    ("arqueta_oculta", "Arqueta oculta"),
+    ("pozo", "Pozo"),
+    ("pozo_oculto", "Pozo oculto"),
+    ("arqueton", "Arqueton"),
+    ("arqueton_oculto", "Arqueton oculto"),
+    ("bajante", "Bajante"),
+    ("tuberia", "Tuberia"),
+    ("direccion_tuberia", "Direccion de tuberia"),
+]
+
+
+def _simbolo_svg(tipo: str, cx: float, cy: float, color: str, escala: float = 1.0) -> str:
+    """Fragmento SVG (sin <g> envolvente) de un simbolo del catalogo,
+    centrado en (cx, cy). Usado por la leyenda; el mismo dibujo (a otra
+    escala) es el que la IA debe reproducir en el plano segun el prompt."""
+    r_pozo = 9 * escala
+    s_arq = 15 * escala
+    w_argn, h_argn = 24 * escala, 16 * escala
+    sw = max(1.1, 1.5 * escala)
+    sw_aspa = max(0.9, sw * 0.75)
+
+    if tipo == "arqueta":
+        h = s_arq / 2
+        return (f'<rect x="{cx-h:.1f}" y="{cy-h:.1f}" width="{s_arq:.1f}" height="{s_arq:.1f}" '
+                f'fill="none" stroke="{color}" stroke-width="{sw:.1f}"/>')
+    if tipo == "arqueta_oculta":
+        h = s_arq / 2
+        return (f'<rect x="{cx-h:.1f}" y="{cy-h:.1f}" width="{s_arq:.1f}" height="{s_arq:.1f}" '
+                f'fill="none" stroke="{color}" stroke-width="{sw:.1f}"/>'
+                f'<line x1="{cx-h:.1f}" y1="{cy-h:.1f}" x2="{cx+h:.1f}" y2="{cy+h:.1f}" stroke="{color}" stroke-width="{sw_aspa:.1f}"/>'
+                f'<line x1="{cx+h:.1f}" y1="{cy-h:.1f}" x2="{cx-h:.1f}" y2="{cy+h:.1f}" stroke="{color}" stroke-width="{sw_aspa:.1f}"/>')
+    if tipo == "pozo":
+        return f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r_pozo:.1f}" fill="none" stroke="{color}" stroke-width="{sw:.1f}"/>'
+    if tipo == "pozo_oculto":
+        d = r_pozo * 0.7
+        return (f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r_pozo:.1f}" fill="none" stroke="{color}" stroke-width="{sw:.1f}"/>'
+                f'<line x1="{cx-d:.1f}" y1="{cy-d:.1f}" x2="{cx+d:.1f}" y2="{cy+d:.1f}" stroke="{color}" stroke-width="{sw_aspa:.1f}"/>'
+                f'<line x1="{cx+d:.1f}" y1="{cy-d:.1f}" x2="{cx-d:.1f}" y2="{cy+d:.1f}" stroke="{color}" stroke-width="{sw_aspa:.1f}"/>')
+    if tipo == "arqueton":
+        return (f'<rect x="{cx-w_argn/2:.1f}" y="{cy-h_argn/2:.1f}" width="{w_argn:.1f}" height="{h_argn:.1f}" '
+                f'fill="none" stroke="{color}" stroke-width="{sw:.1f}"/>')
+    if tipo == "arqueton_oculto":
+        hx, hy = w_argn / 2, h_argn / 2
+        return (f'<rect x="{cx-hx:.1f}" y="{cy-hy:.1f}" width="{w_argn:.1f}" height="{h_argn:.1f}" '
+                f'fill="none" stroke="{color}" stroke-width="{sw:.1f}"/>'
+                f'<line x1="{cx-hx:.1f}" y1="{cy-hy:.1f}" x2="{cx+hx:.1f}" y2="{cy+hy:.1f}" stroke="{color}" stroke-width="{sw_aspa:.1f}"/>'
+                f'<line x1="{cx+hx:.1f}" y1="{cy-hy:.1f}" x2="{cx-hx:.1f}" y2="{cy+hy:.1f}" stroke="{color}" stroke-width="{sw_aspa:.1f}"/>')
+    if tipo == "bajante":
+        return f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{max(2.5, 3*escala):.1f}" fill="{color}"/>'
+    if tipo == "tuberia":
+        largo = 18 * escala
+        return (f'<line x1="{cx-largo/2:.1f}" y1="{cy:.1f}" x2="{cx+largo/2:.1f}" y2="{cy:.1f}" '
+                f'stroke="{color}" stroke-width="{sw:.1f}"/>')
+    if tipo == "direccion_tuberia":
+        # Punta de flecha dibujada como triangulo explicito (no marker-end):
+        # PyMuPDF, usado para rasterizar el plano a PNG, no siempre renderiza
+        # markers SVG a esta escala tan pequena.
+        largo = 16 * escala
+        x1, x2 = cx - largo / 2, cx + largo / 2
+        pf = 4.5 * escala  # tamano de la punta
+        return (f'<line x1="{x1:.1f}" y1="{cy:.1f}" x2="{x2-pf:.1f}" y2="{cy:.1f}" '
+                f'stroke="{color}" stroke-width="{sw:.1f}"/>'
+                f'<path d="M {x2:.1f} {cy:.1f} L {x2-pf*1.4:.1f} {cy-pf*0.8:.1f} '
+                f'L {x2-pf*1.4:.1f} {cy+pf*0.8:.1f} Z" fill="{color}"/>')
+    return ""
+
+
+def _leyenda_svg_fragment(bg_w: float, bg_h: float, color: str = "#1F4E79",
+                           esquina: str = "br") -> str:
+    """Cuadro fijo de leyenda con el catalogo COMPLETO de simbolos, generado
+    por codigo (no por la IA) para que salga siempre igual y correcta en
+    todos los planos. `esquina`: "br" (inferior derecha, por defecto) o "bl"
+    (inferior izquierda, para no chocar con el cajetin del escenario de
+    regenerar desde cero, que ocupa la esquina inferior derecha)."""
+    filas = 5
+    cols = 2
+    escala = max(0.55, min(bg_w, bg_h) / 900)
+    fila_h = 24 * escala
+    col_w = 145 * escala
+    pad = 8 * escala
+    titulo_h = 15 * escala
+    ancho = col_w * cols + pad * 2
+    alto = fila_h * filas + pad * 2 + titulo_h
+    x0 = (10 * escala) if esquina == "bl" else (bg_w - ancho - 10 * escala)
+    y0 = bg_h - alto - 10 * escala
+    font_size = max(6.5, 7.5 * escala)
+
+    partes = [
+        f'<rect x="{x0:.1f}" y="{y0:.1f}" width="{ancho:.1f}" height="{alto:.1f}" '
+        f'fill="#ffffff" fill-opacity="0.94" stroke="{color}" stroke-width="1"/>',
+        f'<text x="{x0+pad:.1f}" y="{y0+pad+font_size:.1f}" font-family="Arial" '
+        f'font-size="{font_size*1.15:.1f}" font-weight="bold" fill="{color}">Simbologia</text>',
+    ]
+    y_start = y0 + pad + titulo_h
+    for idx, (tipo, label) in enumerate(SIMBOLOS_PLANO):
+        col = idx // filas
+        fila = idx % filas
+        cx = x0 + pad + col * col_w + 13 * escala
+        cy = y_start + fila * fila_h + fila_h / 2
+        partes.append(_simbolo_svg(tipo, cx, cy, color, escala))
+        partes.append(
+            f'<text x="{cx+17*escala:.1f}" y="{cy+font_size/2.8:.1f}" '
+            f'font-family="Arial" font-size="{font_size:.1f}" fill="#333">{label}</text>')
+
+    return "".join(partes)
+
+
 def _plano_svg_desde_archivo(src: Path, api_key: str = "", contexto: str = "",
                               conservar_fondo: bool = False,
                               borrar_tinta_azul: bool = False) -> tuple[str, dict]:
@@ -754,12 +866,22 @@ correctamente impreso en el plano).
 Para cada elemento indica su posicion como porcentaje del ancho (x) y alto (y) de la imagen, de 0 a 100.
 Sé muy preciso con las posiciones relativas: si un pozo esta a la izquierda de otro, el x del primero debe ser menor.
 """ + _instr_filtro_manual + """
+CATALOGO DE SIMBOLOS (usa EXACTAMENTE estas categorias, sin inventar otras):
+- "tuberias": tramo de tuberia (linea). "flecha":true si el boceto marca sentido de flujo (linea+flecha) en vez de tuberia simple (linea sola).
+- "pozos": pozo de registro (circulo). "oculto":true si el boceto lo marca como enterrado/no visible/tapado (circulo con aspa) en vez de pozo normal.
+- "arquetas": arqueta (cuadrado pequeno). "oculto":true si esta marcada como oculta/enterrada (cuadrado con aspa).
+- "arquetones": arqueton, arqueta grande de registro (rectangulo, mas grande que una arqueta normal). "oculto":true si esta marcado como oculto (rectangulo con aspa).
+- "bajantes": bajante (punto/marca pequena, NO un simbolo grande).
+- "etiquetas": texto suelto.
+- "cotas": acotaciones/medidas.
+
 Devuelve UNICAMENTE este JSON (sin markdown, sin texto adicional):
 {
   "tuberias": [{"x1":25,"y1":40,"x2":70,"y2":40,"dn":"DN150","material":"PVC","longitud":"12m","flecha":true}],
-  "pozos": [{"x":25,"y":40,"id":"P1","cota_tapa":null,"cota_solera":null}],
+  "pozos": [{"x":25,"y":40,"id":"P1","oculto":false,"cota_tapa":null,"cota_solera":null}],
+  "arquetas": [{"x":80,"y":60,"id":"A1","oculto":false}],
+  "arquetones": [{"x":60,"y":30,"id":"AR1","oculto":false}],
   "bajantes": [{"x":50,"y":20,"id":"B1"}],
-  "arquetas": [{"x":80,"y":60,"id":"A1"}],
   "etiquetas": [{"x":50,"y":10,"texto":"texto visible en el boceto"}],
   "cotas": [{"x1":20,"y1":80,"x2":60,"y2":80,"valor":"15.00m"}],
   "descripcion": "descripcion breve de la instalacion representada"
@@ -831,33 +953,40 @@ negro). Escala el grosor de trazo y el tamano de fuente de forma proporcional
 al tamano del lienzo (referencia: stroke-width 2-3 y font-size equivalente a
 min({bg_w},{bg_h})/55 en un plano tipico).
 
-<defs>
-  <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-    <path d="M0,0 L8,3 L0,6 Z" fill="#1F4E79"/>
-  </marker>
-</defs>
+CATALOGO DE SIMBOLOS OBLIGATORIO (usa EXACTAMENTE estos, la leyenda del
+plano ya se anade por separado con este mismo catalogo, no dibujes tu una
+leyenda ni cajetin):
 
-TUBERIAS: <line x1="..." y1="..." x2="..." y2="..." stroke="#1F4E79" stroke-width="..." marker-end="url(#arr)"/>
-  Etiqueta DN junto a punto medio de la linea, fill="#1F4E79"
-  Si flecha=false omite marker-end
+TUBERIA (linea sin flecha) / DIRECCION DE TUBERIA (linea con flecha, si flecha=true):
+  <line x1="..." y1="..." x2="..." y2="..." stroke="#1F4E79" stroke-width="..."/>
+  NO uses marker-end ni <marker>/<defs> para la punta de flecha (no se
+  renderiza al convertir a PNG). Si flecha=true, dibuja la punta como un
+  <path> triangular relleno en el extremo x2,y2, orientado en la direccion
+  de la linea, por ejemplo (para una linea horizontal apuntando a la
+  derecha, ajusta la orientacion segun el angulo real de tu linea):
+  <path d="M x2,y2 L x2-6,y2-3 L x2-6,y2+3 Z" fill="#1F4E79"/>
+  Etiqueta DN junto a punto medio de la linea, fill="#1F4E79".
 
-POZOS: <g transform="translate(svg_x,svg_y)">
+POZO (circulo) / POZO OCULTO (circulo + aspa, si oculto=true): <g transform="translate(svg_x,svg_y)">
   <circle r="..." fill="none" stroke="#1F4E79" stroke-width="2"/>
-  <circle r="..." fill="#1F4E79"/>
+  (si oculto=true, anade dos <line> cruzadas en aspa dentro del circulo, mismo color)
   <text text-anchor="middle" dy="-..." font-family="Arial" fill="#1F4E79">id</text>
 </g>
 
-BAJANTES: <g transform="translate(svg_x,svg_y)">
+ARQUETA (cuadrado pequeno) / ARQUETA OCULTA (cuadrado + aspa, si oculto=true): <g transform="translate(svg_x,svg_y)">
   <rect fill="none" stroke="#1F4E79" stroke-width="2"/>
-  <line ... stroke="#1F4E79" stroke-width="1.5"/>
-  <line ... stroke="#1F4E79" stroke-width="1.5"/>
+  (si oculto=true, anade dos <line> cruzadas en aspa dentro del cuadrado, mismo color)
   <text text-anchor="middle" font-family="Arial" fill="#1F4E79">id</text>
 </g>
 
-ARQUETAS: <g transform="translate(svg_x,svg_y)">
+ARQUETON (rectangulo, MAS GRANDE que la arqueta, no cuadrado) / ARQUETON OCULTO (rectangulo + aspa, si oculto=true): <g transform="translate(svg_x,svg_y)">
   <rect fill="none" stroke="#1F4E79" stroke-width="2"/>
+  (si oculto=true, anade dos <line> cruzadas en aspa dentro del rectangulo, mismo color)
   <text text-anchor="middle" font-family="Arial" fill="#1F4E79">id</text>
 </g>
+
+BAJANTE (SOLO un punto/marca pequena, NO un simbolo grande): <circle cx="svg_x" cy="svg_y" r="3" fill="#1F4E79"/>
+  <text text-anchor="middle" dy="-8" font-family="Arial" fill="#1F4E79">id</text>
 
 ETIQUETAS: <text x="svg_x" y="svg_y" font-family="Arial" fill="#1F4E79">texto</text>
 
@@ -900,6 +1029,12 @@ con <svg y termina con </svg>. Sin markdown."""
                      f'href="data:image/png;base64,{fondo_b64}"/>')
         insert_pos = overlay_svg.index(">") + 1
         svg_final = overlay_svg[:insert_pos] + fondo_tag + overlay_svg[insert_pos:]
+
+        # Leyenda con el catalogo completo de simbolos, siempre igual y
+        # correcta (generada por codigo, no por la IA). Se anade al final
+        # para quedar por encima de todo.
+        leyenda = _leyenda_svg_fragment(bg_w, bg_h, color="#1F4E79")
+        svg_final = svg_final[:svg_final.rindex("</svg>")] + leyenda + "</svg>"
         return svg_final, estructura
 
     # ESCENARIO 1 (por defecto): boceto a mano alzada, sin plano real detras.
@@ -923,33 +1058,40 @@ ESPECIFICACION SVG:
 viewBox="0 0 900 660" width="900" height="660"
 <rect width="900" height="660" fill="#ffffff"/>
 
-<defs>
-  <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-    <path d="M0,0 L8,3 L0,6 Z" fill="#1a2a3a"/>
-  </marker>
-</defs>
+CATALOGO DE SIMBOLOS OBLIGATORIO (usa EXACTAMENTE estos; la leyenda con
+todos los simbolos se anade por separado con codigo, no dibujes tu una):
 
-TUBERIAS: <line x1="..." y1="..." x2="..." y2="..." stroke="#1a2a3a" stroke-width="2.5" marker-end="url(#arr)"/>
-  Etiqueta DN junto a punto medio de la linea, font-size="10" fill="#1a2a3a"
-  Si flecha=false omite marker-end
+TUBERIA (linea sin flecha) / DIRECCION DE TUBERIA (linea con flecha, si flecha=true):
+  <line x1="..." y1="..." x2="..." y2="..." stroke="#1a2a3a" stroke-width="2.5"/>
+  NO uses marker-end ni <marker>/<defs> para la punta de flecha (no se
+  renderiza al convertir a PNG). Si flecha=true, dibuja la punta como un
+  <path> triangular relleno en el extremo x2,y2, orientado en la direccion
+  de la linea, por ejemplo (para una linea horizontal apuntando a la
+  derecha, ajusta la orientacion segun el angulo real de tu linea):
+  <path d="M x2,y2 L x2-6,y2-3 L x2-6,y2+3 Z" fill="#1a2a3a"/>
+  Etiqueta DN junto a punto medio de la linea, font-size="10" fill="#1a2a3a".
 
-POZOS: <g transform="translate(svg_x,svg_y)">
+POZO (circulo) / POZO OCULTO (circulo + aspa, si oculto=true): <g transform="translate(svg_x,svg_y)">
   <circle r="12" fill="white" stroke="#1a2a3a" stroke-width="2"/>
-  <circle r="4" fill="#555"/>
+  (si oculto=true, anade dos <line> cruzadas en aspa dentro del circulo, stroke="#1a2a3a")
   <text text-anchor="middle" dy="-18" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
 </g>
 
-BAJANTES: <g transform="translate(svg_x,svg_y)">
-  <rect x="-8" y="-8" width="16" height="16" fill="white" stroke="#1a2a3a" stroke-width="2"/>
-  <line x1="-6" y1="-6" x2="6" y2="6" stroke="#1a2a3a" stroke-width="1.5"/>
-  <line x1="6" y1="-6" x2="-6" y2="6" stroke="#1a2a3a" stroke-width="1.5"/>
-  <text text-anchor="middle" dy="-14" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
-</g>
-
-ARQUETAS: <g transform="translate(svg_x,svg_y)">
+ARQUETA (cuadrado pequeno) / ARQUETA OCULTA (cuadrado + aspa, si oculto=true): <g transform="translate(svg_x,svg_y)">
   <rect x="-10" y="-10" width="20" height="20" fill="white" stroke="#1a2a3a" stroke-width="2"/>
+  (si oculto=true, anade dos <line> cruzadas en aspa dentro del cuadrado, stroke="#1a2a3a")
   <text text-anchor="middle" dy="-16" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
 </g>
+
+ARQUETON (rectangulo, MAS GRANDE que la arqueta, no cuadrado) / ARQUETON OCULTO (rectangulo + aspa, si oculto=true): <g transform="translate(svg_x,svg_y)">
+  <rect x="-16" y="-11" width="32" height="22" fill="white" stroke="#1a2a3a" stroke-width="2"/>
+  (si oculto=true, anade dos <line> cruzadas en aspa dentro del rectangulo, stroke="#1a2a3a")
+  <text text-anchor="middle" dy="-16" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
+</g>
+
+BAJANTE (SOLO un punto/marca pequena, NO un simbolo grande):
+  <circle cx="svg_x" cy="svg_y" r="4" fill="#1a2a3a"/>
+  <text text-anchor="middle" dy="-8" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
 
 ETIQUETAS: <text x="svg_x" y="svg_y" font-family="Arial" font-size="11" fill="#333">texto</text>
 
@@ -967,7 +1109,7 @@ CAJETIN (x=688, y=555, 200x92):
 <text x="820" y="613" font-family="Arial" font-size="8" fill="#555">Esc: S/E</text>
 <text x="788" y="638" text-anchor="middle" font-family="Arial" font-size="8" fill="#555">Acometidas Europa S.L.</text>
 
-LEYENDA (x=12, y=555, 160x92): muestra solo simbolos presentes en el plano generado.
+NO dibujes ningun cuadro de leyenda: se anade automaticamente por separado.
 
 DEVUELVE UNICAMENTE el SVG. Empieza con <svg y termina con </svg>. Sin markdown."""
 
@@ -986,7 +1128,13 @@ DEVUELVE UNICAMENTE el SVG. Empieza con <svg y termina con </svg>. Sin markdown.
     if not svg_match:
         raise ValueError("La IA no genero un SVG valido.")
 
-    return svg_match.group(0), estructura
+    # Leyenda con el catalogo completo de simbolos, siempre igual y correcta
+    # (generada por codigo, no por la IA). Lienzo fijo 900x660 en este
+    # escenario (ver ESPECIFICACION SVG del prompt de este bloque).
+    svg_con_leyenda = svg_match.group(0)
+    leyenda = _leyenda_svg_fragment(900, 660, color="#1a2a3a", esquina="bl")
+    svg_con_leyenda = svg_con_leyenda[:svg_con_leyenda.rindex("</svg>")] + leyenda + "</svg>"
+    return svg_con_leyenda, estructura
 
 
 def _svg_a_png(svg_text: str, dpi: int = 170) -> Path:

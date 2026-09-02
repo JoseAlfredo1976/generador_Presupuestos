@@ -970,6 +970,10 @@ function showResult(r) {
           <i class="bi bi-arrow-repeat me-1"></i>Guardar cambios y regenerar Word/PDF
         </button>
       </div>
+      <div class="mt-2 mb-2">
+        <div class="small text-muted mb-1">Paleta de simbolos (clic para colocar; "Tuberia" se arrastra):</div>
+        <div class="d-flex gap-1 flex-wrap" id="paleta-simbolos-plano"></div>
+      </div>
       <div id="plano-svg-content" style="background:white;border:2px solid #c8daf0;border-radius:10px;padding:12px;overflow:auto"></div>
       <div class="small text-muted mt-1 mb-3"><i class="bi bi-info-circle me-1"></i>Doble clic sobre un texto para editarlo, arrastra elementos para moverlos, o selecciona uno y pulsa Supr para borrarlo.</div>`;
   }
@@ -1140,6 +1144,7 @@ function showResult(r) {
       const svgEl = cont.querySelector('svg');
       if (svgEl) { svgEl.style.maxWidth = '100%'; svgEl.style.height = 'auto'; }
     }
+    _initPaletaSimbolos('paleta-simbolos-plano', planoPickSimbolo);
   }
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1390,6 +1395,7 @@ function _planoKey(e) {
 function togglePlanoEdit() {
   if (!planoEditMode && borrandoFondoPlano) togglePlanoBorrarFondo();
   if (!planoEditMode && dibujandoFlechaPlano) togglePlanoAddFlecha();
+  if (!planoEditMode) _cancelarSimboloActivoPlano();
   planoEditMode = !planoEditMode;
   const btn = document.getElementById('btn-plano-edit');
   if (planoEditMode) {
@@ -1491,19 +1497,21 @@ function planoAddText() {
 }
 
 // Anadir flecha: arrastra desde el punto de inicio hasta el punto final.
+// Punta dibujada como triangulo explicito (NO marker-end/<marker>): se ve
+// bien en el navegador pero PyMuPDF (usado para convertir el plano a PNG
+// para el Word) no renderiza markers SVG, asi que la flecha desaparecia en
+// el documento final aunque se viera perfecta en pantalla.
 let dibujandoFlechaPlano = false;
-let flechaPlanoEl = null;
+let flechaPlanoEl = null;      // <g> con la linea + el triangulo de la punta
+let flechaPlanoTip = 5;
 
-function _asegurarMarkerFlechaPlano(svg) {
-  if (svg.querySelector('marker#arr')) return;
-  let defs = svg.querySelector('defs');
-  if (!defs) {
-    defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-    svg.insertBefore(defs, svg.firstChild);
-  }
-  defs.insertAdjacentHTML('beforeend',
-    '<marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
-    '<path d="M0,0 L8,3 L0,6 Z" fill="#1F4E79"/></marker>');
+function _flechaPlanoTrianguloD(x1, y1, x2, y2, tip) {
+  const ang = Math.atan2(y2 - y1, x2 - x1);
+  const back = tip * 1.4, half = tip * 0.8;
+  const bx = x2 - back * Math.cos(ang), by = y2 - back * Math.sin(ang);
+  const px = -Math.sin(ang) * half, py = Math.cos(ang) * half;
+  return `M ${x2.toFixed(1)} ${y2.toFixed(1)} L ${(bx+px).toFixed(1)} ${(by+py).toFixed(1)} `
+       + `L ${(bx-px).toFixed(1)} ${(by-py).toFixed(1)} Z`;
 }
 
 function togglePlanoAddFlecha() {
@@ -1514,7 +1522,7 @@ function togglePlanoAddFlecha() {
   if (dibujandoFlechaPlano) {
     if (planoEditMode) togglePlanoEdit();
     if (borrandoFondoPlano) togglePlanoBorrarFondo();
-    _asegurarMarkerFlechaPlano(svg);
+    _cancelarSimboloActivoPlano();
     btn.classList.add('btn-primary');
     btn.classList.remove('btn-outline-dark');
     btn.innerHTML = '<i class="bi bi-arrow-up-right me-1"></i>Arrastra para dibujar (clic aqui para salir)';
@@ -1541,15 +1549,14 @@ function _flechaPlanoMD(e) {
   let vb = null;
   try { const b = svg.viewBox.baseVal; if (b && b.width) vb = b; } catch (err) {}
   if (!vb) vb = { width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+  const sw = Math.max(2, Math.min(vb.width, vb.height) / 220);
+  flechaPlanoTip = sw * 2.6;
 
-  flechaPlanoEl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-  flechaPlanoEl.setAttribute('x1', sp.x.toFixed(1));
-  flechaPlanoEl.setAttribute('y1', sp.y.toFixed(1));
-  flechaPlanoEl.setAttribute('x2', sp.x.toFixed(1));
-  flechaPlanoEl.setAttribute('y2', sp.y.toFixed(1));
-  flechaPlanoEl.setAttribute('stroke', '#1F4E79');
-  flechaPlanoEl.setAttribute('stroke-width', Math.max(2, Math.min(vb.width, vb.height) / 220));
-  flechaPlanoEl.setAttribute('marker-end', 'url(#arr)');
+  flechaPlanoEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  flechaPlanoEl.dataset.x1 = sp.x; flechaPlanoEl.dataset.y1 = sp.y;
+  flechaPlanoEl.innerHTML =
+    `<line x1="${sp.x.toFixed(1)}" y1="${sp.y.toFixed(1)}" x2="${sp.x.toFixed(1)}" y2="${sp.y.toFixed(1)}" stroke="#1F4E79" stroke-width="${sw.toFixed(1)}"/>` +
+    `<path d="" fill="#1F4E79"/>`;
   svg.appendChild(flechaPlanoEl);
 }
 
@@ -1558,21 +1565,201 @@ function _flechaPlanoMV(e) {
   e.preventDefault();
   const svg = _getPlanoSvg();
   const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
-  flechaPlanoEl.setAttribute('x2', sp.x.toFixed(1));
-  flechaPlanoEl.setAttribute('y2', sp.y.toFixed(1));
+  const x1 = parseFloat(flechaPlanoEl.dataset.x1), y1 = parseFloat(flechaPlanoEl.dataset.y1);
+  const line = flechaPlanoEl.querySelector('line'), path = flechaPlanoEl.querySelector('path');
+  line.setAttribute('x2', sp.x.toFixed(1));
+  line.setAttribute('y2', sp.y.toFixed(1));
+  path.setAttribute('d', _flechaPlanoTrianguloD(x1, y1, sp.x, sp.y, flechaPlanoTip));
 }
 
 function _flechaPlanoMU() {
   if (!flechaPlanoEl) return;
-  const x1 = parseFloat(flechaPlanoEl.getAttribute('x1')), y1 = parseFloat(flechaPlanoEl.getAttribute('y1'));
-  const x2 = parseFloat(flechaPlanoEl.getAttribute('x2')), y2 = parseFloat(flechaPlanoEl.getAttribute('y2'));
+  const line = flechaPlanoEl.querySelector('line');
+  const x1 = parseFloat(line.getAttribute('x1')), y1 = parseFloat(line.getAttribute('y1'));
+  const x2 = parseFloat(line.getAttribute('x2')), y2 = parseFloat(line.getAttribute('y2'));
   if (Math.hypot(x2 - x1, y2 - y1) < 3) {
     flechaPlanoEl.remove();
   } else {
+    delete flechaPlanoEl.dataset.x1; delete flechaPlanoEl.dataset.y1;
     flechaPlanoEl.dataset.planoEl = '1';
     flechaPlanoEl.style.cursor = 'move';
   }
   flechaPlanoEl = null;
+}
+
+// ── Paleta de simbolos predefinidos ─────────────────────────────────────────
+// Catalogo fijo (ver SIMBOLOS_PLANO/_simbolo_svg en app.py: mismo dibujo,
+// mismo color, para que la leyenda y los simbolos colocados a mano
+// coincidan). "Direccion de tuberia" ya tiene su propio boton ("Anadir
+// flecha"), no se repite aqui.
+const PALETA_SIMBOLOS = [
+  { tipo: 'arqueta', label: 'Arqueta', modo: 'punto' },
+  { tipo: 'arqueta_oculta', label: 'Arqueta oculta', modo: 'punto' },
+  { tipo: 'pozo', label: 'Pozo', modo: 'punto' },
+  { tipo: 'pozo_oculto', label: 'Pozo oculto', modo: 'punto' },
+  { tipo: 'arqueton', label: 'Arqueton', modo: 'punto' },
+  { tipo: 'arqueton_oculto', label: 'Arqueton oculto', modo: 'punto' },
+  { tipo: 'bajante', label: 'Bajante', modo: 'punto' },
+  { tipo: 'tuberia', label: 'Tuberia', modo: 'linea' },
+];
+
+let simboloActivoPlano = null;
+let simboloLineaPlanoEl = null;
+
+function _simboloSvgHtml(tipo, cx, cy, escala) {
+  const c = '#1F4E79';
+  const rPozo = 9 * escala, sArq = 15 * escala;
+  const wArgn = 24 * escala, hArgn = 16 * escala;
+  const sw = Math.max(1.1, 1.5 * escala), swAspa = Math.max(0.9, sw * 0.75);
+  const aspa = (x, y, hx, hy) =>
+    `<line x1="${(x-hx).toFixed(1)}" y1="${(y-hy).toFixed(1)}" x2="${(x+hx).toFixed(1)}" y2="${(y+hy).toFixed(1)}" stroke="${c}" stroke-width="${swAspa.toFixed(1)}"/>` +
+    `<line x1="${(x+hx).toFixed(1)}" y1="${(y-hy).toFixed(1)}" x2="${(x-hx).toFixed(1)}" y2="${(y+hy).toFixed(1)}" stroke="${c}" stroke-width="${swAspa.toFixed(1)}"/>`;
+
+  if (tipo === 'arqueta' || tipo === 'arqueta_oculta') {
+    const h = sArq / 2;
+    let s = `<rect x="${(cx-h).toFixed(1)}" y="${(cy-h).toFixed(1)}" width="${sArq.toFixed(1)}" height="${sArq.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${sw.toFixed(1)}"/>`;
+    if (tipo === 'arqueta_oculta') s += aspa(cx, cy, h, h);
+    return s;
+  }
+  if (tipo === 'pozo' || tipo === 'pozo_oculto') {
+    let s = `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${rPozo.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${sw.toFixed(1)}"/>`;
+    if (tipo === 'pozo_oculto') s += aspa(cx, cy, rPozo*0.7, rPozo*0.7);
+    return s;
+  }
+  if (tipo === 'arqueton' || tipo === 'arqueton_oculto') {
+    let s = `<rect x="${(cx-wArgn/2).toFixed(1)}" y="${(cy-hArgn/2).toFixed(1)}" width="${wArgn.toFixed(1)}" height="${hArgn.toFixed(1)}" fill="none" stroke="${c}" stroke-width="${sw.toFixed(1)}"/>`;
+    if (tipo === 'arqueton_oculto') s += aspa(cx, cy, wArgn/2, hArgn/2);
+    return s;
+  }
+  if (tipo === 'bajante') {
+    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${Math.max(2.5, 3*escala).toFixed(1)}" fill="${c}"/>`;
+  }
+  return '';
+}
+
+function _initPaletaSimbolos(contId, onPick) {
+  const cont = document.getElementById(contId);
+  if (!cont || cont.dataset.init) return;
+  cont.dataset.init = '1';
+  PALETA_SIMBOLOS.forEach(s => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm btn-outline-dark';
+    btn.style.fontSize = '.72rem';
+    btn.style.padding = '3px 8px';
+    btn.textContent = s.label;
+    btn.dataset.tipo = s.tipo;
+    btn.onclick = () => onPick(s.tipo, btn);
+    cont.appendChild(btn);
+  });
+}
+
+function _resetPaletaBtnsPlano(contId) {
+  document.querySelectorAll(`#${contId} button`).forEach(b => {
+    b.classList.remove('btn-primary'); b.classList.add('btn-outline-dark');
+  });
+}
+
+function _cancelarSimboloActivoPlano() {
+  if (!simboloActivoPlano) return;
+  const svg = _getPlanoSvg();
+  if (svg) {
+    svg.removeEventListener('click', _simboloPlanoClick);
+    svg.removeEventListener('mousedown', _simboloLineaPlanoMD);
+    svg.removeEventListener('mousemove', _simboloLineaPlanoMV);
+    svg.style.cursor = '';
+  }
+  window.removeEventListener('mouseup', _simboloLineaPlanoMU);
+  _resetPaletaBtnsPlano('paleta-simbolos-plano');
+  simboloActivoPlano = null;
+}
+
+function planoPickSimbolo(tipo, btn) {
+  const svg = _getPlanoSvg();
+  if (!svg) { alert('No hay plano generado.'); return; }
+  const yaActivo = simboloActivoPlano === tipo;
+  _resetPaletaBtnsPlano('paleta-simbolos-plano');
+  svg.removeEventListener('click', _simboloPlanoClick);
+  svg.removeEventListener('mousedown', _simboloLineaPlanoMD);
+  svg.removeEventListener('mousemove', _simboloLineaPlanoMV);
+  window.removeEventListener('mouseup', _simboloLineaPlanoMU);
+  svg.style.cursor = '';
+
+  if (yaActivo) { simboloActivoPlano = null; return; }
+
+  if (planoEditMode) togglePlanoEdit();
+  if (borrandoFondoPlano) togglePlanoBorrarFondo();
+  if (dibujandoFlechaPlano) togglePlanoAddFlecha();
+  simboloActivoPlano = tipo;
+  btn.classList.remove('btn-outline-dark'); btn.classList.add('btn-primary');
+  svg.style.cursor = 'crosshair';
+
+  const def = PALETA_SIMBOLOS.find(s => s.tipo === tipo);
+  if (def.modo === 'punto') {
+    svg.addEventListener('click', _simboloPlanoClick);
+  } else {
+    svg.addEventListener('mousedown', _simboloLineaPlanoMD);
+    svg.addEventListener('mousemove', _simboloLineaPlanoMV);
+    window.addEventListener('mouseup', _simboloLineaPlanoMU);
+  }
+}
+
+function _simboloPlanoClick(e) {
+  if (!simboloActivoPlano) return;
+  const svg = _getPlanoSvg();
+  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  let vb = null;
+  try { const b = svg.viewBox.baseVal; if (b && b.width) vb = b; } catch (err) {}
+  if (!vb) vb = { width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+  const escala = Math.max(0.6, Math.min(vb.width, vb.height) / 900);
+
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  g.innerHTML = _simboloSvgHtml(simboloActivoPlano, sp.x, sp.y, escala);
+  svg.appendChild(g);
+  g.dataset.planoEl = '1';
+  g.style.cursor = 'move';
+  _planoSelect(g);
+}
+
+function _simboloLineaPlanoMD(e) {
+  if (e.button !== 0 || !simboloActivoPlano) return;
+  e.preventDefault();
+  const svg = _getPlanoSvg();
+  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  let vb = null;
+  try { const b = svg.viewBox.baseVal; if (b && b.width) vb = b; } catch (err) {}
+  if (!vb) vb = { width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+  const sw = Math.max(2, Math.min(vb.width, vb.height) / 220);
+
+  simboloLineaPlanoEl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  simboloLineaPlanoEl.setAttribute('x1', sp.x.toFixed(1));
+  simboloLineaPlanoEl.setAttribute('y1', sp.y.toFixed(1));
+  simboloLineaPlanoEl.setAttribute('x2', sp.x.toFixed(1));
+  simboloLineaPlanoEl.setAttribute('y2', sp.y.toFixed(1));
+  simboloLineaPlanoEl.setAttribute('stroke', '#1F4E79');
+  simboloLineaPlanoEl.setAttribute('stroke-width', sw.toFixed(1));
+  svg.appendChild(simboloLineaPlanoEl);
+}
+
+function _simboloLineaPlanoMV(e) {
+  if (!simboloLineaPlanoEl) return;
+  e.preventDefault();
+  const svg = _getPlanoSvg();
+  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  simboloLineaPlanoEl.setAttribute('x2', sp.x.toFixed(1));
+  simboloLineaPlanoEl.setAttribute('y2', sp.y.toFixed(1));
+}
+
+function _simboloLineaPlanoMU() {
+  if (!simboloLineaPlanoEl) return;
+  const x1 = parseFloat(simboloLineaPlanoEl.getAttribute('x1')), y1 = parseFloat(simboloLineaPlanoEl.getAttribute('y1'));
+  const x2 = parseFloat(simboloLineaPlanoEl.getAttribute('x2')), y2 = parseFloat(simboloLineaPlanoEl.getAttribute('y2'));
+  if (Math.hypot(x2 - x1, y2 - y1) < 3) {
+    simboloLineaPlanoEl.remove();
+  } else {
+    simboloLineaPlanoEl.dataset.planoEl = '1';
+    simboloLineaPlanoEl.style.cursor = 'move';
+  }
+  simboloLineaPlanoEl = null;
 }
 
 // Pincel manual para blanquear zonas concretas del fondo (plano/foto original).
@@ -1588,6 +1775,7 @@ function togglePlanoBorrarFondo() {
   if (borrandoFondoPlano) {
     if (planoEditMode) togglePlanoEdit();
     if (dibujandoFlechaPlano) togglePlanoAddFlecha();
+    _cancelarSimboloActivoPlano();
     btn.classList.add('btn-danger');
     btn.classList.remove('btn-outline-danger');
     btn.innerHTML = '<i class="bi bi-eraser-fill me-1"></i>Borrando... (clic aqui para salir)';
