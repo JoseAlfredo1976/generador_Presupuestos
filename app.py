@@ -106,6 +106,11 @@ if not _secret_key:
     _secret_key = secrets.token_hex(32)
 app.secret_key = _secret_key
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB
+# Limite APARTE de Werkzeug para campos de formulario normales (no archivos):
+# por defecto son solo 500 KB, y el SVG del croquis con el plano de fondo
+# incrustado (base64) puede pesar varios MB -> 413 "Request Entity Too Large"
+# en /api/generar_croquis al mandar svg_data como campo de texto normal.
+app.config["MAX_FORM_MEMORY_SIZE"] = 100 * 1024 * 1024  # 100 MB
 
 # El proxy de Railway cierra la conexion si el servidor no manda ningun byte
 # de vuelta durante 5 minutos (ver docs.railway.com/networking/public-networking/
