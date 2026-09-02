@@ -390,6 +390,9 @@ input[type=number].tb-num {
       <button class="btn btn-sm btn-outline-dark" onclick="svgAddText()">
         <i class="bi bi-fonts me-1"></i>Anadir texto
       </button>
+      <button class="btn btn-sm btn-outline-dark" id="btn-add-flecha" onclick="toggleAddFlecha()">
+        <i class="bi bi-arrow-up-right me-1"></i>Anadir flecha
+      </button>
       <button class="btn btn-sm btn-outline-danger" id="btn-borrar-fondo" onclick="toggleBorrarFondo()">
         <i class="bi bi-eraser me-1"></i>Borrar zonas del fondo
       </button>
@@ -1373,6 +1376,7 @@ function _svgKey(e) {
 // ─ public API
 function setSvgEditMode(on) {
   if (on && borrandoFondo) toggleBorrarFondo();
+  if (on && dibujandoFlecha) toggleAddFlecha();
   svgEditMode = on;
   const btn = document.getElementById('btn-svg-edit');
   if (on) {
@@ -1423,6 +1427,97 @@ function svgAddText() {
   _svgSelect(el);
 }
 
+// Asegura que exista el marker de flecha "#arr" en <defs> (la IA lo suele
+// incluir para las tuberias, pero si el plano no tiene ninguna puede faltar).
+function _asegurarMarkerFlecha(svg) {
+  if (svg.querySelector('marker#arr')) return;
+  let defs = svg.querySelector('defs');
+  if (!defs) {
+    defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    svg.insertBefore(defs, svg.firstChild);
+  }
+  defs.insertAdjacentHTML('beforeend',
+    '<marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">' +
+    '<path d="M0,0 L8,3 L0,6 Z" fill="#1F4E79"/></marker>');
+}
+
+// Anadir flecha: modo dibujo, arrastra desde el punto de inicio hasta el
+// punto final para crear una linea con punta de flecha (igual estilo que
+// las tuberias del plano).
+let dibujandoFlecha = false;
+let flechaEl = null;
+
+function toggleAddFlecha() {
+  const svg = _getSvg();
+  if (!svg) { alert('Genera primero el plano con IA.'); return; }
+  dibujandoFlecha = !dibujandoFlecha;
+  const btn = document.getElementById('btn-add-flecha');
+  if (dibujandoFlecha) {
+    if (svgEditMode) setSvgEditMode(false);
+    if (borrandoFondo) toggleBorrarFondo();
+    _asegurarMarkerFlecha(svg);
+    btn.classList.add('btn-primary');
+    btn.classList.remove('btn-outline-dark');
+    btn.innerHTML = '<i class="bi bi-arrow-up-right me-1"></i>Arrastra para dibujar (clic aqui para salir)';
+    svg.style.cursor = 'crosshair';
+    svg.addEventListener('mousedown', _flechaMD);
+    svg.addEventListener('mousemove', _flechaMV);
+    window.addEventListener('mouseup', _flechaMU);
+  } else {
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-outline-dark');
+    btn.innerHTML = '<i class="bi bi-arrow-up-right me-1"></i>Anadir flecha';
+    svg.style.cursor = '';
+    svg.removeEventListener('mousedown', _flechaMD);
+    svg.removeEventListener('mousemove', _flechaMV);
+    window.removeEventListener('mouseup', _flechaMU);
+  }
+}
+
+function _flechaMD(e) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const svg = _getSvg();
+  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  let vb = null;
+  try { const b = svg.viewBox.baseVal; if (b && b.width) vb = b; } catch (err) {}
+  if (!vb) vb = { width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+
+  flechaEl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  flechaEl.setAttribute('x1', sp.x.toFixed(1));
+  flechaEl.setAttribute('y1', sp.y.toFixed(1));
+  flechaEl.setAttribute('x2', sp.x.toFixed(1));
+  flechaEl.setAttribute('y2', sp.y.toFixed(1));
+  flechaEl.setAttribute('stroke', '#1F4E79');
+  flechaEl.setAttribute('stroke-width', Math.max(2, Math.min(vb.width, vb.height) / 220));
+  flechaEl.setAttribute('marker-end', 'url(#arr)');
+  svg.appendChild(flechaEl);
+}
+
+function _flechaMV(e) {
+  if (!flechaEl) return;
+  e.preventDefault();
+  const svg = _getSvg();
+  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  flechaEl.setAttribute('x2', sp.x.toFixed(1));
+  flechaEl.setAttribute('y2', sp.y.toFixed(1));
+}
+
+function _flechaMU() {
+  if (!flechaEl) return;
+  const x1 = parseFloat(flechaEl.getAttribute('x1')), y1 = parseFloat(flechaEl.getAttribute('y1'));
+  const x2 = parseFloat(flechaEl.getAttribute('x2')), y2 = parseFloat(flechaEl.getAttribute('y2'));
+  if (Math.hypot(x2 - x1, y2 - y1) < 3) {
+    // Clic sin arrastrar: no crear una flecha de longitud casi nula
+    flechaEl.remove();
+  } else {
+    flechaEl.dataset.svgEl = '1';
+    flechaEl.style.cursor = 'move';
+  }
+  svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+  flechaEl = null;
+}
+
 // Pincel manual para blanquear zonas concretas del fondo (plano/foto
 // original): el usuario elige exactamente que se borra, en vez de un filtro
 // automatico por color o del criterio de la IA. Cada trazo es un <path>
@@ -1435,6 +1530,7 @@ let borrarFondoPath = null;
 function toggleBorrarFondo() {
   const svg = _getSvg();
   if (!svg) { alert('Genera primero el plano con IA.'); return; }
+  if (!borrandoFondo && dibujandoFlecha) toggleAddFlecha();
   borrandoFondo = !borrandoFondo;
   const btn = document.getElementById('btn-borrar-fondo');
   const grosorWrap = document.getElementById('borrar-fondo-grosor-wrap');

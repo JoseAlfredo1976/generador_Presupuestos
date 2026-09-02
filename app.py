@@ -234,13 +234,18 @@ def _marcar_timestamps_video(wc_report: dict, session_id: str, videos_persistido
             local_idx_por_global.append(None)  # imagen/PDF, no es un video
 
     def _anotar(obs: dict) -> None:
-        for n in obs.get("imagenes") or []:
-            i = int(n) - 1  # "imagenes" es 1-indexado
-            if 0 <= i < len(local_idx_por_global) and local_idx_por_global[i]:
-                src_original, local_idx = local_idx_por_global[i]
-                obs["_video"] = videos_persistidos[src_original]
-                obs["_t"] = round(local_idx * _SEGUNDOS_POR_FOTOGRAMA, 1)
-                return
+        # El campo del esquema WinCam es "foto" (un unico entero 1-indexado,
+        # ver WINCAM_SCHEMA en core/ai_analyst.py), NO "imagenes" (una lista
+        # que no existe en ese esquema - con ese nombre esta funcion nunca
+        # marcaba ninguna observacion, aunque hubiera videos reproducibles).
+        try:
+            i = int(obs.get("foto")) - 1
+        except (TypeError, ValueError):
+            return
+        if 0 <= i < len(local_idx_por_global) and local_idx_por_global[i]:
+            src_original, local_idx = local_idx_por_global[i]
+            obs["_video"] = videos_persistidos[src_original]
+            obs["_t"] = round(local_idx * _SEGUNDOS_POR_FOTOGRAMA, 1)
 
     for seccion in wc_report.get("secciones") or []:
         for obs in seccion.get("observaciones_tabla") or []:
