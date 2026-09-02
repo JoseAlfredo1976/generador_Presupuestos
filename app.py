@@ -729,10 +729,26 @@ def _plano_svg_desde_archivo(src: Path, api_key: str = "", contexto: str = "",
         }
 
     # ── PASO 1: extraer estructura como JSON con posiciones en % ──────────
+    _instr_filtro_manual = """
+IMPORTANTE - este plano YA tiene contenido impreso/dibujado de origen (paredes,
+tuberias, texto, etc.) y ADEMAS anotaciones añadidas a mano encima (boligrafo,
+rotulador). Extrae UNICAMENTE lo anadido A MANO, e IGNORA por completo lo que
+ya estaba impreso/dibujado en el documento original - AUNQUE sea del MISMO
+COLOR (por ejemplo, si el plano impreso ya tiene tuberias en azul y las
+anotaciones a mano tambien son azules, no te fies del color: fijate en el
+ESTILO DEL TRAZO). Diferencialo por como esta trazado, no por el color:
+- Impreso/CAD/regla: lineas perfectamente rectas, grosor uniforme, texto con
+  tipografia de imprenta uniforme.
+- A mano: trazo irregular, algo ondulado, grosor variable, letra manuscrita.
+Si tienes dudas sobre si un elemento es de origen o anadido a mano, NO lo
+incluyas (mejor omitir algo dudoso que duplicar un elemento que ya esta
+correctamente impreso en el plano).
+""" if conservar_fondo else ""
+
     PROMPT_PASO1 = """Analiza este croquis/plano con mucha atencion. Extrae TODOS los elementos visibles.
 Para cada elemento indica su posicion como porcentaje del ancho (x) y alto (y) de la imagen, de 0 a 100.
 Sé muy preciso con las posiciones relativas: si un pozo esta a la izquierda de otro, el x del primero debe ser menor.
-
+""" + _instr_filtro_manual + """
 Devuelve UNICAMENTE este JSON (sin markdown, sin texto adicional):
 {
   "tuberias": [{"x1":25,"y1":40,"x2":70,"y2":40,"dn":"DN150","material":"PVC","longitud":"12m","flecha":true}],
