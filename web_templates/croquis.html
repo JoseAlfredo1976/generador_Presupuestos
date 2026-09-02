@@ -390,6 +390,13 @@ input[type=number].tb-num {
       <button class="btn btn-sm btn-outline-dark" onclick="svgAddText()">
         <i class="bi bi-fonts me-1"></i>Anadir texto
       </button>
+      <button class="btn btn-sm btn-outline-danger" id="btn-borrar-fondo" onclick="toggleBorrarFondo()">
+        <i class="bi bi-eraser me-1"></i>Borrar zonas del fondo
+      </button>
+      <span id="borrar-fondo-grosor-wrap" class="d-inline-flex align-items-center gap-1" style="display:none!important;font-size:.78rem">
+        <label class="mb-0 text-muted">Grosor</label>
+        <input type="range" id="borrar-fondo-grosor" min="5" max="60" value="20" style="width:80px">
+      </span>
       <button class="btn btn-sm btn-outline-primary" onclick="descargarSVG()">
         <i class="bi bi-download me-1"></i>Descargar SVG
       </button>
@@ -1365,6 +1372,7 @@ function _svgKey(e) {
 
 // ─ public API
 function setSvgEditMode(on) {
+  if (on && borrandoFondo) toggleBorrarFondo();
   svgEditMode = on;
   const btn = document.getElementById('btn-svg-edit');
   if (on) {
@@ -1413,6 +1421,83 @@ function svgAddText() {
 
   svgGenerado = svg.outerHTML;
   _svgSelect(el);
+}
+
+// Pincel manual para blanquear zonas concretas del fondo (plano/foto
+// original): el usuario elige exactamente que se borra, en vez de un filtro
+// automatico por color o del criterio de la IA. Cada trazo es un <path>
+// blanco insertado justo encima del fondo (imagen de fondo = primer hijo del
+// SVG) y debajo de la capa de anotaciones, y queda marcado como elemento
+// normal del editor (se puede seleccionar/deshacer con "Editar elementos").
+let borrandoFondo = false;
+let borrarFondoPath = null;
+
+function toggleBorrarFondo() {
+  const svg = _getSvg();
+  if (!svg) { alert('Genera primero el plano con IA.'); return; }
+  borrandoFondo = !borrandoFondo;
+  const btn = document.getElementById('btn-borrar-fondo');
+  const grosorWrap = document.getElementById('borrar-fondo-grosor-wrap');
+  if (borrandoFondo) {
+    if (svgEditMode) setSvgEditMode(false);
+    btn.classList.add('btn-danger');
+    btn.classList.remove('btn-outline-danger');
+    btn.innerHTML = '<i class="bi bi-eraser-fill me-1"></i>Borrando... (clic aqui para salir)';
+    grosorWrap.style.setProperty('display', 'inline-flex', 'important');
+    svg.style.cursor = 'crosshair';
+    svg.addEventListener('mousedown', _borrarFondoMD);
+    svg.addEventListener('mousemove', _borrarFondoMV);
+    window.addEventListener('mouseup', _borrarFondoMU);
+  } else {
+    btn.classList.remove('btn-danger');
+    btn.classList.add('btn-outline-danger');
+    btn.innerHTML = '<i class="bi bi-eraser me-1"></i>Borrar zonas del fondo';
+    grosorWrap.style.setProperty('display', 'none', 'important');
+    svg.style.cursor = '';
+    svg.removeEventListener('mousedown', _borrarFondoMD);
+    svg.removeEventListener('mousemove', _borrarFondoMV);
+    window.removeEventListener('mouseup', _borrarFondoMU);
+  }
+}
+
+function _borrarFondoMD(e) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const svg = _getSvg();
+  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  const grosor = document.getElementById('borrar-fondo-grosor').value;
+  borrarFondoPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  borrarFondoPath.setAttribute('d', `M ${sp.x.toFixed(1)} ${sp.y.toFixed(1)}`);
+  borrarFondoPath.setAttribute('stroke', '#ffffff');
+  borrarFondoPath.setAttribute('stroke-width', grosor);
+  borrarFondoPath.setAttribute('fill', 'none');
+  borrarFondoPath.setAttribute('stroke-linecap', 'round');
+  borrarFondoPath.setAttribute('stroke-linejoin', 'round');
+  // Se inserta justo despues del fondo (primer hijo = imagen de fondo), para
+  // quedar POR ENCIMA del fondo pero POR DEBAJO de la capa de anotaciones.
+  const fondoImg = svg.querySelector('image');
+  if (fondoImg && fondoImg.nextSibling) {
+    svg.insertBefore(borrarFondoPath, fondoImg.nextSibling);
+  } else {
+    svg.appendChild(borrarFondoPath);
+  }
+  borrarFondoPath.dataset.svgEl = '1';
+}
+
+function _borrarFondoMV(e) {
+  if (!borrarFondoPath) return;
+  e.preventDefault();
+  const svg = _getSvg();
+  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  borrarFondoPath.setAttribute('d',
+    borrarFondoPath.getAttribute('d') + ` L ${sp.x.toFixed(1)} ${sp.y.toFixed(1)}`);
+}
+
+function _borrarFondoMU() {
+  if (borrarFondoPath) {
+    svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+    borrarFondoPath = null;
+  }
 }
 
 function _enableSvgEdit() {
