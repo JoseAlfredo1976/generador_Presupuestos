@@ -270,10 +270,17 @@
       <input type="file" id="croquis-input" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf" style="display:none" onchange="setCroquis(this.files[0])">
       <div id="croquis-item"></div>
       <div class="form-check mt-2">
-        <input class="form-check-input" type="checkbox" id="croquis-conservar-fondo">
+        <input class="form-check-input" type="checkbox" id="croquis-conservar-fondo" onchange="document.getElementById('croquis-tinta-azul-wrap').style.display = this.checked ? '' : 'none'">
         <label class="form-check-label small" for="croquis-conservar-fondo">
           Es un plano/foto real con anotaciones a boligrafo encima: conservar el plano original tal cual de fondo y solo redibujar en limpio las anotaciones
           <span class="text-muted">(sin marcar: se regenera el plano completo desde cero, para bocetos a mano alzada)</span>
+        </label>
+      </div>
+      <div class="form-check mb-1 ms-3" id="croquis-tinta-azul-wrap" style="display:none">
+        <input class="form-check-input" type="checkbox" id="croquis-tinta-azul">
+        <label class="form-check-label small" for="croquis-tinta-azul">
+          Las anotaciones estan escritas a boligrafo AZUL: borrarlas del fondo antes de redibujarlas en limpio
+          <span class="text-muted">(NO marcar si el plano tiene tramos/elementos originales en color azul)</span>
         </label>
       </div>
     </div>
@@ -683,6 +690,7 @@ async function startAnalysis() {
   fd.append('calle', document.getElementById('f-calle')?.value.trim() || '');
   fd.append('poblacion', document.getElementById('f-poblacion')?.value.trim() || '');
   if (document.getElementById('croquis-conservar-fondo')?.checked) fd.append('croquis_conservar_fondo', '1');
+  if (document.getElementById('croquis-tinta-azul')?.checked) fd.append('croquis_borrar_tinta_azul', '1');
   if (currentApiKey) fd.append('api_key', currentApiKey);
   for (const [, f] of files) fd.append('archivos', f);
   if (croquis) fd.append('croquis', croquis);

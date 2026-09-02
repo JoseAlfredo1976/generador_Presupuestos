@@ -226,10 +226,17 @@ input[type=number].tb-num {
       Los PDFs y escaneos OCR no se pueden editar directamente. Pulsa <strong>"Generar plano con IA"</strong> para que la IA analice el documento y genere un plano tecnico limpio.
     </div>
     <div class="form-check mt-2 mb-1">
-      <input class="form-check-input" type="checkbox" id="chk-conservar-fondo-pdf">
+      <input class="form-check-input" type="checkbox" id="chk-conservar-fondo-pdf" onchange="document.getElementById('chk-tinta-azul-pdf-wrap').style.display = this.checked ? '' : 'none'">
       <label class="form-check-label small" for="chk-conservar-fondo-pdf">
         Es un plano/foto real con anotaciones a boligrafo encima: conservar el plano original tal cual de fondo y solo redibujar en limpio las anotaciones
         <span class="text-muted">(sin marcar: se regenera el plano completo desde cero, para bocetos a mano alzada)</span>
+      </label>
+    </div>
+    <div class="form-check mb-1 ms-3" id="chk-tinta-azul-pdf-wrap" style="display:none">
+      <input class="form-check-input" type="checkbox" id="chk-tinta-azul-pdf">
+      <label class="form-check-label small" for="chk-tinta-azul-pdf">
+        Las anotaciones estan escritas a boligrafo AZUL: borrarlas del fondo antes de redibujarlas en limpio
+        <span class="text-muted">(NO marcar si el plano tiene tramos/elementos originales en color azul, se borrarian por error)</span>
       </label>
     </div>
     <button class="btn btn-analyze mt-1" onclick="generarPlanoIA()"
@@ -305,9 +312,15 @@ input[type=number].tb-num {
       <!-- Generar plano IA -->
       <div class="tb-sep"></div>
       <div class="form-check d-inline-flex align-items-center me-2" style="font-size:.78rem">
-        <input class="form-check-input" type="checkbox" id="chk-conservar-fondo-img" style="margin-top:0">
+        <input class="form-check-input" type="checkbox" id="chk-conservar-fondo-img" style="margin-top:0" onchange="document.getElementById('chk-tinta-azul-img-wrap').style.display = this.checked ? 'inline-flex' : 'none'">
         <label class="form-check-label ms-1" for="chk-conservar-fondo-img" title="Conserva la foto/plano original de fondo y solo redibuja en limpio las anotaciones a boligrafo, en vez de regenerar el plano completo desde cero">
           Conservar fondo original
+        </label>
+      </div>
+      <div class="form-check d-inline-flex align-items-center me-2" id="chk-tinta-azul-img-wrap" style="font-size:.78rem;display:none">
+        <input class="form-check-input" type="checkbox" id="chk-tinta-azul-img" style="margin-top:0">
+        <label class="form-check-label ms-1" for="chk-tinta-azul-img" title="Borra la tinta azul del fondo antes de redibujar las anotaciones en limpio. NO marcar si el plano tiene tramos/elementos originales en azul.">
+          Anotaciones en boli azul: borrarlas
         </label>
       </div>
       <button class="tb-btn" id="btn-ia-plano" onclick="generarPlanoIA()"
@@ -478,10 +491,17 @@ input[type=number].tb-num {
     <div id="lote-lista" class="mt-2"></div>
 
     <div class="form-check mt-3">
-      <input class="form-check-input" type="checkbox" id="lote-conservar-fondo">
+      <input class="form-check-input" type="checkbox" id="lote-conservar-fondo" onchange="document.getElementById('lote-tinta-azul-wrap').style.display = this.checked ? '' : 'none'">
       <label class="form-check-label small" for="lote-conservar-fondo">
         Son planos/fotos reales con anotaciones a boligrafo encima: conservar cada plano original tal cual de fondo y solo redibujar en limpio las anotaciones
         <span class="text-muted">(sin marcar: se regenera cada plano completo desde cero, para bocetos a mano alzada)</span>
+      </label>
+    </div>
+    <div class="form-check mb-1 ms-3" id="lote-tinta-azul-wrap" style="display:none">
+      <input class="form-check-input" type="checkbox" id="lote-tinta-azul">
+      <label class="form-check-label small" for="lote-tinta-azul">
+        Las anotaciones estan escritas a boligrafo AZUL: borrarlas del fondo antes de redibujarlas en limpio
+        <span class="text-muted">(NO marcar si algun plano tiene tramos/elementos originales en color azul)</span>
       </label>
     </div>
 
@@ -1039,6 +1059,8 @@ async function generarPlanoIA() {
   const ctx_txt = document.getElementById('plano-ia-ctx')?.value.trim() || '';
   const conservarFondo = !!(document.getElementById('chk-conservar-fondo-pdf')?.checked
                           || document.getElementById('chk-conservar-fondo-img')?.checked);
+  const borrarTintaAzul = !!(document.getElementById('chk-tinta-azul-pdf')?.checked
+                           || document.getElementById('chk-tinta-azul-img')?.checked);
 
   const _doRequest = async blob => {
     const fd = new FormData();
@@ -1049,6 +1071,7 @@ async function generarPlanoIA() {
     }
     if (ctx_txt) fd.append('contexto', ctx_txt);
     if (conservarFondo) fd.append('conservar_fondo', '1');
+    if (borrarTintaAzul) fd.append('borrar_tinta_azul', '1');
     {% if not api_key_set %}
     fd.append('api_key', document.getElementById('f-apikey-plano').value.trim());
     {% endif %}
@@ -1548,6 +1571,7 @@ async function generarPlanosLote() {
   fd.append('direccion', document.getElementById('lote-direccion').value.trim());
   fd.append('contexto', document.getElementById('lote-contexto').value.trim());
   if (document.getElementById('lote-conservar-fondo').checked) fd.append('conservar_fondo', '1');
+  if (document.getElementById('lote-tinta-azul').checked) fd.append('borrar_tinta_azul', '1');
   {% if not api_key_set %}
   fd.append('api_key', document.getElementById('lote-apikey').value.trim());
   {% endif %}

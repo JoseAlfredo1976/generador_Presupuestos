@@ -676,7 +676,8 @@ def _quitar_rect_fondo_indeseado(svg_text: str, bg_w: float, bg_h: float) -> str
 
 
 def _plano_svg_desde_archivo(src: Path, api_key: str = "", contexto: str = "",
-                              conservar_fondo: bool = False) -> tuple[str, dict]:
+                              conservar_fondo: bool = False,
+                              borrar_tinta_azul: bool = False) -> tuple[str, dict]:
     """Analiza un boceto/croquis (imagen o PDF) y devuelve (svg, estructura).
 
     Dos escenarios distintos, seleccionados por `conservar_fondo`:
@@ -778,10 +779,12 @@ Omite claves cuyo array este vacio. Si un campo es desconocido usa null."""
         # El original se conserva EXACTO como fondo; la IA solo regenera en
         # limpio la capa de anotaciones, superpuesta.
         fondo_png, bg_w, bg_h = _fondo_png_desde_archivo(src)
-        # Las anotaciones a boligrafo AZUL se borran del fondo (se blanquean)
-        # porque se redibujan en limpio como capa superpuesta: si no, se
-        # verian dos veces (la tinta original + el trazo limpio encima).
-        _quitar_tinta_azul(fondo_png)
+        # Borrar la tinta azul es OPCIONAL y separado de conservar el fondo:
+        # solo tiene sentido si lo azul son anotaciones a boligrafo, NO si el
+        # plano tiene tramos/elementos originales dibujados en azul (en ese
+        # caso borrarlos seria un error, se perderia informacion del plano).
+        if borrar_tinta_azul:
+            _quitar_tinta_azul(fondo_png)
         fondo_b64 = base64.b64encode(fondo_png.read_bytes()).decode()
 
         PROMPT_PASO2 = f"""Genera UNICAMENTE una capa de anotaciones tecnicas en SVG, para superponer
@@ -1213,6 +1216,7 @@ def api_generar_plano_ia():
             api_key=request.form.get("api_key", ""),
             contexto=request.form.get("contexto", ""),
             conservar_fondo=request.form.get("conservar_fondo", "0") == "1",
+            borrar_tinta_azul=request.form.get("borrar_tinta_azul", "0") == "1",
         )
         return jsonify({"svg": svg, "estructura": estructura})
     except ValueError as e:
@@ -1265,6 +1269,7 @@ def api_generar_planos_multiples():
                 api_key=request.form.get("api_key", ""),
                 contexto=request.form.get("contexto", ""),
                 conservar_fondo=request.form.get("conservar_fondo", "0") == "1",
+                borrar_tinta_azul=request.form.get("borrar_tinta_azul", "0") == "1",
                 titulo=request.form.get("titulo", "Croquis de Red"),
                 num_ref=request.form.get("num_ref", ""),
                 direccion=request.form.get("direccion", ""),
@@ -1280,7 +1285,8 @@ def api_generar_planos_multiples():
 
 
 def _procesar_planos_multiples_bg(job_id, archivos, tmp_dir, api_key, contexto, conservar_fondo,
-                                   titulo, num_ref, direccion, fecha_raw, notas, base_url):
+                                   titulo, num_ref, direccion, fecha_raw, notas, base_url,
+                                   borrar_tinta_azul=False):
     import traceback as _tb_mod
     import shutil as _sh
 
@@ -1291,7 +1297,8 @@ def _procesar_planos_multiples_bg(job_id, archivos, tmp_dir, api_key, contexto, 
                 subtitulo = Path(nombre_original).stem
                 try:
                     svg, _estructura = _plano_svg_desde_archivo(
-                        dest, api_key=api_key, contexto=contexto, conservar_fondo=conservar_fondo)
+                        dest, api_key=api_key, contexto=contexto, conservar_fondo=conservar_fondo,
+                        borrar_tinta_azul=borrar_tinta_azul)
                     png = _svg_a_png(svg)
                     paginas.append((png, subtitulo))
                 except Exception as e:
@@ -1659,6 +1666,7 @@ def api_analizar():
                 num_ref=num_ref, cliente=cliente, proyecto=proyecto, calle=calle,
                 poblacion=poblacion, informe_stem=_informe_stem, base_url=request.url_root,
                 croquis_conservar_fondo=request.form.get("croquis_conservar_fondo", "0") == "1",
+                croquis_borrar_tinta_azul=request.form.get("croquis_borrar_tinta_azul", "0") == "1",
             ),
             daemon=True,
         ).start()
@@ -1673,7 +1681,8 @@ def api_analizar():
 
 def _procesar_analisis_bg(session_id, saved_files, croquis_path, tipo, formato, context,
                            api_key, num_ref, cliente, proyecto, calle, poblacion,
-                           informe_stem, base_url, croquis_conservar_fondo=False):
+                           informe_stem, base_url, croquis_conservar_fondo=False,
+                           croquis_borrar_tinta_azul=False):
     """Trabajo pesado de /api/analizar (transcodificar videos, llamar a Claude,
     generar DOCX/PDF/croquis), ejecutado en un hilo aparte para no bloquear la
     respuesta HTTP: el proxy de Railway corta la conexion si el servidor no
@@ -1835,7 +1844,8 @@ def _procesar_analisis_bg(session_id, saved_files, croquis_path, tipo, formato, 
                     svg, _estructura = _plano_svg_desde_archivo(
                         croquis_path, api_key=api_key,
                         contexto=f"{proyecto} {calle} {poblacion}".strip(),
-                        conservar_fondo=croquis_conservar_fondo)
+                        conservar_fondo=croquis_conservar_fondo,
+                        borrar_tinta_azul=croquis_borrar_tinta_azul)
                     titulo_plano = f"Croquis de red - {proyecto}" if proyecto else "Croquis de red"
                     direccion_plano = ", ".join(x for x in (calle, poblacion) if x)
                     fecha_plano = datetime.now().strftime("%d/%m/%Y")
