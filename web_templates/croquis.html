@@ -203,7 +203,7 @@ input[type=number].tb-num {
       <small>JPG, PNG, WEBP, BMP &middot; <strong>PDF</strong> (escaner OCR, plano digitalizado) &middot; Foto o captura de pantalla</small>
     </div>
     <input type="file" id="img-input" accept=".jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif,.pdf"
-           style="display:none" onchange="onFileSelected(this.files[0])">
+           multiple style="display:none" onchange="onMainFilesSelected(this.files)">
   </div>
 
   <!-- Estado: PDF cargado (sin editor canvas) -->
@@ -373,6 +373,9 @@ input[type=number].tb-num {
       </button>
       <button class="btn btn-sm btn-outline-dark" id="btn-svg-edit" onclick="toggleSvgEdit()">
         <i class="bi bi-cursor me-1"></i>Editar elementos
+      </button>
+      <button class="btn btn-sm btn-outline-dark" onclick="svgAddText()">
+        <i class="bi bi-fonts me-1"></i>Anadir texto
       </button>
       <button class="btn btn-sm btn-outline-primary" onclick="descargarSVG()">
         <i class="bi bi-download me-1"></i>Descargar SVG
@@ -581,9 +584,23 @@ dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dra
 dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
 dz.addEventListener('drop', e => {
   e.preventDefault(); dz.classList.remove('drag-over');
-  const f = e.dataTransfer.files[0];
-  if (f) onFileSelected(f);
+  onMainFilesSelected(e.dataTransfer.files);
 });
+
+// Si se sueltan/seleccionan VARIOS archivos aqui (aunque no se haya pulsado
+// el boton de "lote"), se pasa automaticamente al modo lote: el editor de un
+// solo plano solo puede trabajar con 1 archivo, y si no se hace esto el
+// usuario pierde en silencio todos menos el primero.
+function onMainFilesSelected(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  if (files.length > 1) {
+    activarModoLote();
+    onLoteFilesSelected(files);
+    return;
+  }
+  onFileSelected(files[0]);
+}
 
 function onFileSelected(file) {
   if (!file) return;
@@ -1324,10 +1341,10 @@ function _svgKey(e) {
 }
 
 // ─ public API
-function toggleSvgEdit() {
-  svgEditMode = !svgEditMode;
+function setSvgEditMode(on) {
+  svgEditMode = on;
   const btn = document.getElementById('btn-svg-edit');
-  if (svgEditMode) {
+  if (on) {
     btn.classList.add('btn-primary');
     btn.classList.remove('btn-outline-dark');
     btn.innerHTML = '<i class="bi bi-cursor-fill me-1"></i>Editando...';
@@ -1338,6 +1355,41 @@ function toggleSvgEdit() {
     btn.innerHTML = '<i class="bi bi-cursor me-1"></i>Editar elementos';
     _disableSvgEdit();
   }
+}
+
+function toggleSvgEdit() { setSvgEditMode(!svgEditMode); }
+
+// Anade un <text> nuevo (independiente de editar/mover los ya existentes),
+// centrado en el plano, y lo deja seleccionado listo para arrastrarlo a su
+// sitio (activa el modo edicion si no estaba activo).
+function svgAddText() {
+  const svg = _getSvg();
+  if (!svg) { alert('Genera primero el plano con IA.'); return; }
+  const texto = prompt('Texto a anadir:', '');
+  if (!texto) return;
+  if (!svgEditMode) setSvgEditMode(true);
+
+  let vb = null;
+  try {
+    const b = svg.viewBox.baseVal;
+    if (b && b.width) vb = b;
+  } catch (e) { /* sin viewBox */ }
+  if (!vb) vb = { x: 0, y: 0, width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  el.setAttribute('x', vb.x + vb.width / 2);
+  el.setAttribute('y', vb.y + vb.height / 2);
+  el.setAttribute('font-family', 'Arial');
+  el.setAttribute('font-size', Math.max(12, Math.min(vb.width, vb.height) / 45));
+  el.setAttribute('fill', '#1F4E79');
+  el.setAttribute('text-anchor', 'middle');
+  el.textContent = texto;
+  svg.appendChild(el);
+  el.dataset.svgEl = '1';
+  el.style.cursor = 'move';
+
+  svgGenerado = svg.outerHTML;
+  _svgSelect(el);
 }
 
 function _enableSvgEdit() {
@@ -1429,6 +1481,21 @@ window.addEventListener('resize', () => {
 
 // ── Modo lote: varios PDF/imagenes -> un Word con un plano por pagina ───────
 let loteFiles = [];
+
+function activarModoLote() {
+  document.getElementById('modo-individual').style.display = 'none';
+  document.getElementById('modo-lote').style.display = '';
+  document.getElementById('btn-toggle-lote').innerHTML =
+    '<i class="bi bi-arrow-left me-1"></i>Volver al editor de un plano';
+}
+
+const loteZone = document.getElementById('lote-zone');
+loteZone.addEventListener('dragover', e => { e.preventDefault(); loteZone.classList.add('drag-over'); });
+loteZone.addEventListener('dragleave', () => loteZone.classList.remove('drag-over'));
+loteZone.addEventListener('drop', e => {
+  e.preventDefault(); loteZone.classList.remove('drag-over');
+  onLoteFilesSelected(e.dataTransfer.files);
+});
 
 function toggleModoLote() {
   const individual = document.getElementById('modo-individual');
