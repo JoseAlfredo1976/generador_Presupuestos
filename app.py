@@ -1550,9 +1550,18 @@ def api_generar_croquis():
         except ValueError:
             fecha_display = fecha_raw
 
-        # Contenido de imagen: SVG inline o foto base64
+        # Contenido de imagen: SVG rasterizado a PNG (WeasyPrint no renderiza
+        # bien el <image> base64 embebido dentro de un <svg> inline: si el
+        # plano lleva foto de fondo, salia en blanco/negro en el PDF aunque
+        # las anotaciones si se veian). Rasterizar con _svg_a_png (PyMuPDF,
+        # ya probado y funciona) evita el problema por completo.
         if svg_data:
-            img_content = f'<div style="width:100%">{svg_data}</div>'
+            try:
+                _png_svg = _svg_a_png(svg_data)
+                _b64_svg = base64.b64encode(_png_svg.read_bytes()).decode()
+                img_content = f'<img src="data:image/png;base64,{_b64_svg}" alt="{titulo}">'
+            except Exception:
+                img_content = f'<div style="width:100%">{svg_data}</div>'
         else:
             suffix = Path(img_file.filename).suffix.lower()
             ALLOWED = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
