@@ -6,6 +6,7 @@ Report structure: 10-section professional sewer inspection report.
 import base64
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -14,6 +15,8 @@ import tempfile
 from pathlib import Path
 
 import anthropic
+
+logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-6"
 
@@ -337,9 +340,13 @@ def _encode_pdf(path: Path) -> str:
 
 
 def _extract_video_frames(video_path: Path, max_frames: int = 12) -> list[Path]:
+    if not video_path.exists() or video_path.stat().st_size == 0:
+        raise RuntimeError(
+            f"El video '{video_path.name}' esta vacio o no se subio correctamente."
+        )
     ffmpeg = _find_ffmpeg()
     tmp = Path(tempfile.mkdtemp())
-    subprocess.run(
+    result = subprocess.run(
         [ffmpeg, "-i", str(video_path),
          # 1 frame cada 5s y reescalado a max 1280px de ancho (sin ampliar) para
          # reducir peso/memoria del envio a Claude sin perder detalle de patologias
@@ -350,9 +357,12 @@ def _extract_video_frames(video_path: Path, max_frames: int = 12) -> list[Path]:
     )
     frames = sorted(tmp.glob("frame_*.jpg"))
     if not frames:
+        stderr_tail = result.stderr.decode("utf-8", errors="ignore").strip().splitlines()
+        detalle = " | ".join(stderr_tail[-5:]) if stderr_tail else "sin salida de ffmpeg"
+        logger.error("ffmpeg no extrajo frames de %s (rc=%s): %s", video_path.name, result.returncode, detalle)
         raise RuntimeError(
-            "No se pudieron extraer frames del video. "
-            "Comprueba que el archivo no esta corrupto."
+            f"No se pudieron extraer frames del video '{video_path.name}'. "
+            f"Comprueba que el archivo no esta corrupto. Detalle ffmpeg: {detalle}"
         )
     return frames
 
