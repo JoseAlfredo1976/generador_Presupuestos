@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 # ── Configuracion ─────────────────────────────────────────────────────────────
 
-SHEET_ID = "1tj9jsgCdmOm-lsrfZO0ocGCjlzdUkHTP"
+SHEET_ID = "1CzmpibqBUsvc0ZK4IlRheNto23kJkMLgBw3akT5pmQg"
 
 CREDS_PATH = Path(__file__).parent.parent / "config" / "google_credentials.json"
 

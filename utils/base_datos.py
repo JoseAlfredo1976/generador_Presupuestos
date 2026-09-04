@@ -40,8 +40,8 @@ TIPO_A_CATEGORIA: dict[str, str] = {
 
 # Overrides manuales cuando el BASE_DATOS no refleja el numero correcto
 OVERRIDES_SIGUIENTE: dict[str, int] = {
-    "POCERIA":                    4651,
-    "CONTRATOS DE MANTENIMIENTO": 2221,
+    "POCERIA":                    4684,
+    "CONTRATOS DE MANTENIMIENTO": 2224,
 }
 
 _clientes: list[str] | None = None
