@@ -301,6 +301,8 @@ body {
   font-size: .85rem;
 }
 .tbl-svc td { padding: 6px 8px; vertical-align: middle; font-size: .87rem; }
+.svc-row-excluida { opacity: .45; text-decoration: line-through; }
+.svc-row-excluida input:not([type="checkbox"]) { background: #f1f3f5; }
 
 /* ── Botones */
 .btn-next {
@@ -2392,23 +2394,28 @@ function okCondiciones() {
 function stepSvc() {
   prog(60);
   botMsg('Introduce las unidades y precios del servicio.');
-  const rows=(SVC_ROWS[tipo]||[]).map(([key,label])=>`
-    <tr>
+  const rows=(SVC_ROWS[tipo]||[]).map(([key,label])=>{
+    const k=key.toLowerCase();
+    return `
+    <tr id="s_${k}_row">
+      <td class="text-center"><input type="checkbox" class="form-check-input" id="s_${k}_incl" checked title="Incluir esta partida en el documento" onchange="_toggleSvcRow('${k}')"></td>
       <td class="fw-semibold" style="font-size:.87rem">${label}</td>
-      <td><input type="number" id="s_${key.toLowerCase()}_u" class="form-control form-control-sm svc-u" value="1" min="0" step="any" oninput="cSvc()"></td>
-      <td><input type="number" id="s_${key.toLowerCase()}_p" class="form-control form-control-sm svc-p" value="0" min="0" step="any" oninput="cSvc()"></td>
-      <td class="fw-bold svc-i" id="s_${key.toLowerCase()}_i">0,00 &euro;</td>
-    </tr>`).join('');
+      <td><input type="number" id="s_${k}_u" class="form-control form-control-sm svc-u" value="1" min="0" step="any" oninput="cSvc()"></td>
+      <td><input type="number" id="s_${k}_p" class="form-control form-control-sm svc-p" value="0" min="0" step="any" oninput="cSvc()"></td>
+      <td class="fw-bold svc-i" id="s_${k}_i">0,00 &euro;</td>
+    </tr>`;}).join('');
   const hasHoras=['limpieza_aerea','fresador','robot_limpieza'].includes(tipo);
   const hasTiempo=['limpieza_aerea','robot_limpieza'].includes(tipo);
   panel(`
     <table class="table table-bordered tbl-svc mb-3">
       <thead><tr>
+        <th style="width:40px" title="Incluir en el documento"><i class="bi bi-check2-square"></i></th>
         <th style="min-width:160px">Servicio</th>
         <th style="width:95px">Uds.</th><th style="width:110px">Precio/ud &euro;</th><th style="width:100px">Importe &euro;</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    <div class="mb-2" style="font-size:.78rem;color:#8fa3b8;">Desmarca una partida para que no aparezca en absoluto en el presupuesto generado.</div>
     ${hasHoras?`<div class="row g-2 mb-3">
       <div class="col-4"><label class="form-label">Horas estimadas</label><input id="f_horas" type="text" class="form-control" placeholder="4"></div>
       ${hasTiempo?`<div class="col-5"><label class="form-label">Tiempo estimado</label><input id="f_tiempo" type="text" class="form-control" placeholder="Medio dia"></div>`:''}
@@ -2431,6 +2438,9 @@ function stepSvc() {
       const p = document.getElementById(`s_${k}_p`);
       if (u && fd[k+'_uds']   !== undefined) u.value = fd[k+'_uds'];
       if (p && fd[k+'_precio'] !== undefined) p.value = fd[k+'_precio'];
+      const incl = document.getElementById(`s_${k}_incl`);
+      if (incl && fd[k+'_incluir'] !== undefined) incl.checked = fd[k+'_incluir'] !== '0';
+      _toggleSvcRow(k);
     });
     if (fd.horas_estimadas  && document.getElementById('f_horas'))  document.getElementById('f_horas').value  = fd.horas_estimadas;
     if (fd.tiempo_estimado  && document.getElementById('f_tiempo')) document.getElementById('f_tiempo').value = fd.tiempo_estimado;
@@ -2472,25 +2482,34 @@ function _htmlPartAdicionales() {
       <span class="nr">0</span> partida(s) &middot; Total c/IVA: <span class="tv">0,00 &euro;</span>
     </div>`;
 }
+function _toggleSvcRow(k) {
+  const incl=document.getElementById(`s_${k}_incl`)?.checked ?? true;
+  const row=document.getElementById(`s_${k}_row`);
+  if (row) row.classList.toggle('svc-row-excluida', !incl);
+  ['u','p'].forEach(suf=>{
+    const el=document.getElementById(`s_${k}_${suf}`);
+    if (el) el.disabled=!incl;
+  });
+  cSvc();
+}
 function cSvc() {
+  let tot=0;
   (SVC_ROWS[tipo]||[]).forEach(([key])=>{
     const k=key.toLowerCase();
-    const u=parseFloat(document.getElementById(`s_${k}_u`)?.value)||0;
-    const p=parseFloat(document.getElementById(`s_${k}_p`)?.value)||0;
+    const incl=document.getElementById(`s_${k}_incl`)?.checked ?? true;
+    const u=incl?(parseFloat(document.getElementById(`s_${k}_u`)?.value)||0):0;
+    const p=incl?(parseFloat(document.getElementById(`s_${k}_p`)?.value)||0):0;
     const iEl=document.getElementById(`s_${k}_i`); if(iEl) iEl.textContent=fmtE(u*p);
-  });
-  let tot=0;
-  document.querySelectorAll('.svc-u').forEach(u=>{
-    const p=u.closest('tr').querySelector('.svc-p');
-    tot+=(parseFloat(u.value)||0)*(parseFloat(p?.value)||0);
+    tot+=u*p;
   });
   const el=document.getElementById('tsvc'); if(el) el.textContent=fmtE(tot);
 }
 function okSvc() {
   (SVC_ROWS[tipo]||[]).forEach(([key])=>{
     const k=key.toLowerCase();
-    fd[k+'_uds']   =document.getElementById(`s_${k}_u`)?.value||'0';
-    fd[k+'_precio']=document.getElementById(`s_${k}_p`)?.value||'0';
+    fd[k+'_uds']    =document.getElementById(`s_${k}_u`)?.value||'0';
+    fd[k+'_precio'] =document.getElementById(`s_${k}_p`)?.value||'0';
+    fd[k+'_incluir']=(document.getElementById(`s_${k}_incl`)?.checked ?? true)?'1':'0';
   });
   if(document.getElementById('f_horas'))  fd.horas_estimadas =v('f_horas');
   if(document.getElementById('f_tiempo')) fd.tiempo_estimado =v('f_tiempo');

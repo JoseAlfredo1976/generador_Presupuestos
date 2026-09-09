@@ -56,7 +56,8 @@ class DocxGenerator:
                  items: list[dict] | None = None,
                  items_a: list[dict] | None = None,
                  items_b: list[dict] | None = None,
-                 subc_items: list[dict] | None = None):
+                 subc_items: list[dict] | None = None,
+                 omit_placeholders: set[str] | None = None):
         with open(self.template_path, "rb") as f:
             buf = BytesIO(f.read())
 
@@ -66,7 +67,7 @@ class DocxGenerator:
                 raw = zin.read(zi.filename)
                 name = zi.filename
                 if name == "word/document.xml":
-                    raw = self._process_document_xml(raw, data, items, items_a, items_b, subc_items)
+                    raw = self._process_document_xml(raw, data, items, items_a, items_b, subc_items, omit_placeholders)
                 elif (name.startswith("word/header") or name.startswith("word/footer")) and name.endswith(".xml"):
                     raw = self._process_simple_xml(raw, data)
                 zout.writestr(zi, raw)
@@ -77,9 +78,11 @@ class DocxGenerator:
     # Per-part processors
     # ------------------------------------------------------------------
     def _process_document_xml(self, raw: bytes, data: dict,
-                               items, items_a, items_b, subc_items) -> bytes:
+                               items, items_a, items_b, subc_items,
+                               omit_placeholders: set[str] | None = None) -> bytes:
         root = etree.fromstring(raw)
         self._merge_split_placeholders(root)
+        self._remove_rows_by_placeholder(root, omit_placeholders)
         paras_to_remove = []
         for para in root.iter(_w("p")):
             self._replace_in_paragraph(para, data, paras_to_remove)
@@ -111,6 +114,18 @@ class DocxGenerator:
             parent = para.getparent()
             if parent is not None:
                 parent.remove(para)
+
+    def _remove_rows_by_placeholder(self, root, omit_placeholders: set[str] | None):
+        """Borra por completo las filas de tabla (<w:tr>) cuyo texto contenga
+        alguno de los placeholders marcados para omitir (partida excluida por
+        el usuario), en vez de dejarlas con importe 0,00."""
+        if not omit_placeholders:
+            return
+        for tbl in root.iter(_w("tbl")):
+            for tr in list(tbl.findall(_w("tr"))):
+                row_text = "".join((t.text or "") for t in tr.iter(_w("t")))
+                if any(ph in row_text for ph in omit_placeholders):
+                    tbl.remove(tr)
 
     # ------------------------------------------------------------------
     # Step 1: merge ONLY the runs where [[PLACEHOLDER]] is split

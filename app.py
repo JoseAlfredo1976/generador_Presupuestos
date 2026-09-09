@@ -349,16 +349,21 @@ def _parse_items(f, prefix: str = "item") -> list[dict]:
     return items
 
 
-def _svc_line(f, prefix: str) -> tuple[dict, float]:
+def _svc_line(f, prefix: str) -> tuple[dict, float, bool]:
+    """Devuelve (placeholders, importe, incluida). incluida=False cuando el
+    usuario ha desmarcado el checkbox de esa partida: la fila se borra por
+    completo del Word (ver DocxGenerator._remove_rows_by_placeholder) en vez
+    de dejarla con importe 0,00."""
+    incluida = f.get(f"{prefix.lower()}_incluir", "1") != "0"
     uds = _fval(f, f"{prefix.lower()}_uds", 1.0)
     precio = _fval(f, f"{prefix.lower()}_precio", 0.0)
-    importe = round(uds * precio, 2)
+    importe = round(uds * precio, 2) if incluida else 0.0
     data = {
         f"[[{prefix}_UDS]]":     _fmt_qty_str(uds),
         f"[[{prefix}_PRECIO]]":  fmt_euro_plain(precio),
         f"[[{prefix}_IMPORTE]]": fmt_euro_plain(importe),
     }
-    return data, importe
+    return data, importe, incluida
 
 
 def _fmt_qty_str(qty: float) -> str:
@@ -461,49 +466,62 @@ def _build_obra_2_extra(f, total_a: float, total_b: float) -> dict:
     }
 
 
-def _build_service_data(f, tipo: str, base_data: dict) -> tuple[dict, float]:
+def _build_service_data(f, tipo: str, base_data: dict) -> tuple[dict, float, set[str]]:
     data = dict(base_data)
     total = 0.0
+    omit_rows: set[str] = set()
 
     if tipo == "desatasco":
         for prefix in ["CAMION", "CAMION_DESP", "TAPA", "INODORO", "CATA"]:
-            d, imp = _svc_line(f, prefix)
+            d, imp, incluida = _svc_line(f, prefix)
             data.update(d)
             total += imp
+            if not incluida:
+                omit_rows.add(f"[[{prefix}_UDS]]")
 
     elif tipo == "cctv_bajante":
         for prefix in ["CCTV", "CCTV_DESP", "TAPA", "INODORO", "CATA"]:
-            d, imp = _svc_line(f, prefix)
+            d, imp, incluida = _svc_line(f, prefix)
             data.update(d)
             total += imp
+            if not incluida:
+                omit_rows.add(f"[[{prefix}_UDS]]")
 
     elif tipo == "inspeccion_zum":
         for prefix in ["CCTV", "CCTV_DESP"]:
-            d, imp = _svc_line(f, prefix)
+            d, imp, incluida = _svc_line(f, prefix)
             data.update(d)
             total += imp
+            if not incluida:
+                omit_rows.add(f"[[{prefix}_UDS]]")
 
     elif tipo == "limpieza_aerea":
         for prefix in ["CAMION", "CAMION_DESP", "OCUPACION", "MEDIOS", "TAPA"]:
-            d, imp = _svc_line(f, prefix)
+            d, imp, incluida = _svc_line(f, prefix)
             data.update(d)
             total += imp
+            if not incluida:
+                omit_rows.add(f"[[{prefix}_UDS]]")
         data["[[HORAS_ESTIMADAS]]"] = f.get("horas_estimadas", "").strip()
         data["[[TIEMPO_ESTIMADO]]"] = f.get("tiempo_estimado", "").strip()
 
     elif tipo == "fresador":
         for prefix in ["FRESADOR", "FRESADOR_DESP", "CAMION", "CAMION_DESP", "MEDIOS"]:
-            d, imp = _svc_line(f, prefix)
+            d, imp, incluida = _svc_line(f, prefix)
             data.update(d)
             total += imp
+            if not incluida:
+                omit_rows.add(f"[[{prefix}_UDS]]")
         data["[[HORAS_ESTIMADAS]]"] = f.get("horas_estimadas", "").strip()
 
     elif tipo == "robot_limpieza":
         for prefix in ["CCTV", "CCTV_DESP", "CAMION", "CAMION_DESP",
                         "OCUPACION", "MEDIOS", "LOCALIZACION"]:
-            d, imp = _svc_line(f, prefix)
+            d, imp, incluida = _svc_line(f, prefix)
             data.update(d)
             total += imp
+            if not incluida:
+                omit_rows.add(f"[[{prefix}_UDS]]")
         data["[[HORAS_ESTIMADAS]]"] = f.get("horas_estimadas", "").strip()
         data["[[TIEMPO_ESTIMADO]]"] = f.get("tiempo_estimado", "").strip()
 
@@ -590,7 +608,7 @@ def _build_service_data(f, tipo: str, base_data: dict) -> tuple[dict, float]:
         total = _fval(f, "importe_anual", 0.0)
 
     data["[[IMPORTE_TOTAL_ESTIMADO]]"] = fmt_euro_plain(total)
-    return data, total
+    return data, total, omit_rows
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -3126,6 +3144,7 @@ def generar():
     common_data, num_contrato, fecha_larga, obra, servicio = _build_common_data(f)
 
     items = items_a = items_b = subc_items = None
+    omit_rows: set[str] = set()
     total_sin_iva = total_a = total_b = total_estimado = 0.0
 
     if tipo == "contrato_subcontrata":
@@ -3205,7 +3224,7 @@ def generar():
         }
 
     else:
-        data, total_estimado = _build_service_data(f, tipo, common_data)
+        data, total_estimado, omit_rows = _build_service_data(f, tipo, common_data)
         # Partidas adicionales opcionales en modelos de servicio
         extra_items = _parse_items(f, "item")
         if extra_items:
@@ -3235,6 +3254,7 @@ def generar():
                 docx_path, data,
                 items=items, items_a=items_a, items_b=items_b,
                 subc_items=subc_items,
+                omit_placeholders=omit_rows,
             )
             titulo_banner = f.get("titulo_servicio", "").strip()
             if titulo_banner:

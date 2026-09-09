@@ -38,7 +38,7 @@ TIPO_A_PESTAÑA: dict[str, str] = {
     "obra_1":               "POCERIA",
     "obra_2":               "POCERIA",
     "desatasco":            "POCERIA",
-    "fuga_agua":            "POCERIA",
+    "fuga_agua":            "FONTANERIA",
     "cctv_bajante":         "CCTV-LIMPIEZAS",
     "inspeccion_zum":       "CCTV-LIMPIEZAS",
     "limpieza_aerea":       "LIMPIEZAS",
