@@ -254,31 +254,51 @@ body {
   gap: 10px;
 }
 .type-card {
-  border: 2px solid #dce4ef;
-  border-radius: 10px;
-  padding: 12px 8px;
+  border: 1px solid #e5eaf2;
+  border-radius: 12px;
+  padding: 14px 8px 12px;
   cursor: pointer;
   text-align: center;
-  background: white;
-  transition: all .2s;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  transition: border-color .18s, box-shadow .18s, transform .18s;
   user-select: none;
 }
 .type-card:hover {
-  border-color: #2563eb;
-  box-shadow: 0 4px 12px rgba(37,99,235,.15);
+  border-color: #93b4f5;
+  box-shadow: 0 6px 16px rgba(37,99,235,.14);
   transform: translateY(-2px);
 }
 .type-card.selected {
   border-color: #2563eb;
-  background: #eff6ff;
+  background: #f5f8ff;
+  box-shadow: 0 6px 16px rgba(37,99,235,.18);
 }
-.type-card .tc-icon { font-size: 1.6rem; }
+.type-card .tc-icon {
+  width: 42px;
+  height: 42px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: linear-gradient(145deg, #eaf0fe, #dce7fc);
+  color: #2354c9;
+  font-size: 1.2rem;
+  transition: background .18s, color .18s, transform .18s;
+}
+.type-card:hover .tc-icon { transform: scale(1.06); }
+.type-card.selected .tc-icon {
+  background: linear-gradient(145deg, #2563eb, #1d4ed8);
+  color: #fff;
+  box-shadow: 0 3px 8px rgba(37,99,235,.35);
+}
 .type-card .tc-name {
   font-size: .68rem;
   font-weight: 600;
   color: #0d1b2a;
-  margin-top: 5px;
-  line-height: 1.2;
+  margin-top: 8px;
+  line-height: 1.25;
 }
 
 /* ── Tablas de partidas */
@@ -632,32 +652,32 @@ let fdPrefill = null;  // datos extraidos por IA de la solicitud del cliente
 // ─── Type catalogue
 const TIPOS = [
   // Obra
-  { id:'obra_1',              icon:'🏗️',  name:'Obra\n1 Opcion',        cat:'obra'       },
-  { id:'obra_2',              icon:'🔀',  name:'Obra\n2 Opciones',      cat:'obra'       },
-  { id:'presupuesto_multioficio', icon:'🧰', name:'Presupuesto\nIntegral Multioficio', cat:'obra' },
+  { id:'obra_1',              icon:'bi-building',              name:'Obra\n1 Opcion',        cat:'obra'       },
+  { id:'obra_2',              icon:'bi-signpost-split-fill',   name:'Obra\n2 Opciones',      cat:'obra'       },
+  { id:'presupuesto_multioficio', icon:'bi-tools',             name:'Presupuesto\nIntegral Multioficio', cat:'obra' },
   // Desatascos y servicios
-  { id:'desatasco',           icon:'🚛',  name:'Desatasco',             cat:'svc'        },
-  { id:'cctv_bajante',        icon:'📷',  name:'CCTV\nBajante',         cat:'svc'        },
-  { id:'inspeccion_zum',      icon:'🔍',  name:'Inspeccion\nZUM',       cat:'svc'        },
-  { id:'limpieza_aerea',      icon:'💨',  name:'Limpieza\nAerea',       cat:'svc'        },
-  { id:'fresador',            icon:'⚙️',  name:'Fresador',              cat:'svc'        },
-  { id:'robot_limpieza',      icon:'🤖',  name:'Robot\nLimpieza',       cat:'svc'        },
-  { id:'fuga_agua',           icon:'💧',  name:'Fuga\nAgua',            cat:'svc'        },
-  { id:'vaciado_fosa',        icon:'🪣',  name:'Vaciado\nFosa',         cat:'svc'        },
+  { id:'desatasco',           icon:'bi-truck',                 name:'Desatasco',             cat:'svc'        },
+  { id:'cctv_bajante',        icon:'bi-camera-video-fill',     name:'CCTV\nBajante',         cat:'svc'        },
+  { id:'inspeccion_zum',      icon:'bi-search',                name:'Inspeccion\nZUM',       cat:'svc'        },
+  { id:'limpieza_aerea',      icon:'bi-wind',                  name:'Limpieza\nAerea',       cat:'svc'        },
+  { id:'fresador',            icon:'bi-gear-wide-connected',   name:'Fresador',              cat:'svc'        },
+  { id:'robot_limpieza',      icon:'bi-robot',                 name:'Robot\nLimpieza',       cat:'svc'        },
+  { id:'fuga_agua',           icon:'bi-droplet-fill',          name:'Fuga\nAgua',            cat:'svc'        },
+  { id:'vaciado_fosa',        icon:'bi-trash3-fill',           name:'Vaciado\nFosa',         cat:'svc'        },
   // Nuevos
-  { id:'informe_desatasco',   icon:'📋',  name:'Informe\nDesatasco',    cat:'nuevo'      },
-  { id:'bajantes_amianto',    icon:'🏚️',  name:'Bajantes\nAmianto',     cat:'nuevo'      },
-  { id:'certificado_obra',    icon:'✅',  name:'Certificado\nObra',     cat:'nuevo'      },
-  { id:'plan_seguridad',      icon:'🦺',  name:'Plan\nSeguridad',       cat:'nuevo'      },
-  { id:'contrato_saneamiento',icon:'📝',  name:'Contrato\nSaneamiento', cat:'nuevo'      },
+  { id:'informe_desatasco',   icon:'bi-clipboard-data-fill',   name:'Informe\nDesatasco',    cat:'nuevo'      },
+  { id:'bajantes_amianto',    icon:'bi-exclamation-diamond-fill', name:'Bajantes\nAmianto',  cat:'nuevo'      },
+  { id:'certificado_obra',    icon:'bi-patch-check-fill',      name:'Certificado\nObra',     cat:'nuevo'      },
+  { id:'plan_seguridad',      icon:'bi-shield-fill-check',     name:'Plan\nSeguridad',       cat:'nuevo'      },
+  { id:'contrato_saneamiento',icon:'bi-file-earmark-text-fill',name:'Contrato\nSaneamiento', cat:'nuevo'      },
   // Nuevos oficios
-  { id:'fontaneria',          icon:'🔧',  name:'Fontaneria',            cat:'oficio'     },
-  { id:'albanileria',         icon:'🧱',  name:'Albanileria',           cat:'oficio'     },
+  { id:'fontaneria',          icon:'bi-wrench-adjustable',     name:'Fontaneria',            cat:'oficio'     },
+  { id:'albanileria',         icon:'bi-bricks',                name:'Albanileria',           cat:'oficio'     },
   // Contratos
-  { id:'contrato_subcontrata',icon:'📄',  name:'Contrato\nSubcontrata', cat:'contrato'   },
+  { id:'contrato_subcontrata',icon:'bi-file-earmark-person-fill', name:'Contrato\nSubcontrata', cat:'contrato' },
 ];
 const TLABELS = {};
-TIPOS.forEach(t => TLABELS[t.id] = t.icon + ' ' + t.name.replace('\n',' '));
+TIPOS.forEach(t => TLABELS[t.id] = t.name.replace('\n',' '));
 
 const SVC_ROWS = {
   desatasco:      [['CAMION','Camion cuba alta presion'],['CAMION_DESP','Desplazamiento camion'],['TAPA','Tapon de registro'],['INODORO','Desmontaje de inodoro'],['CATA','Cata en mocheta']],
@@ -871,7 +891,7 @@ function step1() {
 function card(t) {
   const lines = t.name.split('\n');
   return `<div class="type-card" onclick="selTipo('${t.id}',this)">
-    <div class="tc-icon">${t.icon}</div>
+    <div class="tc-icon"><i class="bi ${t.icon}"></i></div>
     <div class="tc-name">${lines.join('<br>')}</div>
   </div>`;
 }
