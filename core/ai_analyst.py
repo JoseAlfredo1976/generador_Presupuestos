@@ -2724,6 +2724,61 @@ def extract_full_presupuesto(files: list[Path], api_key: str = "", descripcion: 
     return parsed
 
 
+_ESTIMAR_PRECIOS_SYSTEM = """Eres un aparejador tecnico de Acometidas Europa S.L. con amplia experiencia en presupuestos
+de obra civil y reformas en España, de CUALQUIER oficio (saneamiento, poceria, CCTV, albañileria, fontaneria,
+electricidad, pintura, carpinteria, climatizacion, etc.).
+Te doy una lista de partidas de un presupuesto que NO tienen precio (no figuraba en el documento original ni hay
+ninguna tarifa parecida en el catalogo de la empresa). Tu tarea es asignar a cada una un PRECIO UNITARIO REALISTA
+de mercado en España (materiales + mano de obra incluidos).
+Reglas:
+- Devuelve un precio para CADA partida de la lista, en el mismo orden y misma cantidad, sin omitir ninguna.
+- Basate en la descripcion y la unidad de medida indicadas.
+- Redondea SIEMPRE AL ALZA (nunca a la baja) para dejar margen de seguridad comercial a la empresa.
+- Si una partida es ambigua o generica, usa un precio medio razonable de mercado para ese tipo de trabajo. Nunca
+  devuelvas 0.
+- Responde UNICAMENTE con el JSON solicitado, sin texto adicional ni markdown."""
+
+
+def estimate_precios_mercado(items: list[dict], api_key: str = "") -> list[float]:
+    """Estima precios unitarios de mercado para partidas sin precio ni match de tarifa.
+
+    `items`: lista de {"descripcion": str, "unidad": str}. Devuelve una lista de precios
+    en el MISMO ORDEN. Si falla la llamada a la IA, devuelve 0.0 para cada item (el
+    llamador debe tratarlo igual que "sin estimar", dejando la partida en blanco).
+    """
+    if not items:
+        return []
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip() or api_key.strip()
+    if not key:
+        return [0.0] * len(items)
+    client = anthropic.Anthropic(api_key=key)
+
+    lineas = [f"{i + 1}. {it.get('descripcion', '')} (unidad: {it.get('unidad') or 'ud'})"
+              for i, it in enumerate(items)]
+    prompt = ("PARTIDAS SIN PRECIO:\n" + "\n".join(lineas) +
+              '\n\nDevuelve UNICAMENTE este JSON:\n{"precios": [0.0, ...]}  '
+              f"(exactamente {len(items)} numeros, en el mismo orden)")
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=4000,
+            system=_ESTIMAR_PRECIOS_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
+        parsed = _safe_parse_json(raw)
+        precios = (parsed or {}).get("precios", [])
+        out = []
+        for i in range(len(items)):
+            try:
+                out.append(round(float(precios[i]), 2))
+            except (IndexError, TypeError, ValueError):
+                out.append(0.0)
+        return out
+    except Exception:
+        return [0.0] * len(items)
+
+
 _SUBC_DATOS_FIELDS = ["empresa", "cif", "domicilio", "telefono", "email",
                       "rep_nombre", "rep_dni", "rep_domicilio", "notario",
                       "notario_loc", "fecha_escritura", "protocolo", "registro"]

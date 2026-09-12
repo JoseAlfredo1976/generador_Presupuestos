@@ -618,7 +618,8 @@ def index():
     today = datetime.now().strftime("%Y-%m-%d")
     missing = [name for name in TEMPLATE_FILES.values()
                if not (TEMPLATES_DIR / name).exists()]
-    return render_template("index.html", today=today, missing_templates=missing)
+    api_key_set = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    return render_template("index.html", today=today, missing_templates=missing, api_key_set=api_key_set)
 
 
 @app.route("/analizar")
@@ -3014,17 +3015,23 @@ def api_importar_presupuesto_completo():
 
         # Para partidas SIN precio (informe sin valorar): buscar la tarifa mas parecida
         # en TARIFAS.xlsx. Si hay match razonable, se usa su precio y se marca "Tarifa".
-        # Si no, se deja en 0 (en blanco) para que el tecnico lo rellene.
-        UMBRAL = 0.5
+        # Si no, se estima un precio de mercado por IA (igual que en "Generar con IA"):
+        # TARIFAS.xlsx es casi todo saneamiento, asi que en presupuestos multioficio
+        # (electricidad, pintura, albañileria...) casi nada supera el umbral de similitud
+        # y antes se quedaba en 0/blanco de forma sistematica.
+        UMBRAL = 0.35
         try:
             items_tarifa = get_tarifas().all_items()
         except Exception:
             items_tarifa = []
         n_tarifa = 0
+        sin_precio = []  # partidas que ni con tarifa ni sin ella tienen precio
         for p in result.get("partidas", []):
-            if p.get("precio_unitario", 0) or not items_tarifa:
+            if p.get("precio_unitario", 0):
                 continue
-            match, score = _best_tarifa_match(p.get("descripcion", ""), items_tarifa)
+            match, score = None, 0.0
+            if items_tarifa:
+                match, score = _best_tarifa_match(p.get("descripcion", ""), items_tarifa)
             if match and match.get("precio", 0) > 0 and score >= UMBRAL:
                 p["precio_unitario"] = match["precio"]
                 p["codigo"] = match["codigo"]
@@ -3033,7 +3040,29 @@ def api_importar_presupuesto_completo():
                 nota_prev = (p.get("nota") or "").strip()
                 p["nota"] = (nota_prev + " " if nota_prev else "") + f"Precio tomado de tarifa {match['codigo']} (similitud {round(score*100)}%)"
                 n_tarifa += 1
+            else:
+                sin_precio.append(p)
+
+        n_estimado = 0
+        if sin_precio:
+            from core.ai_analyst import estimate_precios_mercado
+            items_para_ia = [{"descripcion": p.get("descripcion", ""), "unidad": p.get("unidad", "ud")}
+                              for p in sin_precio]
+            try:
+                precios_est = estimate_precios_mercado(items_para_ia, api_key=api_key)
+            except Exception:
+                precios_est = [0.0] * len(sin_precio)
+            for p, precio_est in zip(sin_precio, precios_est):
+                if precio_est <= 0:
+                    continue
+                p["precio_unitario"] = precio_est
+                p["importe"] = round(p.get("cantidad", 1) * precio_est, 2)
+                nota_prev = (p.get("nota") or "").strip()
+                p["nota"] = (nota_prev + " " if nota_prev else "") + "Precio estimado de mercado (sin referencia en catalogo)"
+                n_estimado += 1
+
         result["_partidas_con_tarifa"] = n_tarifa
+        result["_partidas_estimadas_ia"] = n_estimado
         return jsonify(result)
     except Exception as e:
         import traceback as _tb

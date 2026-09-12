@@ -1369,12 +1369,14 @@ async function _impcExtraer() {
     const parts = data.partidas || [];
     const n = parts.length;
     const conTarifa = data._partidas_con_tarifa || 0;
+    const estimadas = data._partidas_estimadas_ia || 0;
     const enBlanco = parts.filter(p => !(+p.precio_unitario)).length;
     rmPanel();
     userMsg(`Documento importado: ${n} partida(s) extraida(s)`);
     let resumen = `<i class="bi bi-check-circle-fill me-1" style="color:#059669"></i><strong>${n} partidas</strong> extraidas.`;
     if (conTarifa) resumen += ` ${conTarifa} con precio de tu tabla de tarifas (marcadas <span class="tbadge" style="display:inline">Tarifa</span>).`;
-    if (enBlanco) resumen += ` <strong>${enBlanco} sin precio</strong> (sin coincidencia en tarifas): ponles tu el importe en la tabla.`;
+    if (estimadas) resumen += ` ${estimadas} sin tarifa, con precio de mercado estimado por IA (revisalas antes de generar).`;
+    if (enBlanco) resumen += ` <strong>${enBlanco} sin precio</strong> (ni tarifa ni estimacion IA disponible): ponles tu el importe en la tabla.`;
     botMsg(resumen);
     if (data._truncado) {
       botMsg('<i class="bi bi-exclamation-triangle me-1 text-warning"></i>El documento era muy largo; revisa que estan todas las partidas. Puedes anadir las que falten en la tabla.');
@@ -2139,6 +2141,7 @@ function stepRevisarIA(result) {
           <tbody id="tb${which}"></tbody>
         </table>
       </div>
+      ${_pctAjusteHtml('tb'+which)}
       <button type="button" class="btn btn-sm btn-outline-primary mb-2"
         onclick="addRow('${prefix}','tb${which}','${bid}')">
         <i class="bi bi-plus-circle"></i> Anadir partida
@@ -2299,6 +2302,7 @@ function stepPartidas(which) {
         <tbody id="tb${which}"></tbody>
       </table>
     </div>
+    ${_pctAjusteHtml('tb'+which)}
     <button type="button" class="btn btn-sm btn-outline-primary mb-3" onclick="addRow('${prefix}','tb${which}','${bid}')">
       <i class="bi bi-plus-circle"></i> Anadir partida
     </button>
@@ -2908,6 +2912,7 @@ function _tblRevHtml(prefix, tbId, barId, blabel) {
         <tbody id="${tbodyId}"></tbody>
       </table>
     </div>
+    ${_pctAjusteHtml(tbodyId)}
     <button type="button" class="btn btn-sm btn-outline-primary mb-2"
       onclick="addRow('${prefix}','${tbodyId}','${barId}')">
       <i class="bi bi-plus-circle"></i> Anadir partida
@@ -3159,6 +3164,30 @@ function delRow(prefix,i,barId) {
   const r=document.getElementById(`${prefix}-row-${i}`); if(r) r.remove();
   updBar(barId,prefix,tbId);
 }
+// ─── Ajuste masivo de precios (%) sobre una tabla de partidas ya pintada
+function _pctAjusteHtml(tbId) {
+  const ctlId = 'pct_' + tbId;
+  return `
+    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap" style="font-size:.82rem">
+      <span class="text-muted">Ajuste rapido de precios:</span>
+      <input id="${ctlId}" type="number" class="form-control form-control-sm" style="width:90px" placeholder="% ej. 10 o -5" step="0.5">
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="ajustarPctTabla('${tbId}','${ctlId}')">
+        <i class="bi bi-percent me-1"></i>Aplicar a todas las partidas
+      </button>
+    </div>`;
+}
+function ajustarPctTabla(tbId, ctlId) {
+  const pct = parseFloat(document.getElementById(ctlId)?.value);
+  if (!pct) { alert('Indica un porcentaje de incremento (positivo) o disminucion (negativo) distinto de 0.'); return; }
+  const factor = 1 + pct / 100;
+  const inputs = document.querySelectorAll(`#${tbId} input[name*="_price_"]`);
+  if (!inputs.length) { alert('No hay partidas en la tabla.'); return; }
+  inputs.forEach(inp => {
+    const cur = parseFloat(inp.value) || 0;
+    inp.value = Math.round(cur * factor * 100) / 100;
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
 function calcR(prefix,i,barId) {
   const q=parseFloat(document.querySelector(`[name="${prefix}_qty_${i}"]`).value)||0;
   const p=parseFloat(document.querySelector(`[name="${prefix}_price_${i}"]`).value)||0;
@@ -3177,7 +3206,7 @@ function updBar(barId,prefix,tbId) {
     sub+=q*p; n++;
   });
   const nr=bar.querySelector('.nr'); if(nr) nr.textContent=n;
-  const tv=bar.querySelector('.tv'); if(tv) tv.textContent=fmtE(bar.dataset.noiva ? sub : sub*1.21);
+  const tv=bar.querySelector('.tv'); if(tv) tv.textContent=fmtE(sub);
 }
 async function ltarifa(inp,prefix,i,barId) {
   const code=inp.value.trim().toUpperCase(); if(!code) return;
