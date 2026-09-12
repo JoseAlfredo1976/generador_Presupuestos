@@ -8,3 +8,7 @@ config/google_credentials.json
 .env
 .env.*
 CLAUDE.md
+config/enlaces.db
+config/informes_compartidos/
+config/videos_ia/
+debug_*.txt
