@@ -2502,7 +2502,8 @@ function _htmlPartAdicionales() {
       </tr></thead>
       <tbody id="tbsvc"></tbody>
     </table>
-    <div id="barsvc" style="display:none;font-size:.8rem;color:#5a7184;margin-bottom:8px;">
+    ${_pctAjusteHtml('tbsvc')}
+    <div id="barsvc" data-con-iva="1" style="display:none;font-size:.8rem;color:#5a7184;margin-bottom:8px;">
       <span class="nr">0</span> partida(s) &middot; Total c/IVA: <span class="tv">0,00 &euro;</span>
     </div>`;
 }
@@ -3226,7 +3227,7 @@ function updBar(barId,prefix,tbId) {
     sub+=q*p; n++;
   });
   const nr=bar.querySelector('.nr'); if(nr) nr.textContent=n;
-  const tv=bar.querySelector('.tv'); if(tv) tv.textContent=fmtE(sub);
+  const tv=bar.querySelector('.tv'); if(tv) tv.textContent=fmtE(bar.dataset.conIva ? sub*1.21 : sub);
 }
 async function ltarifa(inp,prefix,i,barId) {
   const code=inp.value.trim().toUpperCase(); if(!code) return;
