@@ -3,6 +3,7 @@
 Interfaz web del Generador de Presupuestos + Analisis IA - Grupo Europa
 Uso: python app.py  -> abre http://localhost:5000
 """
+import copy
 import json
 import logging
 import os
@@ -771,6 +772,61 @@ def _simbolo_svg(tipo: str, cx: float, cy: float, color: str, escala: float = 1.
     return ""
 
 
+def _marcar_boilerplate_no_editable(svg_text: str, bg_w: float, bg_h: float,
+                                     cajetin_bbox: tuple[float, float, float, float] | None = None) -> str:
+    """Marca como no editables individualmente (atributo data-svg-no-edit,
+    ver _enableSvgEdit/_planoEnableEdit en las plantillas) el fondo/marco a
+    pantalla completa que dibuja la IA, y agrupa en un <g> los elementos del
+    cajetin de titulo si se indica su caja (cajetin_bbox = x0,y0,x1,y1).
+
+    Sin esto, en el editor 'Editar elementos' del navegador el rectangulo de
+    fondo queda seleccionable/arrastrable como una pieza mas (parece que se
+    'mueve todo el plano' al arrastrarlo sin querer), y cada rect/linea/texto
+    del cajetin queda suelto en vez de agrupado, permitiendo desmontarlo pieza
+    a pieza. La IA no siempre agrupa esto por su cuenta (es texto libre), asi
+    que se corrige aqui por geometria, no confiando en que la IA lo agrupe.
+    """
+    import xml.etree.ElementTree as ET
+
+    NS = "http://www.w3.org/2000/svg"
+    ET.register_namespace("", NS)
+    try:
+        root = ET.fromstring(svg_text)
+    except ET.ParseError:
+        return svg_text  # si no parsea limpio, se deja tal cual (no romper el plano)
+
+    def _f(v, default=0.0):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    ns = f"{{{NS}}}"
+    cajetin_children = []
+    for el in list(root):
+        tag = el.tag.replace(ns, "")
+        if tag == "rect":
+            w, h = _f(el.get("width")), _f(el.get("height"))
+            if w * h >= 0.7 * bg_w * bg_h:
+                el.set("data-svg-no-edit", "1")
+                continue
+        if cajetin_bbox:
+            x0, y0, x1, y1 = cajetin_bbox
+            coords = [(el.get(ax), el.get(ay)) for ax, ay in (("x", "y"), ("x1", "y1"), ("x2", "y2"), ("cx", "cy"))
+                      if el.get(ax) is not None]
+            if coords and all(x0 <= _f(cx) <= x1 and y0 <= _f(cy) <= y1 for cx, cy in coords):
+                cajetin_children.append(el)
+
+    if cajetin_children:
+        g = ET.Element(f"{ns}g", {"data-svg-no-edit": "1"})
+        for el in cajetin_children:
+            root.remove(el)
+            g.append(el)
+        root.append(g)
+
+    return ET.tostring(root, encoding="unicode")
+
+
 def _leyenda_svg_fragment(bg_w: float, bg_h: float, color: str = "#1F4E79",
                            esquina: str = "br") -> str:
     """Cuadro fijo de leyenda con el catalogo COMPLETO de simbolos, generado
@@ -808,7 +864,12 @@ def _leyenda_svg_fragment(bg_w: float, bg_h: float, color: str = "#1F4E79",
             f'<text x="{cx+17*escala:.1f}" y="{cy+font_size/2.8:.1f}" '
             f'font-family="Arial" font-size="{font_size:.1f}" fill="#333">{label}</text>')
 
-    return "".join(partes)
+    # Se envuelve en un unico <g> (marcado como no-seleccionable individualmente
+    # en el editor del navegador, ver data-svg-no-edit en croquis.html/analizar.html):
+    # sin esto, cada rect/linea/texto de la leyenda queda como elemento suelto en
+    # el SVG y el editor de elementos permite arrastrar piezas sueltas de la
+    # leyenda por separado, rompiendola visualmente.
+    return '<g data-svg-no-edit="1">' + "".join(partes) + "</g>"
 
 
 def _plano_svg_desde_archivo(src: Path, api_key: str = "", contexto: str = "",
@@ -1044,8 +1105,11 @@ con <svg y termina con </svg>. Sin markdown."""
         # capa de anotaciones. Asi el SVG resultante sigue siendo uno solo:
         # se rasteriza igual que siempre (_svg_a_png) y se puede seguir
         # editando en el editor interactivo del navegador.
+        # data-svg-no-edit: la foto/plano de fondo NO debe ser seleccionable ni
+        # arrastrable como un elemento mas en el editor del navegador (cubre
+        # todo el lienzo; si se pudiera arrastrar parece que "se mueve todo").
         fondo_tag = (f'<image x="0" y="0" width="{bg_w}" height="{bg_h}" '
-                     f'href="data:image/png;base64,{fondo_b64}"/>')
+                     f'href="data:image/png;base64,{fondo_b64}" data-svg-no-edit="1"/>')
         insert_pos = overlay_svg.index(">") + 1
         svg_final = overlay_svg[:insert_pos] + fondo_tag + overlay_svg[insert_pos:]
 
@@ -1147,10 +1211,16 @@ DEVUELVE UNICAMENTE el SVG. Empieza con <svg y termina con </svg>. Sin markdown.
     if not svg_match:
         raise ValueError("La IA no genero un SVG valido.")
 
+    # Fondo/marco no seleccionables individualmente + cajetin agrupado como
+    # una sola pieza (ver _marcar_boilerplate_no_editable). Cajetin en
+    # x=[688,888] y=[555,647] segun ESPECIFICACION del prompt de este bloque,
+    # con un pequeno margen para no dejar fuera nada por redondeo.
+    svg_con_leyenda = _marcar_boilerplate_no_editable(
+        svg_match.group(0), 900, 660, cajetin_bbox=(685, 552, 891, 650))
+
     # Leyenda con el catalogo completo de simbolos, siempre igual y correcta
     # (generada por codigo, no por la IA). Lienzo fijo 900x660 en este
     # escenario (ver ESPECIFICACION SVG del prompt de este bloque).
-    svg_con_leyenda = svg_match.group(0)
     leyenda = _leyenda_svg_fragment(900, 660, color="#1a2a3a", esquina="bl")
     svg_con_leyenda = svg_con_leyenda[:svg_con_leyenda.rindex("</svg>")] + leyenda + "</svg>"
     return svg_con_leyenda, estructura
@@ -2276,9 +2346,29 @@ def api_chat_informe():
         for h in historial:
             messages.append({"role": h["role"], "content": h["content"]})
 
-        # Mensaje actual del usuario
+        # Mensaje actual del usuario. Se envia el informe SIN los campos internos
+        # pesados (diagramas WinCam en base64): son varios MB de texto que Claude
+        # intentaria reescribir integros en la respuesta, agotando max_tokens y
+        # devolviendo un JSON cortado e inservible (ver bug con stop_reason=max_tokens).
+        # Se restauran tal cual tras la respuesta, mas abajo.
+        report_para_prompt = copy.deepcopy(report_actual)
+        report_para_prompt.pop("_raw", None)
+        for _sec in (report_para_prompt.get("_wincam") or {}).get("secciones", []) or []:
+            _sec.pop("_diagrama_png_b64", None)
+        report_para_prompt.pop("_evidencia_img", None)
+        if isinstance(report_para_prompt.get("_wincam"), dict):
+            report_para_prompt["_wincam"].pop("_evidencia_img", None)
+            report_para_prompt["_wincam"].pop("_raw", None)
+        # Red de seguridad: recortar cualquier otro campo anormalmente largo que
+        # se nos haya escapado (ver nota en _truncar_valores_grandes).
+        report_para_prompt = _truncar_valores_grandes(report_para_prompt)
+        _tam_prompt = len(json.dumps(report_para_prompt, ensure_ascii=False))
+        if _tam_prompt > 300_000:
+            logging.getLogger(__name__).warning(
+                "chat_informe: prompt de informe aun grande tras sanear (%s caracteres)", _tam_prompt)
+
         intro = (
-            f"INFORME ACTUAL EN JSON:\n{json.dumps(report_actual, ensure_ascii=False, indent=2)}\n\n"
+            f"INFORME ACTUAL EN JSON:\n{json.dumps(report_para_prompt, ensure_ascii=False, indent=2)}\n\n"
             f"INSTRUCCION DEL TECNICO:\n{mensaje}\n\n"
         )
         if bloques_adjuntos:
@@ -2292,6 +2382,8 @@ def api_chat_informe():
             f"\nDevuelve el informe completo actualizado en el mismo formato JSON. "
             f"Si la instruccion es solo una pregunta tecnica, responde como texto en el campo "
             f"'respuesta_chat' y manten el informe sin cambios. "
+            f"NO incluyas en tu respuesta los campos internos '_wincam', '_evidencia_img' ni ningun "
+            f"campo que empiece por guion bajo: se conservan automaticamente, no hace falta reenviarlos. "
             f"Responde UNICAMENTE con JSON segun el esquema:\n{REPORT_SCHEMA}"
         )
         if bloques_adjuntos:
@@ -2323,6 +2415,13 @@ def api_chat_informe():
             merged_ev = list(prev_ev) + [e for e in nuevos_evidencia if e not in prev_ev]
             if merged_ev:
                 updated["_evidencia_img"] = merged_ev
+            # Restaurar el WinCam original (con sus diagramas base64 ya calculados):
+            # no se le pidio a Claude que lo reenviara, ver nota mas arriba.
+            if report_actual.get("_wincam"):
+                updated["_wincam"] = report_actual["_wincam"]
+            # Restaurar enlaces a videos detectados al importar el informe.
+            if report_actual.get("_enlaces_video"):
+                updated["_enlaces_video"] = report_actual["_enlaces_video"]
             # Regenerar DOCX con el informe actualizado
             session_id = uuid.uuid4().hex[:8]
             # Este endpoint (regeneracion via chat) no recibe calle/poblacion por
@@ -2344,10 +2443,14 @@ def api_chat_informe():
                     pdf_path = PdfConverter().convert(docx_path, SALIDAS_DIR)
                     if pdf_path:
                         updated["_pdf"] = pdf_path.name
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                except Exception as _e_pdf:
+                    updated["_pdf_error"] = str(_e_pdf)
+                    logging.getLogger(__name__).error(
+                        "chat_informe: fallo generando PDF: %s\n%s", _e_pdf, _tb.format_exc())
+            except Exception as _e_docx:
+                updated["_docx_error"] = str(_e_docx)
+                logging.getLogger(__name__).error(
+                    "chat_informe: fallo generando DOCX: %s\n%s", _e_docx, _tb.format_exc())
             updated["_assistant_msg"] = updated.get("respuesta_chat", "Informe actualizado.")
             return jsonify({"report": updated, "raw": raw})
 
@@ -2394,6 +2497,76 @@ def _parse_json_lenient(text):
         return None
 
 
+def _truncar_valores_grandes(obj, max_len: int = 20000):
+    """Recorre recursivamente un dict/list y reemplaza cualquier string mas largo
+    que max_len por un aviso corto. Red de seguridad generica para no volver a
+    mandar por error un blob enorme (diagrama, foto, lo que sea) a la API de
+    Claude: un solo campo asi puede agotar el limite de tokens del prompt
+    (ver bug real: 'prompt is too long: 4240653 tokens > 1000000 maximum')."""
+    if isinstance(obj, dict):
+        return {k: _truncar_valores_grandes(v, max_len) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_truncar_valores_grandes(v, max_len) for v in obj]
+    if isinstance(obj, str) and len(obj) > max_len:
+        return f"[contenido omitido: {len(obj)} caracteres, demasiado largo para enviar a la IA]"
+    return obj
+
+
+def _extraer_media_y_enlaces_docx(docx_path: Path, dest_dir: Path) -> tuple[list[str], list[dict]]:
+    """Extrae del .docx original (1) las imagenes incrustadas (fotos, diagramas,
+    dibujos) copiandolas a dest_dir para usarlas como anexo fotografico, y
+    (2) los hipervinculos (tipicamente enlaces a videos) con su texto visible.
+    Se usa al reimportar un informe ya generado por esta app para no perder
+    ese contenido, que Claude no puede reconstruir solo leyendo el texto."""
+    import zipfile
+    from docx import Document as _DocxDoc
+    from docx.oxml.ns import qn
+
+    evidencia_img: list[str] = []
+    enlaces: list[dict] = []
+
+    # 1) Imagenes incrustadas: el .docx es un zip, las imagenes viven en word/media/.
+    # Se extraen en orden de nombre (image1, image2, ...), que coincide con el
+    # orden en que python-docx las inserto originalmente.
+    try:
+        with zipfile.ZipFile(docx_path) as z:
+            media_names = sorted(
+                (n for n in z.namelist() if n.startswith("word/media/")),
+                key=lambda n: n,
+            )
+            for i, name in enumerate(media_names):
+                suf = Path(name).suffix.lower() or ".png"
+                if suf not in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}:
+                    continue
+                out_path = dest_dir / f"importado_{i + 1}{suf}"
+                out_path.write_bytes(z.read(name))
+                evidencia_img.append(str(out_path))
+    except Exception:
+        pass
+
+    # 2) Hipervinculos (enlaces a videos, nube, etc.)
+    try:
+        doc = _DocxDoc(str(docx_path))
+        rels = doc.part.rels
+        HL = qn("w:hyperlink")
+        RID = qn("r:id")
+        for hl in doc.element.body.iter(HL):
+            rid = hl.get(RID)
+            if not rid or rid not in rels:
+                continue
+            rel = rels[rid]
+            if not getattr(rel, "is_external", False):
+                continue
+            url = rel.target_ref
+            texto = "".join(t.text or "" for t in hl.iter(qn("w:t"))).strip()
+            if url and url not in [e["url"] for e in enlaces]:
+                enlaces.append({"texto": texto or url, "url": url})
+    except Exception:
+        pass
+
+    return evidencia_img, enlaces
+
+
 @app.route("/api/importar_informe", methods=["POST"])
 def api_importar_informe():
     """Importa un informe existente (DOCX/PDF/TXT) y lo convierte al schema JSON para edicion via chat."""
@@ -2421,6 +2594,18 @@ def api_importar_informe():
         tmp_dir = Path(tempfile.mkdtemp(prefix="importar_"))
         dest = tmp_dir / f"informe{suffix}"
         archivo.save(str(dest))
+
+        # Si es un .docx (formato en el que esta app genera sus propios informes),
+        # se recuperan las imagenes incrustadas (fotos, diagramas, dibujos) y los
+        # hipervinculos (enlaces a videos): Claude solo puede describir en texto lo
+        # que ve, no reconstruir estos elementos, asi que se extraen aqui y se
+        # reinyectan en el JSON tras el analisis.
+        evidencia_extraida: list[str] = []
+        enlaces_extraidos: list[dict] = []
+        if suffix in (".docx", ".doc"):
+            media_dir = UPLOADS_DIR / ("importado_" + uuid.uuid4().hex[:8])
+            media_dir.mkdir(parents=True, exist_ok=True)
+            evidencia_extraida, enlaces_extraidos = _extraer_media_y_enlaces_docx(dest, media_dir)
 
         client = _ant.Anthropic(api_key=key)
         instruccion = (
@@ -2467,6 +2652,10 @@ def api_importar_informe():
         raw = re.sub(r"\n?```\s*$", "", raw).strip()
         report = _parse_json_lenient(raw)
         if report is not None:
+            if evidencia_extraida:
+                report["_evidencia_img"] = evidencia_extraida
+            if enlaces_extraidos:
+                report["_enlaces_video"] = enlaces_extraidos
             return jsonify(report)
         # Volcado de diagnostico cuando el parseo falla
         try:

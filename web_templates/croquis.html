@@ -6,6 +6,7 @@
 <title>Croquis y Planos - Grupo Europa</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<script src="{{ url_for('static', filename='vendor/pdfjs/pdf.min.js') }}"></script>
 <style>
 :root { --blue:#4F84B5; --blue-dark:#3a6a96; --blue-light:#e8f0f8; }
 body { background:#f0f4f8; font-family:'Segoe UI',Calibri,sans-serif; margin:0; }
@@ -223,7 +224,7 @@ input[type=number].tb-num {
     </div>
     <div class="alert alert-info mt-2 py-2 px-3" style="font-size:.85rem">
       <i class="bi bi-info-circle me-2"></i>
-      Los PDFs y escaneos OCR no se pueden editar directamente. Pulsa <strong>"Generar plano con IA"</strong> para que la IA analice el documento y genere un plano tecnico limpio.
+      Este documento no se pudo abrir en el editor visual (PDF protegido o escaneado especial). Pulsa <strong>"Generar plano con IA"</strong> para que la IA analice el documento y genere un plano tecnico limpio.
     </div>
     <div class="form-check mt-2 mb-1">
       <input class="form-check-input" type="checkbox" id="chk-conservar-fondo-pdf" onchange="document.getElementById('chk-tinta-azul-pdf-wrap').style.display = this.checked ? '' : 'none'">
@@ -252,6 +253,9 @@ input[type=number].tb-num {
       <button class="tb-btn danger ms-3" style="display:inline-flex;font-size:.75rem;padding:3px 9px" onclick="resetEditor()">
         <i class="bi bi-arrow-counterclockwise me-1"></i>Cambiar imagen
       </button>
+    </div>
+    <div class="alert alert-warning py-2 px-3 mb-2" id="pdf-multipagina-aviso" style="display:none;font-size:.82rem">
+      <i class="bi bi-info-circle me-2"></i>Este PDF tiene varias paginas: solo se carga y edita la primera.
     </div>
 
     <!-- Toolbar 1: Transformaciones + Herramientas de anotacion -->
@@ -309,22 +313,32 @@ input[type=number].tb-num {
         <i class="bi bi-eraser"></i>
       </button>
 
-      <!-- Generar plano IA -->
-      <div class="tb-sep"></div>
-      <div class="form-check d-inline-flex align-items-center me-2" style="font-size:.78rem">
-        <input class="form-check-input" type="checkbox" id="chk-conservar-fondo-img" style="margin-top:0" onchange="document.getElementById('chk-tinta-azul-img-wrap').style.display = this.checked ? 'inline-flex' : 'none'">
-        <label class="form-check-label ms-1" for="chk-conservar-fondo-img" title="Conserva la foto/plano original de fondo y solo redibuja en limpio las anotaciones a boligrafo, en vez de regenerar el plano completo desde cero">
-          Conservar fondo original
+    </div>
+
+    <!-- Conservar fondo original: bloque propio, grande y visible (antes iba
+    apretado dentro de la barra de herramientas y era facil no verlo/marcarlo
+    por error). -->
+    <div class="p-3 mb-2" style="background:#fff8e1;border:2px solid #f0c419;border-radius:10px">
+      <div class="form-check mb-1">
+        <input class="form-check-input" type="checkbox" id="chk-conservar-fondo-img" style="width:1.15em;height:1.15em"
+               onchange="document.getElementById('chk-tinta-azul-img-wrap').style.display = this.checked ? 'block' : 'none'">
+        <label class="form-check-label fw-bold" for="chk-conservar-fondo-img" style="font-size:.9rem">
+          Es un plano/foto REAL con anotaciones a boligrafo encima: conservar el plano original tal cual de fondo y solo redibujar en limpio las anotaciones
         </label>
+        <div class="text-muted" style="font-size:.78rem;margin-left:1.6em">Sin marcar: se regenera el plano completo desde cero (para bocetos a mano alzada, sin plano real detras)</div>
       </div>
-      <div class="form-check d-inline-flex align-items-center me-2" id="chk-tinta-azul-img-wrap" style="font-size:.78rem;display:none">
-        <input class="form-check-input" type="checkbox" id="chk-tinta-azul-img" style="margin-top:0">
-        <label class="form-check-label ms-1" for="chk-tinta-azul-img" title="Borra la tinta azul del fondo antes de redibujar las anotaciones en limpio. NO marcar si el plano tiene tramos/elementos originales en azul.">
-          Anotaciones en boli azul: borrarlas
+      <div class="form-check ms-4" id="chk-tinta-azul-img-wrap" style="display:none">
+        <input class="form-check-input" type="checkbox" id="chk-tinta-azul-img" style="width:1.1em;height:1.1em">
+        <label class="form-check-label" for="chk-tinta-azul-img" style="font-size:.85rem">
+          Las anotaciones estan escritas a boligrafo AZUL: borrarlas del fondo antes de redibujarlas en limpio
         </label>
+        <div class="text-muted" style="font-size:.76rem;margin-left:1.5em">NO marcar si el plano tiene tramos/elementos originales en color azul, se borrarian por error</div>
       </div>
+    </div>
+
+    <div class="d-flex justify-content-end mb-2">
       <button class="tb-btn" id="btn-ia-plano" onclick="generarPlanoIA()"
-        style="background:linear-gradient(135deg,#4F84B5,#3a6a96);color:white;border-color:#3a6a96;font-weight:600"
+        style="background:linear-gradient(135deg,#4F84B5,#3a6a96);color:white;border-color:#3a6a96;font-weight:600;padding:8px 16px"
         title="Generar plano tecnico limpio con IA">
         <i class="bi bi-stars"></i> Generar plano con IA
       </button>
@@ -384,6 +398,9 @@ input[type=number].tb-num {
       <button class="btn btn-sm btn-success fw-bold" onclick="usarPlanoIA()">
         <i class="bi bi-check-circle me-1"></i>Usar este plano en el PDF
       </button>
+      <button class="btn btn-sm btn-outline-primary fw-bold" onclick="volverAEditarComoImagen()" title="Vuelve al editor de imagen de antes (lapiz, texto, linea, recortar) con este plano como base">
+        <i class="bi bi-pencil-square me-1"></i>Modificar plano (editor de imagen)
+      </button>
       <button class="btn btn-sm btn-outline-dark" id="btn-svg-edit" onclick="toggleSvgEdit()">
         <i class="bi bi-cursor me-1"></i>Editar elementos
       </button>
@@ -405,6 +422,9 @@ input[type=number].tb-num {
       </button>
       <button class="btn btn-sm btn-outline-secondary" onclick="toggleCtxInput()">
         <i class="bi bi-chat-left-text me-1"></i>Pedir correcciones
+      </button>
+      <button class="btn btn-sm btn-success fw-bold" onclick="guardarCambiosYRegenerar(this)" title="Aplica los cambios del editor y genera el PDF/Word al momento, sin rellenar nada mas">
+        <i class="bi bi-arrow-repeat me-1"></i>Guardar cambios y regenerar PDF
       </button>
     </div>
 
@@ -650,6 +670,53 @@ function onFileSelected(file) {
 function loadPDF(file) {
   pdfFile = file;
   baseCanvas = null;
+  document.getElementById('plano-ia-wrap').style.display = 'none';
+
+  if (typeof pdfjsLib === 'undefined') {
+    showPdfFallback(file);
+    return;
+  }
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '{{ url_for("static", filename="vendor/pdfjs/pdf.worker.min.js") }}';
+
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      const typedarray = new Uint8Array(ev.target.result);
+      const pdf = await pdfjsLib.getDocument({ data: typedarray }).promise;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 2 });
+      const tmpCanvas = document.createElement('canvas');
+      tmpCanvas.width = viewport.width;
+      tmpCanvas.height = viewport.height;
+      await page.render({ canvasContext: tmpCanvas.getContext('2d'), viewport }).promise;
+
+      const img = new Image();
+      img.onload = () => {
+        origImage = img;
+        rotation = 0; flipH = false; flipV = false;
+        brightness = 100; contrast = 100;
+        annotations = []; undoStack = [];
+        document.getElementById('adj-brightness').value = 100;
+        document.getElementById('adj-contrast').value   = 100;
+        document.getElementById('adj-brightness-val').textContent = '100%';
+        document.getElementById('adj-contrast-val').textContent   = '100%';
+        rebuildBase();
+        document.getElementById('drop-wrap').style.display   = 'none';
+        document.getElementById('pdf-wrap').style.display    = 'none';
+        document.getElementById('editor-wrap').style.display = 'block';
+        document.getElementById('pdf-multipagina-aviso').style.display = pdf.numPages > 1 ? 'block' : 'none';
+        setTool('pencil');
+        updateUndoBadge();
+      };
+      img.src = tmpCanvas.toDataURL('image/png');
+    } catch (e) {
+      showPdfFallback(file);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function showPdfFallback(file) {
   document.getElementById('drop-wrap').style.display    = 'none';
   document.getElementById('editor-wrap').style.display  = 'none';
   document.getElementById('pdf-wrap').style.display     = 'block';
@@ -657,8 +724,6 @@ function loadPDF(file) {
   const kb = (file.size / 1024).toFixed(0);
   const mb = (file.size / 1024 / 1024).toFixed(1);
   document.getElementById('pdf-size').textContent = file.size > 1024*1024 ? mb + ' MB' : kb + ' KB';
-  // Mostrar panel IA y metadatos
-  document.getElementById('plano-ia-wrap').style.display = 'none';
 }
 
 function loadImage(file) {
@@ -1029,6 +1094,7 @@ function resetEditor() {
   document.getElementById('pdf-wrap').style.display    = 'none';
   document.getElementById('drop-wrap').style.display   = 'block';
   document.getElementById('plano-ia-wrap').style.display = 'none';
+  document.getElementById('pdf-multipagina-aviso').style.display = 'none';
   origImage = null; baseCanvas = null; pdfFile = null;
   svgGenerado = null; usandoSvg = false;
 }
@@ -1079,10 +1145,10 @@ async function generarPlanoIA() {
 
   const _doRequest = async blob => {
     const fd = new FormData();
-    if (pdfFile) {
-      fd.append('imagen', pdfFile, pdfFile.name);  // PDF directo
-    } else {
-      fd.append('imagen', blob, 'boceto.jpg');      // canvas exportado
+    if (blob) {
+      fd.append('imagen', blob, 'boceto.jpg');      // canvas exportado (imagen o PDF editado)
+    } else if (pdfFile) {
+      fd.append('imagen', pdfFile, pdfFile.name);  // PDF directo (fallback: no se pudo editar)
     }
     if (ctx_txt) fd.append('contexto', ctx_txt);
     if (conservarFondo) fd.append('conservar_fondo', '1');
@@ -1119,10 +1185,10 @@ async function generarPlanoIA() {
     }
   };
 
-  if (pdfFile) {
-    _doRequest(null);
-  } else {
+  if (baseCanvas) {
     exportBlob(_doRequest);
+  } else if (pdfFile) {
+    _doRequest(null);
   }
 }
 
@@ -1142,6 +1208,68 @@ function usarPlanoIA() {
   usandoSvg = true;
   document.getElementById('plano-ia-modo').style.display    = 'block';
   document.getElementById('plano-ia-actions').style.display = 'none';
+}
+
+// Vuelve a poner el plano generado por IA en el MISMO editor de imagen (lapiz,
+// texto, linea, recortar, rotar) en el que se trabajaba antes de generarlo,
+// en vez de dejar el edicion de elementos SVG como unica via.
+function volverAEditarComoImagen() {
+  if (!svgGenerado) return;
+  const svgBlob = new Blob([svgGenerado], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(svgBlob);
+  const img = new Image();
+  img.onload = () => {
+    const w = img.naturalWidth  || 1200;
+    const h = img.naturalHeight || 800;
+    const tmp = document.createElement('canvas');
+    tmp.width = w; tmp.height = h;
+    const tctx = tmp.getContext('2d');
+    tctx.fillStyle = '#ffffff';
+    tctx.fillRect(0, 0, w, h);
+    tctx.drawImage(img, 0, 0, w, h);
+    URL.revokeObjectURL(url);
+
+    const finalImg = new Image();
+    finalImg.onload = () => {
+      origImage = finalImg;
+      rotation = 0; flipH = false; flipV = false;
+      brightness = 100; contrast = 100;
+      annotations = []; undoStack = [];
+      document.getElementById('adj-brightness').value = 100;
+      document.getElementById('adj-contrast').value   = 100;
+      document.getElementById('adj-brightness-val').textContent = '100%';
+      document.getElementById('adj-contrast-val').textContent   = '100%';
+      pdfFile = null;
+      rebuildBase();
+      document.getElementById('drop-wrap').style.display   = 'none';
+      document.getElementById('pdf-wrap').style.display    = 'none';
+      document.getElementById('editor-wrap').style.display = 'block';
+      document.getElementById('plano-ia-wrap').style.display = 'none';
+      svgGenerado = null; usandoSvg = false;
+      setTool('pencil');
+      updateUndoBadge();
+      window.scrollTo({ top: document.getElementById('editor-wrap').offsetTop - 20, behavior: 'smooth' });
+    };
+    finalImg.src = tmp.toDataURL('image/png');
+  };
+  img.onerror = () => alert('No se pudo convertir el plano a imagen editable.');
+  img.src = url;
+}
+
+// Boton unico "Guardar cambios y regenerar PDF": equivalente al que ya existe
+// en el editor de croquis embebido dentro del informe IA (/analizar), donde
+// un solo clic aplica los cambios de edicion de elementos y regenera el
+// Word/PDF sin tener que activar "Usar este plano" y bajar hasta el boton
+// principal de la pagina.
+async function guardarCambiosYRegenerar(btn) {
+  if (!svgGenerado) { alert('Genera primero el plano con IA.'); return; }
+  if (btn) btn.disabled = true;
+  try {
+    usarPlanoIA();
+    await generarPDF();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function usarFotoOriginal() {
@@ -1796,9 +1924,14 @@ function _enableSvgEdit() {
     svg.appendChild(r);
   }
 
-  // Mark selectable elements: direct children + second-level inside top <g>
+  // Mark selectable elements: direct children + second-level inside top <g>.
+  // Se excluyen el fondo/marco/cajetin/leyenda (marcados con data-svg-no-edit
+  // por el servidor, ver _marcar_boilerplate_no_editable en app.py): sin esto
+  // el rectangulo de fondo a pantalla completa quedaba seleccionable como una
+  // pieza mas, y arrastrarlo sin querer parecia "mover todo el plano".
   const mark = el => {
     if (el.id === 'svg-sel-box') return;
+    if (el.hasAttribute('data-svg-no-edit')) return;
     el.dataset.svgEl = '1';
   };
   [...svg.children].forEach(el => {

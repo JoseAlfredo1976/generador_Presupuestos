@@ -1421,6 +1421,11 @@ function _planoEnableEdit() {
   }
   [...svg.children].forEach(el => {
     if (el.tagName === 'defs' || el.tagName === 'style' || el.id === 'plano-sel-box') return;
+    // Fondo/marco/cajetin/leyenda vienen marcados con data-svg-no-edit desde
+    // el servidor (ver _marcar_boilerplate_no_editable en app.py): sin excluirlos
+    // aqui, el rectangulo de fondo a pantalla completa queda seleccionable como
+    // una pieza mas y arrastrarlo sin querer parece "mover todo el plano".
+    if (el.hasAttribute('data-svg-no-edit')) return;
     el.dataset.planoEl = '1';
   });
   svg.addEventListener('mousedown', _planoMD);

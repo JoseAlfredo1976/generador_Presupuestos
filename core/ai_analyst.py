@@ -819,6 +819,39 @@ def _append_photo_annex(doc, evidencia, titulo="Anexo Fotografico"):
         nr.font.color.rgb = gris
 
 
+def _sanear_informe(report: dict) -> dict:
+    """Reemplaza valores null por cadenas/listas vacias en los campos de texto
+    del informe. Reimportar un documento que no menciona un dato (ej. "diametro")
+    hace que Claude devuelva null en vez de string, y un simple .upper() sobre
+    ese None tumba toda la generacion del DOCX (ver bug: informe se quedaba sin
+    poder descargarse tras editar por chat)."""
+    import copy as _copy
+    r = _copy.deepcopy(report)
+    campos_texto = ("titulo", "objeto", "antecedentes", "metodologia", "descripcion_red",
+                     "conclusiones", "observaciones_limitaciones", "nivel_urgencia_global")
+    for k in campos_texto:
+        if r.get(k) is None:
+            r[k] = ""
+    for lista, campos in (
+        ("tramos", ("id", "inicio", "fin", "longitud", "diametro", "material", "estado", "observaciones")),
+        ("patologias", ("ubicacion", "tipo", "gravedad", "descripcion", "consecuencias")),
+        ("propuesta_solucion", ("intervencion", "justificacion", "metodo", "prioridad")),
+        ("mediciones", ("descripcion", "ud", "diametro")),
+        ("preguntas_pendientes", None),
+    ):
+        items = r.get(lista)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if campos is None:
+                continue
+            if isinstance(item, dict):
+                for c in campos:
+                    if item.get(c) is None:
+                        item[c] = ""
+    return r
+
+
 def generate_report_docx(report: dict, output_path: Path, num_ref: str = "", cliente: str = "",
                          enlace_video: str | None = None):
     from datetime import datetime
@@ -827,6 +860,8 @@ def generate_report_docx(report: dict, output_path: Path, num_ref: str = "", cli
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+
+    report = _sanear_informe(report)
 
     BLUE = RGBColor(0x1F, 0x4E, 0x79)
     BLUE_MID = RGBColor(0x2E, 0x74, 0xB5)
@@ -922,7 +957,7 @@ def generate_report_docx(report: dict, output_path: Path, num_ref: str = "", cli
     title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title_p.paragraph_format.space_before = Pt(0)
     title_p.paragraph_format.space_after = Pt(6)
-    tr = title_p.add_run(report.get("titulo", "INFORME TECNICO").upper())
+    tr = title_p.add_run((report.get("titulo") or "INFORME TECNICO").upper())
     tr.bold = True
     tr.font.size = Pt(14)
     tr.font.color.rgb = BLUE
@@ -940,7 +975,7 @@ def generate_report_docx(report: dict, output_path: Path, num_ref: str = "", cli
     mr.font.color.rgb = GRAY
 
     # Urgency strip
-    urgencia = report.get("nivel_urgencia_global", "Medio")
+    urgencia = report.get("nivel_urgencia_global") or "Medio"
     inmediata = report.get("requiere_intervencion_inmediata", False)
     urg_p = doc.add_paragraph()
     urg_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1117,6 +1152,16 @@ def generate_report_docx(report: dict, output_path: Path, num_ref: str = "", cli
     )
     fr.font.size = Pt(8)
     fr.font.color.rgb = GRAY
+
+    # Enlaces a video recuperados al importar un informe existente (hipervinculos
+    # del .docx original: no se pueden regenerar solo a partir del texto).
+    enlaces_video = report.get("_enlaces_video") or []
+    if enlaces_video:
+        h1("Enlaces a Video")
+        for enlace in enlaces_video:
+            p_link = doc.add_paragraph()
+            p_link.paragraph_format.space_after = Pt(4)
+            _add_hyperlink(p_link, enlace.get("url", ""), enlace.get("texto") or enlace.get("url", ""), size_pt=10)
 
     # Anexo fotografico: fotogramas/imagenes de la inspeccion
     _append_photo_annex(doc, report.get("_evidencia_img"),
