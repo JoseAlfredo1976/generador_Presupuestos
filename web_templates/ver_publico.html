@@ -34,10 +34,30 @@
     {% if datos.nivel_urgencia_global %} &nbsp;|&nbsp; <span class="fw-semibold urg-{{ datos.nivel_urgencia_global }}">{{ datos.nivel_urgencia_global|upper }}</span>{% endif %}
   </div>
 
-  {% if datos.videos %}
+  {% set videos_usados = [] %}
+  {% if datos.secciones %}
+    {% for sec in datos.secciones %}
+      {% for o in (sec.observaciones_tabla or []) %}
+        {% if o._video and o._video not in videos_usados %}{% set _ = videos_usados.append(o._video) %}{% endif %}
+      {% endfor %}
+    {% endfor %}
+  {% endif %}
+  {% set videos_sin_tramo = (datos.videos or [])|rejectattr('nombre', 'in', videos_usados)|list %}
+
+  {% if datos.videos and not datos.secciones %}
   <div class="section-title"><i class="bi bi-camera-video me-2"></i>Video de la inspeccion</div>
   <div class="d-flex flex-wrap gap-3 mb-4">
     {% for v in datos.videos %}
+    <div style="flex:1 1 320px;max-width:520px">
+      <video id="video-ia-{{ v.nombre|replace('.', '_') }}" src="{{ v.url }}" controls preload="metadata"
+             style="width:100%;border-radius:10px;background:#000"></video>
+    </div>
+    {% endfor %}
+  </div>
+  {% elif videos_sin_tramo %}
+  <div class="section-title"><i class="bi bi-camera-video me-2"></i>Otros videos de la inspeccion</div>
+  <div class="d-flex flex-wrap gap-3 mb-4">
+    {% for v in videos_sin_tramo %}
     <div style="flex:1 1 320px;max-width:520px">
       <video id="video-ia-{{ v.nombre|replace('.', '_') }}" src="{{ v.url }}" controls preload="metadata"
              style="width:100%;border-radius:10px;background:#000"></video>
@@ -49,6 +69,12 @@
   {% if datos.secciones %}
   <div class="section-title"><i class="bi bi-table me-2"></i>Tramos inspeccionados ({{ datos.secciones|length }})</div>
   {% for sec in datos.secciones %}
+  {% set video_map = {} %}
+  {% for v in (datos.videos or []) %}{% set _ = video_map.update({v.nombre: v.url}) %}{% endfor %}
+  {% set nombres_video_tramo = [] %}
+  {% for o in (sec.observaciones_tabla or []) %}
+    {% if o._video and o._video not in nombres_video_tramo %}{% set _ = nombres_video_tramo.append(o._video) %}{% endif %}
+  {% endfor %}
   <div class="tramo-card">
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
       <div class="fw-bold" style="color:var(--brand-dark)">Tramo {{ sec.num }} - {{ sec.nombre or '' }}</div>
@@ -59,6 +85,19 @@
         {% if sec.material %}&nbsp;|&nbsp; {{ sec.material }}{% endif %}
       </div>
     </div>
+    {% if nombres_video_tramo %}
+    <div class="mb-3 d-flex flex-wrap gap-3">
+      {% for vn in nombres_video_tramo %}
+        {% if video_map[vn] %}
+        <div style="flex:1 1 320px;max-width:480px">
+          <div class="small fw-semibold text-muted mb-1"><i class="bi bi-camera-video me-1"></i>{{ vn }}</div>
+          <video id="video-ia-sec{{ sec.num }}_{{ vn|replace('.', '_') }}" src="{{ video_map[vn] }}" controls preload="metadata"
+                 style="width:100%;border-radius:10px;background:#000"></video>
+        </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
     {% set obs = sec.observaciones_tabla or [] %}
     {% if obs %}
     <div class="table-responsive">
@@ -72,10 +111,10 @@
             <td>{{ o.descripcion or '' }}</td>
             <td class="text-center">{{ o.gravedad or '-' }}</td>
             <td class="text-center">
-              {% if o._video and o._t is not none %}
+              {% if o._video and o._t is not none and video_map[o._video] %}
               <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2"
-                      onclick="verEnVideo('{{ o._video|replace('.', '_') }}', {{ o._t }})"
-                      title="Ir al momento del video (aprox.)"><i class="bi bi-play-fill"></i></button>
+                      onclick="verEnVideo('sec{{ sec.num }}_{{ o._video|replace('.', '_') }}', {{ o._t }})"
+                      title="Ir al fotograma de la patologia"><i class="bi bi-play-fill"></i></button>
               {% endif %}
             </td>
           </tr>

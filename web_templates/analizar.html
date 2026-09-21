@@ -910,9 +910,35 @@ function showResult(r) {
     </div>`;
   }
 
-  // Visor de video CCTV (solo si se subieron videos y se persistieron con exito)
+  // Video CCTV: si hay tramos WinCam, el video de cada tramo se muestra
+  // junto a su tabla (ver bucle de wc.secciones mas abajo), en vez de en un
+  // bloque unico separado, para que se pueda ver "primero el video, luego la
+  // tabla" de cada tramo. Aqui solo se listan los videos subidos que NO
+  // quedaron asociados a ningun tramo (para no perderlos de vista).
   const videosIA = r._videos || [];
-  if (videosIA.length) {
+  const videoUrlPorNombre = {};
+  videosIA.forEach(v => { videoUrlPorNombre[v.nombre] = v.url; });
+  const videosUsadosEnTramos = new Set();
+  if (wc && (wc.secciones || []).length) {
+    wc.secciones.forEach(sec => (sec.observaciones_tabla || []).forEach(o => {
+      if (o._video) videosUsadosEnTramos.add(o._video);
+    }));
+  }
+  const videosSinTramo = videosIA.filter(v => !videosUsadosEnTramos.has(v.nombre));
+  if (videosSinTramo.length && wc && (wc.secciones || []).length) {
+    // Solo se muestra este bloque generico si hay tramos WinCam (si no los
+    // hay, todos los videos van en el bloque generico de abajo igualmente).
+    html += `<div class="section-title"><i class="bi bi-camera-video me-2"></i>Otros videos de la inspeccion</div>
+      <div class="d-flex flex-wrap gap-3 mb-4">`;
+    videosSinTramo.forEach(v => {
+      html += `<div style="flex:1 1 320px;max-width:480px">
+        <div class="small fw-semibold text-muted mb-1">${esc(v.nombre)}</div>
+        <video id="video-ia-${esc(videoElId(v.nombre))}" src="${esc(v.url)}" controls preload="metadata"
+               style="width:100%;border-radius:10px;background:#000"></video>
+      </div>`;
+    });
+    html += `</div>`;
+  } else if (videosIA.length && !(wc && (wc.secciones || []).length)) {
     html += `<div class="section-title"><i class="bi bi-camera-video me-2"></i>Video de la inspeccion</div>
       <div class="d-flex flex-wrap gap-3 mb-4">`;
     videosIA.forEach(v => {
@@ -936,8 +962,16 @@ function showResult(r) {
     const GRAV_COLOR = {A:'#C00000', B:'#E26B0A', C:'#BF9000', D:'#548235'};
     const GRAV_LBL = {A:'Urgente', B:'Corto plazo', C:'Preventivo', D:'Informativo'};
     html += `<div class="section-title"><i class="bi bi-table me-2"></i>Informe WinCam - Tramos (${wc.secciones.length})</div>`;
-    wc.secciones.forEach(sec => {
+    wc.secciones.forEach((sec, secIdx) => {
       const obs = sec.observaciones_tabla || [];
+
+      // Video(s) de este tramo (segun los videos referenciados por sus propias
+      // observaciones), con id de elemento propio del tramo para que el boton
+      // "play" de su tabla apunte siempre al video que esta justo encima.
+      const nombresVideoTramo = [];
+      obs.forEach(o => { if (o._video && !nombresVideoTramo.includes(o._video)) nombresVideoTramo.push(o._video); });
+      const elIdTramo = nombre => `sec${secIdx}_${videoElId(nombre)}`;
+
       html += `<div class="mb-4 p-3" style="border:1px solid #dbe3ec;border-radius:12px;background:#fafcfe">
         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
           <div class="fw-bold" style="color:#1F4E79">Tramo ${esc(sec.num)} - ${esc(sec.nombre||'')}</div>
@@ -948,19 +982,32 @@ function showResult(r) {
             ${sec.material ? `&nbsp;|&nbsp; ${esc(sec.material)}` : ''}
           </div>
         </div>`;
+      if (nombresVideoTramo.length) {
+        html += `<div class="mb-3 d-flex flex-wrap gap-3">`;
+        nombresVideoTramo.forEach(vn => {
+          const url = videoUrlPorNombre[vn];
+          if (!url) return;
+          html += `<div style="flex:1 1 320px;max-width:480px">
+            <div class="small fw-semibold text-muted mb-1"><i class="bi bi-camera-video me-1"></i>${esc(vn)}</div>
+            <video id="video-ia-${esc(elIdTramo(vn))}" src="${esc(url)}" controls preload="metadata"
+                   style="width:100%;border-radius:10px;background:#000"></video>
+          </div>`;
+        });
+        html += `</div>`;
+      }
       if (obs.length) {
         html += `<div class="table-responsive"><table class="table table-sm table-bordered mb-2" style="font-size:.8rem">
           <thead class="table-light"><tr><th>Posicion</th><th>Codigo</th><th>Descripcion</th><th>Gravedad</th><th></th></tr></thead><tbody>`;
         obs.forEach(o => {
           const grav = (o.gravedad||'').trim().toUpperCase();
-          const puedeVer = o._video && typeof o._t === 'number';
+          const puedeVer = o._video && typeof o._t === 'number' && videoUrlPorNombre[o._video];
           html += `<tr>
             <td class="text-center">${Number(o.posicion_m||0).toFixed(2)} m</td>
             <td class="text-center fw-bold" style="${grav && GRAV_COLOR[grav] ? `color:${GRAV_COLOR[grav]}` : ''}">${esc(o.codigo||'')}</td>
             <td>${esc(o.descripcion||'')}</td>
             <td class="text-center">${grav && GRAV_LBL[grav] ? `${grav} - ${esc(GRAV_LBL[grav])}` : '-'}</td>
             <td class="text-center">${puedeVer
-              ? `<button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" onclick="verEnVideo('${esc(videoElId(o._video))}', ${o._t})" title="Ir al momento del video (aprox.)"><i class="bi bi-play-fill"></i></button>`
+              ? `<button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" onclick="verEnVideo('${esc(elIdTramo(o._video))}', ${o._t})" title="Ir al fotograma de la patologia"><i class="bi bi-play-fill"></i></button>`
               : ''}</td>
           </tr>`;
         });
