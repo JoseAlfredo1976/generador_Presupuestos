@@ -3053,10 +3053,12 @@ def api_tarifas_full():
 
 @app.route("/api/analizar_solicitud", methods=["POST"])
 def api_analizar_solicitud():
-    """Extract budget form data from uploaded documents using AI."""
+    """Extract budget form data (and detect document type) from uploaded
+    documents and/or pasted free text, using AI."""
     files_in = request.files.getlist("archivos")
-    if not files_in:
-        return jsonify({"error": "No se recibieron archivos."}), 400
+    texto = (request.form.get("texto") or "").strip()
+    if not files_in and not texto:
+        return jsonify({"error": "No se recibio ningun archivo ni texto."}), 400
 
     api_key = request.form.get("api_key", "").strip() or os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -3076,11 +3078,11 @@ def api_analizar_solicitud():
         fobj.save(dest)
         saved.append(dest)
 
-    if not saved:
+    if not saved and not texto:
         return jsonify({"error": "Ningun archivo tiene formato valido (jpg, png, pdf, txt, eml)."}), 400
 
     try:
-        result = extract_solicitud_data(saved, api_key=api_key)
+        result = extract_solicitud_data(saved, api_key=api_key, texto=texto)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -2408,7 +2408,7 @@ def generate_wincam_docx(report: dict, output_path: Path, num_ref: str = "", cli
 # ---------------------------------------------------------------------------
 
 _SOLICITUD_SYSTEM = """Eres un asistente administrativo de Acometidas Europa Saneamiento Tecnico S.L.
-Tu tarea es leer documentos (correos electronicos, PDFs, capturas de pantalla, memorias) enviados por clientes o administradores de fincas y extraer los datos necesarios para rellenar un presupuesto.
+Tu tarea es leer documentos (correos electronicos, PDFs, capturas de pantalla, memorias, mensajes pegados directamente) enviados por clientes o administradores de fincas y extraer los datos necesarios para rellenar un presupuesto.
 
 REGLAS:
 - Extrae SOLO lo que esta escrito claramente en el documento. No inventes nada.
@@ -2419,6 +2419,9 @@ REGLAS:
 - El campo "administracion" es el nombre de la administracion o administrador de fincas si aparece.
 - El campo "provincia" extrae solo la ciudad o provincia (ej: "Madrid", "Barcelona").
 - Si hay numero de referencia/expediente del cliente, ponlo en "ref_cliente".
+- El campo "tipo_detectado" debe ser EXACTAMENTE uno de los id del catalogo de tipos de documento
+  que se te facilita mas abajo, el que mejor encaje con lo solicitado. Si no hay suficiente
+  informacion para decidir con confianza, deja "tipo_detectado" como cadena vacia "".
 - Responde UNICAMENTE con el JSON. Sin texto fuera del JSON."""
 
 _SOLICITUD_SCHEMA = """{
@@ -2431,23 +2434,53 @@ _SOLICITUD_SCHEMA = """{
   "servicio": "string - descripcion corta del servicio solicitado",
   "provincia": "string - ciudad o provincia",
   "ref_cliente": "string - numero de referencia del cliente si existe",
-  "notas": "string - cualquier dato relevante no incluido en los campos anteriores"
+  "notas": "string - cualquier dato relevante no incluido en los campos anteriores",
+  "tipo_detectado": "string - id del catalogo de tipos de documento que mejor encaja, o vacia si no esta claro"
 }"""
 
+# Catalogo de tipos de documento (mismos id que TIPOS en web_templates/index.html)
+# usado para que la IA pueda clasificar una descripcion en texto libre.
+_CATALOGO_TIPOS_DOC = """
+- obra_1: Presupuesto de obra, 1 opcion
+- obra_2: Presupuesto de obra, 2 opciones a elegir
+- presupuesto_multioficio: Presupuesto integral multioficio (varios gremios en un mismo documento)
+- desatasco: Desatasco de tuberia/bajante
+- cctv_bajante: Inspeccion CCTV de bajante
+- inspeccion_zum: Inspeccion ZUM
+- limpieza_aerea: Limpieza de red aerea/pluviales con camion de alta presion
+- fresador: Fresado robotizado de raices/incrustaciones
+- robot_limpieza: Limpieza con robot CCTV
+- fuga_agua: Localizacion/reparacion de fuga de agua
+- vaciado_fosa: Vaciado de fosa septica
+- informe_desatasco: Informe tecnico de un desatasco ya realizado
+- bajantes_amianto: Sustitucion de bajantes de fibrocemento/amianto
+- certificado_obra: Certificado de obra o de trabajos realizados
+- plan_seguridad: Plan de seguridad y salud
+- contrato_saneamiento: Contrato de mantenimiento de saneamiento
+- fontaneria: Presupuesto de fontaneria
+- albanileria: Presupuesto de albañileria
+- contrato_subcontrata: Contrato con una subcontrata
+"""
 
-def extract_solicitud_data(files: list[Path], api_key: str = "") -> dict:
-    """Extract budget form data from uploaded documents/emails using Claude AI."""
+
+def extract_solicitud_data(files: list[Path] | None = None, api_key: str = "", texto: str = "") -> dict:
+    """Extract budget form data (and detect document type) from uploaded
+    documents/emails and/or pasted free text, using Claude AI."""
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip() or api_key.strip()
     if not key:
         raise ValueError("API Key de Anthropic no configurada.")
     client = anthropic.Anthropic(api_key=key)
+    files = files or []
 
     content: list[dict] = []
     content.append({"type": "text", "text": (
-        "Lee el/los siguiente(s) documento(s) y extrae los datos del presupuesto.\n"
+        "Lee el/los siguiente(s) documento(s) y/o texto pegado, y extrae los datos del presupuesto.\n"
         f"Devuelve UNICAMENTE un JSON con este esquema:\n{_SOLICITUD_SCHEMA}\n\n"
+        f"CATALOGO DE TIPOS DE DOCUMENTO (para el campo 'tipo_detectado'):\n{_CATALOGO_TIPOS_DOC}\n"
         "DOCUMENTOS:\n"
     )})
+    if texto.strip():
+        content.append({"type": "text", "text": f"\n--- TEXTO PEGADO POR EL TECNICO ---\n{texto.strip()[:8000]}\n"})
 
     img_ext = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
     txt_ext = {".txt", ".eml", ".msg", ".html", ".htm", ".csv"}

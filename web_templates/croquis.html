@@ -25,6 +25,13 @@ body { background:#f0f4f8; font-family:'Segoe UI',Calibri,sans-serif; margin:0; 
 .nav-pill:hover { background:rgba(255,255,255,.25); color:white; }
 .nav-pill.active { background:white; color:var(--blue-dark); }
 
+@media (max-width:576px) {
+  .app-header .d-flex.align-items-center.gap-3 { flex-wrap:wrap; }
+  .app-header h1 { font-size:1.02rem; }
+  .app-header .d-flex.gap-2 { width:100%; margin-top:4px; }
+  .app-header .nav-pill { flex:1; text-align:center; }
+}
+
 .main-wrap { max-width:960px; margin:0 auto; padding:20px 16px 80px; }
 
 .section-title {

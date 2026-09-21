@@ -1,0 +1,12 @@
+{
+  "name": "Generador de Presupuestos - Grupo Europa",
+  "short_name": "Presupuestos GE",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1b2a",
+  "theme_color": "#0d1b2a",
+  "icons": [
+    { "src": "/static/img/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/static/img/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}
