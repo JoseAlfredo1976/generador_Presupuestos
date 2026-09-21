@@ -300,11 +300,10 @@ body {
   background: linear-gradient(165deg, #10131c, #05060a);
   border-radius: 32px;
   padding: 18px 14px 22px;
-  max-height: 62vh;
-  overflow-y: auto;
+  /* Sin scroll propio: crece con su contenido. El unico contenedor con
+     scroll es #panel-card (fuera de este marco), para evitar dos scrolls
+     anidados que en movil real se sienten "atascados" al deslizar. */
 }
-.iphone-screen::-webkit-scrollbar { width: 4px; }
-.iphone-screen::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 4px; }
 .iphone-screen .cat-label { color: rgba(255,255,255,.5); }
 
 /* ── Type grid: iconos transparentes tipo iOS, interactivos al pasar el
@@ -578,6 +577,9 @@ body {
   #content-area { padding: 20px 16px; }
   #topbar { padding: 10px 16px; }
   #panel-card { padding: 18px 16px; }
+  /* En movil, que crezca con el contenido y sea la pagina la que hace scroll
+     (natural al tacto), en vez de una caja con su propio scroll interno. */
+  #panel-card { max-height: none; overflow-y: visible; }
 }
 
 /* ── Mobile toggle */
