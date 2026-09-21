@@ -279,43 +279,55 @@ body {
 .fi { animation: fi .3s ease forwards; }
 
 /* ── Type grid */
+/* ── Tarjetas estilo iOS: iconos redondeados, cristal translucido,
+   distribuidos simetricamente en columnas fijas (como una pantalla de
+   inicio de iPhone). */
 .type-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
 }
+@media (max-width: 560px) { .type-grid { grid-template-columns: repeat(3, 1fr); gap: 10px; } }
 .type-card {
-  border: 1px solid #e5eaf2;
-  border-radius: 12px;
-  padding: 14px 8px 12px;
+  aspect-ratio: 1;
+  border: 1px solid rgba(255,255,255,.7);
+  border-radius: 20px;
+  padding: 10px 6px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   text-align: center;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(15,23,42,.04);
-  transition: border-color .18s, box-shadow .18s, transform .18s;
+  background: rgba(238,243,250,.65);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  box-shadow: 0 2px 8px rgba(15,23,42,.06), inset 0 1px 0 rgba(255,255,255,.6);
+  transition: box-shadow .18s, transform .12s;
   user-select: none;
 }
 .type-card:hover {
-  border-color: #93b4f5;
-  box-shadow: 0 6px 16px rgba(37,99,235,.14);
+  box-shadow: 0 10px 22px rgba(37,99,235,.16), inset 0 1px 0 rgba(255,255,255,.7);
   transform: translateY(-2px);
 }
+.type-card:active { transform: scale(.94); }
 .type-card.selected {
-  border-color: #2563eb;
-  background: #f5f8ff;
-  box-shadow: 0 6px 16px rgba(37,99,235,.18);
+  border-color: rgba(37,99,235,.45);
+  background: rgba(37,99,235,.16);
+  box-shadow: 0 10px 22px rgba(37,99,235,.25), inset 0 1px 0 rgba(255,255,255,.6);
 }
 .type-card .tc-icon {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 11px;
-  background: linear-gradient(145deg, #eaf0fe, #dce7fc);
+  border-radius: 13px;
+  background: linear-gradient(145deg, rgba(255,255,255,.95), rgba(222,231,252,.85));
   color: #2354c9;
-  font-size: 1.2rem;
+  font-size: 1.15rem;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.8);
   transition: background .18s, color .18s, transform .18s;
 }
 .type-card:hover .tc-icon { transform: scale(1.06); }
@@ -325,10 +337,10 @@ body {
   box-shadow: 0 3px 8px rgba(37,99,235,.35);
 }
 .type-card .tc-name {
-  font-size: .68rem;
+  font-size: .66rem;
   font-weight: 600;
   color: #0d1b2a;
-  margin-top: 8px;
+  margin-top: 7px;
   line-height: 1.25;
 }
 
