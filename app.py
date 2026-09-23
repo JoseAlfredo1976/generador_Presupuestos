@@ -210,6 +210,33 @@ def _transcodificar_video_web(origen: Path, destino: Path) -> bool:
 _SEGUNDOS_POR_FOTOGRAMA = 5.0
 
 
+def _base_url_publico(base_url: str) -> str:
+    """Si el enlace se genera trabajando localmente contra 'localhost' o
+    '127.0.0.1', lo sustituye por la IP de la red local del PC, para que el
+    enlace que se comparte con el cliente (ver video CCTV, planos, etc.) sea
+    accesible desde su movil en la misma WiFi. 'localhost' en el movil del
+    cliente apunta al propio movil, no al PC del tecnico: el enlace nunca
+    cargaria (ver bug real: "no se puede acceder a este sitio web localhost").
+    En Railway (produccion) el host ya es publico y no se toca."""
+    from urllib.parse import urlsplit, urlunsplit
+    try:
+        parts = urlsplit(base_url)
+    except Exception:
+        return base_url
+    if parts.hostname not in ("localhost", "127.0.0.1"):
+        return base_url
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        return base_url
+    netloc = f"{lan_ip}:{parts.port}" if parts.port else lan_ip
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
 def _marcar_timestamps_video(wc_report: dict, session_id: str, videos_persistidos: dict[str, str]) -> list[dict]:
     """Anade '_video' (nombre de archivo WEB, ya transcodificado) y '_t' (segundos
     aprox.) a cada observacion de wc_report que referencia un fotograma de un
@@ -1533,7 +1560,7 @@ def api_generar_planos_multiples():
                 direccion=request.form.get("direccion", ""),
                 fecha_raw=request.form.get("fecha", datetime.now().strftime("%Y-%m-%d")),
                 notas=request.form.get("notas", ""),
-                base_url=request.url_root,
+                base_url=_base_url_publico(request.url_root),
             ),
             daemon=True,
         ).start()
@@ -1931,7 +1958,7 @@ def api_analizar():
                 session_id=session_id, saved_files=saved_files, croquis_path=croquis_path,
                 tipo=tipo, formato=formato, context=context, api_key=api_key,
                 num_ref=num_ref, cliente=cliente, proyecto=proyecto, calle=calle,
-                poblacion=poblacion, informe_stem=_informe_stem, base_url=request.url_root,
+                poblacion=poblacion, informe_stem=_informe_stem, base_url=_base_url_publico(request.url_root),
                 croquis_conservar_fondo=request.form.get("croquis_conservar_fondo", "0") == "1",
                 croquis_borrar_tinta_azul=request.form.get("croquis_borrar_tinta_azul", "0") == "1",
             ),
