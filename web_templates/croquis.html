@@ -376,6 +376,12 @@ input[type=number].tb-num {
 
   <!-- Panel plano IA -->
   <div id="plano-ia-wrap" style="display:none">
+    <div id="lote-edit-banner" class="alert alert-primary d-flex align-items-center gap-2 flex-wrap mt-2 mb-0 py-2 px-3" style="display:none!important;font-size:.88rem">
+      <i class="bi bi-collection"></i>
+      <span class="flex-grow-1">Editando <strong id="lote-edit-nombre"></strong> del lote</span>
+      <button class="btn btn-sm btn-success fw-bold" onclick="guardarYVolverLote(true)"><i class="bi bi-check-circle me-1"></i>Guardar y volver al lote</button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="guardarYVolverLote(false)">Cancelar</button>
+    </div>
     <div class="section-title mt-3">
       <i class="bi bi-stars me-2"></i>Plano tecnico generado por IA
       <button class="tb-btn ms-3" style="display:inline-flex;font-size:.75rem;padding:3px 9px" onclick="regenerarPlanoIA()">
@@ -521,7 +527,7 @@ input[type=number].tb-num {
   <!-- Modo lote: varios PDF/imagenes -> un Word con un plano por pagina -->
   <div id="modo-lote" style="display:none">
     <div class="section-title"><i class="bi bi-collection me-2"></i>Varios planos a la vez</div>
-    <p class="text-muted small">Sube varios PDF o imagenes; se genera un unico Word con un plano tecnico por pagina, uno por archivo.</p>
+    <p class="text-muted small">Sube varios PDF o imagenes; la IA genera un plano por archivo, puedes revisarlos y editarlos, y despues se genera un unico Word con un plano por pagina.</p>
 
     <div class="drop-zone" id="lote-zone" style="padding:20px" onclick="document.getElementById('lote-input').click()">
       <div class="dz-icon" style="font-size:2rem"><i class="bi bi-collection"></i></div>
@@ -575,7 +581,7 @@ input[type=number].tb-num {
 
     <button class="btn btn-analyze mt-3" id="btn-lote-generar" onclick="generarPlanosLote()"
       style="background:linear-gradient(135deg,#4F84B5,#3a6a96)">
-      <i class="bi bi-stars me-2"></i>Generar Word con todos los planos
+      <i class="bi bi-stars me-2"></i>Generar planos con IA (vista previa)
     </button>
 
     <div id="lote-progreso" class="mt-3" style="display:none">
@@ -1175,15 +1181,7 @@ async function generarPlanoIA() {
         return;
       }
 
-      svgGenerado = data.svg;
-      document.getElementById('plano-ia-content').innerHTML = svgGenerado;
-      const svgEl = document.getElementById('plano-ia-content').querySelector('svg');
-      if (svgEl) { svgEl.style.maxWidth='100%'; svgEl.style.height='auto'; }
-
-      document.getElementById('plano-ia-actions').style.display = 'flex';
-      document.getElementById('plano-ia-ctx-wrap').style.display = 'none';
-      _initPaletaSimbolos('paleta-simbolos', svgPickSimbolo);
-      window.scrollTo({top: document.getElementById('plano-ia-wrap').offsetTop - 20, behavior:'smooth'});
+      mostrarPlanoSvg(data.svg);
 
     } catch(e) {
       document.getElementById('plano-ia-loading').style.display = 'none';
@@ -1197,6 +1195,22 @@ async function generarPlanoIA() {
   } else if (pdfFile) {
     _doRequest(null);
   }
+}
+
+// Muestra un plano SVG en el panel de vista previa con las herramientas de edicion
+function mostrarPlanoSvg(svg) {
+  svgGenerado = svg;
+  document.getElementById('plano-ia-wrap').style.display    = 'block';
+  document.getElementById('plano-ia-loading').style.display = 'none';
+  document.getElementById('plano-ia-modo').style.display    = 'none';
+  document.getElementById('plano-ia-content').innerHTML = svgGenerado;
+  const svgEl = document.getElementById('plano-ia-content').querySelector('svg');
+  if (svgEl) { svgEl.style.maxWidth='100%'; svgEl.style.height='auto'; }
+
+  document.getElementById('plano-ia-actions').style.display = 'flex';
+  document.getElementById('plano-ia-ctx-wrap').style.display = 'none';
+  _initPaletaSimbolos('paleta-simbolos', svgPickSimbolo);
+  window.scrollTo({top: document.getElementById('plano-ia-wrap').offsetTop - 20, behavior:'smooth'});
 }
 
 function regenerarPlanoIA() {
@@ -2082,6 +2096,7 @@ async function generarPlanosLote() {
   fd.append('contexto', document.getElementById('lote-contexto').value.trim());
   if (document.getElementById('lote-conservar-fondo').checked) fd.append('conservar_fondo', '1');
   if (document.getElementById('lote-tinta-azul').checked) fd.append('borrar_tinta_azul', '1');
+  fd.append('solo_svg', '1');
   {% if not api_key_set %}
   fd.append('api_key', document.getElementById('lote-apikey').value.trim());
   {% endif %}
@@ -2120,6 +2135,13 @@ async function pollPlanosLote(jobId) {
     document.getElementById('lote-progreso-texto').textContent =
       `Procesando ${loteFiles.length} plano(s)... ${s}s (una llamada a la IA por archivo, puede tardar varios minutos)`;
 
+    if (job.status === 'done' && job.planos) {
+      document.getElementById('lote-progreso').style.display = 'none';
+      document.getElementById('btn-lote-generar').disabled = false;
+      loteResultados = job.planos;
+      renderLotePreview();
+      return;
+    }
     if (job.status === 'done') {
       document.getElementById('lote-progreso').style.display = 'none';
       document.getElementById('btn-lote-generar').disabled = false;
@@ -2140,6 +2162,121 @@ async function pollPlanosLote(jobId) {
       mostrarErrorLote(job.error);
       return;
     }
+  }
+}
+
+// ── Vista previa y edicion de los planos del lote ──
+let loteResultados = [];   // [{nombre, svg} | {nombre, error}]
+let loteEditIdx = null;
+
+function renderLotePreview() {
+  const cont = document.getElementById('lote-resultado');
+  cont.style.display = 'block';
+  const validos = loteResultados.filter(p => p.svg).length;
+  if (!loteResultados.length) { cont.innerHTML = ''; return; }
+  cont.innerHTML = `
+    <div class="small text-muted mb-2">Revisa cada plano. Pulsa <strong>Editar</strong> para modificarlo o anadir elementos antes de generar el Word.</div>
+    <div class="row g-3">
+      ${loteResultados.map((p, i) => `
+        <div class="col-md-6">
+          <div class="border rounded bg-white p-2 h-100 d-flex flex-column">
+            <div class="small fw-bold mb-1">${i + 1}. ${esc(p.nombre)}</div>
+            ${p.svg
+              ? `<img src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(_svgConXmlns(p.svg))}"style="width:100%;height:auto;border:1px solid #e0e8f0;background:#fff;cursor:pointer" onclick="editarPlanoLote(${i})">`
+              : `<div class="alert alert-danger small mb-0">No se pudo generar: ${esc(p.error)}</div>`}
+            <div class="d-flex gap-2 mt-2">
+              ${p.svg ? `<button class="btn btn-sm btn-outline-primary" onclick="editarPlanoLote(${i})"><i class="bi bi-pencil-square me-1"></i>Editar</button>` : ''}
+              <button class="btn btn-sm btn-outline-danger" onclick="quitarPlanoLote(${i})"><i class="bi bi-trash me-1"></i>Quitar</button>
+            </div>
+          </div>
+        </div>`).join('')}
+    </div>
+    <button class="btn btn-generate mt-3" id="btn-lote-word" onclick="generarWordLote()" ${validos ? '' : 'disabled'}>
+      <i class="bi bi-file-earmark-word me-2"></i>Generar Word con ${validos} plano(s)
+    </button>
+    <div id="lote-word-resultado" class="mt-3"></div>`;
+}
+
+// Un SVG usado como <img> necesita los namespaces declarados (inline no hace falta)
+function _svgConXmlns(svg) {
+  let s = svg.trim();
+  if (!/<svg[^>]*\sxmlns=/.test(s)) s = s.replace(/<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+  if (/xlink:/.test(s) && !/xmlns:xlink=/.test(s)) s = s.replace(/<svg/, '<svg xmlns:xlink="http://www.w3.org/1999/xlink"');
+  return s;
+}
+
+function quitarPlanoLote(i) {
+  loteResultados.splice(i, 1);
+  renderLotePreview();
+}
+
+function editarPlanoLote(i) {
+  loteEditIdx = i;
+  document.getElementById('modo-lote').style.display = 'none';
+  document.getElementById('modo-individual').style.display = '';
+  document.getElementById('btn-toggle-lote').style.display = 'none';
+  document.getElementById('drop-wrap').style.display = 'none';
+  document.getElementById('editor-wrap').style.display = 'none';
+  document.getElementById('pdf-wrap').style.display = 'none';
+  document.getElementById('lote-edit-nombre').textContent = loteResultados[i].nombre;
+  document.getElementById('lote-edit-banner').style.setProperty('display', 'flex', 'important');
+  mostrarPlanoSvg(loteResultados[i].svg);
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+
+function guardarYVolverLote(guardar) {
+  if (svgEditMode) setSvgEditMode(false);
+  if (dibujandoFlecha) toggleAddFlecha();
+  if (borrandoFondo) toggleBorrarFondo();
+  _cancelarSimboloActivo();
+  if (guardar && loteEditIdx !== null && svgGenerado) {
+    loteResultados[loteEditIdx].svg = svgGenerado;
+  }
+  loteEditIdx = null;
+  document.getElementById('lote-edit-banner').style.setProperty('display', 'none', 'important');
+  resetEditor();
+  document.getElementById('modo-individual').style.display = 'none';
+  document.getElementById('modo-lote').style.display = '';
+  document.getElementById('btn-toggle-lote').style.display = '';
+  renderLotePreview();
+  window.scrollTo({top: document.getElementById('lote-resultado').offsetTop - 20, behavior: 'smooth'});
+}
+
+async function generarWordLote() {
+  const planos = loteResultados.filter(p => p.svg).map(p => ({nombre: p.nombre, svg: p.svg}));
+  if (!planos.length) return;
+  const btn = document.getElementById('btn-lote-word');
+  const out = document.getElementById('lote-word-resultado');
+  btn.disabled = true;
+  out.innerHTML = '<div class="d-flex align-items-center gap-2 small"><div class="spinner-border spinner-border-sm text-primary"></div>Generando Word...</div>';
+  try {
+    const resp = await fetch('/api/generar_word_planos', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        planos,
+        titulo: document.getElementById('lote-titulo').value.trim() || 'Croquis de Red',
+        num_ref: document.getElementById('lote-num-ref').value.trim(),
+        direccion: document.getElementById('lote-direccion').value.trim(),
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      out.innerHTML = `<div class="alert alert-danger small">${esc(data.error)}</div>`;
+      return;
+    }
+    const aviso = data.num_errores
+      ? `<div class="alert alert-warning py-2 px-3 small mb-2">${data.num_errores} plano(s) no se pudieron convertir (revisa el Word).</div>` : '';
+    out.innerHTML = `${aviso}
+      <div class="alert alert-success py-2 px-3 small mb-2"><i class="bi bi-check-circle me-1"></i>${data.num_planos} plano(s) en el documento.</div>
+      <div class="d-flex gap-2 flex-wrap">
+        <a href="/descargar/${encodeURIComponent(data.docx)}" class="btn btn-dl"><i class="bi bi-file-earmark-word me-1"></i>Descargar Word</a>
+        ${data.pdf ? `<a href="/descargar/${encodeURIComponent(data.pdf)}" class="btn btn-dl"><i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF</a>` : ''}
+      </div>`;
+  } catch (e) {
+    out.innerHTML = `<div class="alert alert-danger small">Error de conexion: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
   }
 }
 

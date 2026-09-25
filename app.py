@@ -1561,6 +1561,7 @@ def api_generar_planos_multiples():
                 fecha_raw=request.form.get("fecha", datetime.now().strftime("%Y-%m-%d")),
                 notas=request.form.get("notas", ""),
                 base_url=_base_url_publico(request.url_root),
+                solo_svg=request.form.get("solo_svg", "0") == "1",
             ),
             daemon=True,
         ).start()
@@ -1571,12 +1572,29 @@ def api_generar_planos_multiples():
 
 def _procesar_planos_multiples_bg(job_id, archivos, tmp_dir, api_key, contexto, conservar_fondo,
                                    titulo, num_ref, direccion, fecha_raw, notas, base_url,
-                                   borrar_tinta_azul=False):
+                                   borrar_tinta_azul=False, solo_svg=False):
     import traceback as _tb_mod
     import shutil as _sh
 
     with app.test_request_context(base_url=base_url):
         try:
+            # solo_svg: devuelve los planos SVG para previsualizarlos/editarlos
+            # en el navegador; el Word se genera despues con /api/generar_word_planos.
+            if solo_svg:
+                planos = []
+                for dest, nombre_original in archivos:
+                    subtitulo = Path(nombre_original).stem
+                    try:
+                        svg, _estructura = _plano_svg_desde_archivo(
+                            dest, api_key=api_key, contexto=contexto, conservar_fondo=conservar_fondo,
+                            borrar_tinta_azul=borrar_tinta_azul)
+                        planos.append({"nombre": subtitulo, "svg": svg})
+                    except Exception as e:
+                        planos.append({"nombre": subtitulo, "error": str(e)})
+                with _PLANOS_JOBS_LOCK:
+                    _PLANOS_JOBS[job_id] = {"status": "done", "planos": planos, "_ts": time.time()}
+                return
+
             paginas: list[tuple[Path | None, str]] = []
             for dest, nombre_original in archivos:
                 subtitulo = Path(nombre_original).stem
@@ -1622,6 +1640,51 @@ def _procesar_planos_multiples_bg(job_id, archivos, tmp_dir, api_key, contexto, 
                 }
         finally:
             _sh.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.route("/api/generar_word_planos", methods=["POST"])
+def api_generar_word_planos():
+    """Genera el Word/PDF del lote a partir de los SVG ya revisados/editados
+    en el navegador (un plano por pagina)."""
+    import traceback as _tb
+    try:
+        data = request.get_json(force=True) or {}
+        planos = [p for p in data.get("planos", []) if p.get("svg")]
+        if not planos:
+            return jsonify({"error": "No hay planos para generar."}), 400
+
+        paginas: list[tuple[Path | None, str]] = []
+        for p in planos:
+            nombre = p.get("nombre", "Plano")
+            try:
+                paginas.append((_svg_a_png(p["svg"]), nombre))
+            except Exception as e:
+                paginas.append((None, f"{nombre} — ERROR: {e}"))
+
+        fecha_raw = data.get("fecha") or datetime.now().strftime("%Y-%m-%d")
+        try:
+            dt = datetime.strptime(fecha_raw, "%Y-%m-%d")
+            meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+                     "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+            fecha_display = f"{dt.day} de {meses[dt.month - 1]} de {dt.year}"
+        except ValueError:
+            fecha_display = fecha_raw
+
+        titulo = data.get("titulo") or "Croquis de Red"
+        num_ref = data.get("num_ref", "")
+        docx_path, pdf_path = _croquis_docx_multiple(
+            paginas, titulo=titulo, num_ref=num_ref, direccion=data.get("direccion", ""),
+            fecha_display=fecha_display, notas=data.get("notas", ""),
+            stem=_safe_filename(f"Planos_{num_ref or titulo}", maxlen=50),
+        )
+        return jsonify({
+            "docx": docx_path.name,
+            "pdf": pdf_path.name if pdf_path else None,
+            "num_planos": sum(1 for p, _ in paginas if p is not None),
+            "num_errores": sum(1 for p, _ in paginas if p is None),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": _tb.format_exc()}), 500
 
 
 @app.route("/api/generar_planos_multiples_status/<job_id>")
