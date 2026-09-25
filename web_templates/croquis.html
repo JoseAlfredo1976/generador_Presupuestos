@@ -1405,17 +1405,21 @@ function _setTranslate(el, x, y) {
     `translate(${x.toFixed(1)},${y.toFixed(1)})${rest ? ' '+rest : ''}`);
 }
 
+// Caja de seleccion en coordenadas del SVG raiz (vale tambien para elementos
+// dentro de grupos con transform, donde getBBox da coordenadas locales)
 function _updateSelBox() {
   const svg = _getSvg();
   const box = document.getElementById('svg-sel-box');
   if (!svg || !box || !svgSelected) { if (box) box.style.display='none'; return; }
   try {
-    const bb = svgSelected.getBBox();
+    const r  = svgSelected.getBoundingClientRect();
+    const p1 = _screenToSvg(svg, r.left,  r.top);
+    const p2 = _screenToSvg(svg, r.right, r.bottom);
     const p  = 5;
-    box.setAttribute('x',      bb.x - p);
-    box.setAttribute('y',      bb.y - p);
-    box.setAttribute('width',  bb.width  + p*2);
-    box.setAttribute('height', bb.height + p*2);
+    box.setAttribute('x',      Math.min(p1.x, p2.x) - p);
+    box.setAttribute('y',      Math.min(p1.y, p2.y) - p);
+    box.setAttribute('width',  Math.abs(p2.x - p1.x) + p*2);
+    box.setAttribute('height', Math.abs(p2.y - p1.y) + p*2);
     box.style.display = '';
   } catch(e) { box.style.display='none'; }
 }
@@ -1455,17 +1459,72 @@ function _svgDeselect() {
   document.getElementById('svg-el-toolbar').style.display = 'none';
 }
 
-function _getTarget(e) {
-  let el = e.target;
-  while (el && el.tagName !== 'svg') {
-    if (el.id === 'svg-sel-box') return null;
-    if (el.dataset && el.dataset.svgEl) return el;
-    el = el.parentElement;
-  }
-  return null;
+// ─ Seleccion con tolerancia: se puede pinchar CERCA de una linea fina o
+// DENTRO de un simbolo sin relleno (arqueta, pozo...). Si hay varios
+// candidatos gana el mas pequeno, para que un simbolo encima de un muro o
+// de una tuberia no quede tapado por el elemento grande.
+const SEL_TOL = 9;   // px de pantalla
+
+function _hitGeom(g, cx, cy) {
+  try {
+    const m = g.getScreenCTM();
+    if (!m) return false;
+    const inv = m.inverse();
+    const p = new DOMPoint(cx, cy).matrixTransform(inv);
+    const escala = Math.hypot(m.a, m.b) || 1;
+    const cs = getComputedStyle(g);
+    if (cs.fill && cs.fill !== 'none' && g.isPointInFill && g.isPointInFill(p)) return true;
+    if (!g.isPointInStroke) return false;
+    const swOrig = g.style.strokeWidth;
+    const sw = parseFloat(cs.strokeWidth) || 1;
+    g.style.strokeWidth = Math.max(sw, (SEL_TOL * 2) / escala);
+    const dentro = g.isPointInStroke(p);
+    g.style.strokeWidth = swOrig;
+    return dentro;
+  } catch (err) { return false; }
 }
 
-// ─ event handlers
+function _hitElemento(el, cx, cy) {
+  const r = el.getBoundingClientRect();
+  if (cx < r.left - SEL_TOL || cx > r.right + SEL_TOL ||
+      cy < r.top  - SEL_TOL || cy > r.bottom + SEL_TOL) return false;
+  // Elementos pequenos (simbolos, textos cortos): basta con la caja
+  if (r.width <= 60 && r.height <= 60) return true;
+  if (el.tagName.toLowerCase() === 'text') return true;
+  const geoms = el instanceof SVGGeometryElement ? [el] : [...el.querySelectorAll('path,line,polyline,polygon,rect,circle,ellipse')];
+  if (geoms.some(g => _hitGeom(g, cx, cy))) return true;
+  return [...el.querySelectorAll('text')].some(t => {
+    const tr = t.getBoundingClientRect();
+    return cx >= tr.left - 3 && cx <= tr.right + 3 && cy >= tr.top - 3 && cy <= tr.bottom + 3;
+  });
+}
+
+function _getTarget(e) {
+  const svg = _getSvg();
+  if (!svg) return null;
+  if (e.clientX === undefined) {   // llamada interna ({target}) sin coordenadas
+    let el = e.target;
+    while (el && el.tagName !== 'svg') { if (el.dataset && el.dataset.svgEl) return el; el = el.parentElement; }
+    return null;
+  }
+  let mejor = null, mejorArea = Infinity;
+  svg.querySelectorAll('[data-svg-el]').forEach(el => {
+    if (el.id === 'svg-sel-box') return;
+    if (!_hitElemento(el, e.clientX, e.clientY)) return;
+    const r = el.getBoundingClientRect();
+    const area = Math.max(1, r.width) * Math.max(1, r.height);
+    if (area < mejorArea) { mejor = el; mejorArea = area; }
+  });
+  return mejor;
+}
+
+// Punto de pantalla -> coordenadas del padre del elemento (donde vive su translate)
+function _screenToParent(el, cx, cy) {
+  const m = el.parentNode.getScreenCTM();
+  return new DOMPoint(cx, cy).matrixTransform(m.inverse());
+}
+
+// ─ event handlers (pointer events: raton, tactil y lapiz)
 function _svgMD(e) {
   if (e.button !== 0) return;
   const el = _getTarget(e);
@@ -1473,17 +1532,22 @@ function _svgMD(e) {
   e.preventDefault();
   e.stopPropagation();
   _svgSelect(el);
-  const svg = _getSvg();
-  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  const sp = _screenToParent(el, e.clientX, e.clientY);
   const [tx, ty] = _getTranslate(el);
-  svgDragData = { el, startX: sp.x, startY: sp.y, tx, ty };
+  svgDragData = { el, startX: sp.x, startY: sp.y, tx, ty, cx0: e.clientX, cy0: e.clientY, moviendo: false };
+  window.addEventListener('pointermove', _svgMV);
+  window.addEventListener('pointerup', _svgMU);
 }
 
 function _svgMV(e) {
   if (!svgDragData) return;
   e.preventDefault();
-  const svg = _getSvg();
-  const sp = _screenToSvg(svg, e.clientX, e.clientY);
+  // Umbral: un clic con pulso no mueve el elemento
+  if (!svgDragData.moviendo) {
+    if (Math.hypot(e.clientX - svgDragData.cx0, e.clientY - svgDragData.cy0) < 4) return;
+    svgDragData.moviendo = true;
+  }
+  const sp = _screenToParent(svgDragData.el, e.clientX, e.clientY);
   _setTranslate(svgDragData.el,
     svgDragData.tx + sp.x - svgDragData.startX,
     svgDragData.ty + sp.y - svgDragData.startY);
@@ -1492,8 +1556,45 @@ function _svgMV(e) {
 }
 
 function _svgMU() {
-  if (svgDragData) svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+  if (svgDragData && svgDragData.moviendo) svgGenerado = _svgLimpio();
   svgDragData = null;
+  window.removeEventListener('pointermove', _svgMV);
+  window.removeEventListener('pointerup', _svgMU);
+}
+
+// outerHTML sin la caja de seleccion
+function _svgLimpio() {
+  const svg = _getSvg();
+  if (!svg) return svgGenerado;
+  const box = document.getElementById('svg-sel-box');
+  if (!box) return svg.outerHTML;
+  const disp = box.style.display;
+  box.remove();
+  const html = svg.outerHTML;
+  svg.appendChild(box);
+  box.style.display = disp;
+  return html;
+}
+
+// Marca como seleccionables los elementos del plano. Si la IA ha metido todo
+// en un grupo grande (capa), se entra dentro para poder coger cada pieza.
+function _marcarSeleccionables(svg) {
+  const r0 = svg.getBoundingClientRect();
+  const areaSvg = Math.max(1, r0.width * r0.height);
+  const recorrer = parent => {
+    [...parent.children].forEach(el => {
+      const tag = el.tagName.toLowerCase();
+      if (['defs','style','title','desc','metadata','clippath','mask','pattern','lineargradient','radialgradient','marker','symbol'].includes(tag)) return;
+      if (el.id === 'svg-sel-box' || el.hasAttribute('data-svg-no-edit')) return;
+      if (tag === 'image') return;   // fondo (foto/plano original)
+      if (tag === 'g' && el.children.length > 1) {
+        const r = el.getBoundingClientRect();
+        if ((r.width * r.height) / areaSvg > 0.2) { recorrer(el); return; }
+      }
+      el.dataset.svgEl = '1';
+    });
+  };
+  recorrer(svg);
 }
 
 function _svgDbl(e) {
@@ -1505,7 +1606,7 @@ function _svgDbl(e) {
   const val = prompt('Editar texto:', textEl.textContent);
   if (val !== null) {
     textEl.textContent = val;
-    svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+    svgGenerado = _svgLimpio();
     _updateSelBox();
   }
 }
@@ -1524,7 +1625,7 @@ function _svgKey(e) {
       tx + (e.key==='ArrowLeft' ? -step : e.key==='ArrowRight' ? step : 0),
       ty + (e.key==='ArrowUp'   ? -step : e.key==='ArrowDown'  ? step : 0));
     _updateSelBox();
-    svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+    svgGenerado = _svgLimpio();
   }
 }
 
@@ -1579,7 +1680,7 @@ function svgAddText() {
   el.dataset.svgEl = '1';
   el.style.cursor = 'move';
 
-  svgGenerado = svg.outerHTML;
+  svgGenerado = _svgLimpio();
   _svgSelect(el);
 }
 
@@ -1674,7 +1775,7 @@ function _flechaMU() {
     flechaEl.dataset.svgEl = '1';
     flechaEl.style.cursor = 'move';
   }
-  svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+  svgGenerado = _svgLimpio();
   flechaEl = null;
 }
 
@@ -1699,7 +1800,7 @@ let simboloLineaEl = null;  // <g> en construccion, para modo 'linea'
 
 function _simboloSvgHtml(tipo, cx, cy, escala) {
   const c = '#1F4E79';
-  const rPozo = 9 * escala, sArq = 15 * escala;
+  const rPozo = 9 * escala, sArq = 19 * escala;
   const wArgn = 24 * escala, hArgn = 16 * escala;
   const sw = Math.max(1.1, 1.5 * escala), swAspa = Math.max(0.9, sw * 0.75);
   const aspa = (x, y, hx, hy) =>
@@ -1808,7 +1909,7 @@ function _simboloClick(e) {
   svg.appendChild(g);
   g.dataset.svgEl = '1';
   g.style.cursor = 'move';
-  svgGenerado = svg.outerHTML;
+  svgGenerado = _svgLimpio();
   _svgSelect(g);
 }
 
@@ -1851,7 +1952,7 @@ function _simboloLineaMU() {
     simboloLineaEl.dataset.svgEl = '1';
     simboloLineaEl.style.cursor = 'move';
   }
-  svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+  svgGenerado = _svgLimpio();
   simboloLineaEl = null;
 }
 
@@ -1929,7 +2030,7 @@ function _borrarFondoMV(e) {
 
 function _borrarFondoMU() {
   if (borrarFondoPath) {
-    svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+    svgGenerado = _svgLimpio();
     borrarFondoPath = null;
   }
 }
@@ -1950,35 +2051,32 @@ function _enableSvgEdit() {
   // por el servidor, ver _marcar_boilerplate_no_editable en app.py): sin esto
   // el rectangulo de fondo a pantalla completa quedaba seleccionable como una
   // pieza mas, y arrastrarlo sin querer parecia "mover todo el plano".
-  const mark = el => {
-    if (el.id === 'svg-sel-box') return;
-    if (el.hasAttribute('data-svg-no-edit')) return;
-    el.dataset.svgEl = '1';
-  };
-  [...svg.children].forEach(el => {
-    if (el.tagName === 'defs' || el.tagName === 'style') return;
-    // Prefer top-level groups; but also allow individual shapes
-    mark(el);
-  });
+  _marcarSeleccionables(svg);
 
-  svg.addEventListener('mousedown',  _svgMD);
-  svg.addEventListener('mousemove',  _svgMV);
-  svg.addEventListener('mouseup',    _svgMU);
-  svg.addEventListener('mouseleave', _svgMU);
-  svg.addEventListener('dblclick',   _svgDbl);
+  svg.addEventListener('pointerdown', _svgMD);
+  svg.addEventListener('dblclick',    _svgDbl);
+  svg.addEventListener('mousemove',   _svgHover);
   document.addEventListener('keydown', _svgKey);
   svg.style.cursor = 'default';
+  svg.style.touchAction = 'none';
+}
+
+// Cursor de "mover" cuando el raton esta sobre algo seleccionable (con la
+// misma tolerancia que el clic, para que se vea antes de pinchar)
+function _svgHover(e) {
+  if (svgDragData) return;
+  const svg = _getSvg();
+  if (svg) svg.style.cursor = _getTarget(e) ? 'move' : 'default';
 }
 
 function _disableSvgEdit() {
   _svgDeselect();
   const svg = _getSvg();
   if (!svg) return;
-  svg.removeEventListener('mousedown',  _svgMD);
-  svg.removeEventListener('mousemove',  _svgMV);
-  svg.removeEventListener('mouseup',    _svgMU);
-  svg.removeEventListener('mouseleave', _svgMU);
-  svg.removeEventListener('dblclick',   _svgDbl);
+  svg.removeEventListener('pointerdown', _svgMD);
+  svg.removeEventListener('dblclick',    _svgDbl);
+  svg.removeEventListener('mousemove',   _svgHover);
+  svg.style.touchAction = '';
   document.removeEventListener('keydown', _svgKey);
   svg.querySelectorAll('[data-svg-el]').forEach(el => {
     delete el.dataset.svgEl;
@@ -1994,7 +2092,7 @@ function svgDeleteEl() {
   const el = svgSelected;
   _svgDeselect();
   el.remove();
-  svgGenerado = _getSvg()?.outerHTML || svgGenerado;
+  svgGenerado = _svgLimpio();
 }
 
 function svgEditText() {
@@ -2004,14 +2102,14 @@ function svgEditText() {
 
 function svgDuplicate() {
   if (!svgSelected) return;
-  const svg = _getSvg();
   const clone = svgSelected.cloneNode(true);
   // Offset the clone slightly so it's visible
   const [tx, ty] = _getTranslate(clone);
   _setTranslate(clone, tx + 15, ty + 15);
-  svg.appendChild(clone);
+  // En el mismo grupo que el original (hereda sus transformaciones)
+  svgSelected.parentNode.insertBefore(clone, svgSelected.nextSibling);
   clone.dataset.svgEl = '1';
-  svgGenerado = svg.outerHTML;
+  svgGenerado = _svgLimpio();
   _svgSelect(clone);
 }
 

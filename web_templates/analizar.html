@@ -1360,12 +1360,15 @@ function _planoUpdateSelBox() {
   const box = document.getElementById('plano-sel-box');
   if (!svg || !box || !planoSelected) { if (box) box.style.display = 'none'; return; }
   try {
-    const bb = planoSelected.getBBox();
+    // En coordenadas del SVG raiz (vale para elementos dentro de grupos con transform)
+    const r  = planoSelected.getBoundingClientRect();
+    const p1 = _planoScreenToSvg(svg, r.left,  r.top);
+    const p2 = _planoScreenToSvg(svg, r.right, r.bottom);
     const p = 5;
-    box.setAttribute('x', bb.x - p);
-    box.setAttribute('y', bb.y - p);
-    box.setAttribute('width', bb.width + p*2);
-    box.setAttribute('height', bb.height + p*2);
+    box.setAttribute('x', Math.min(p1.x, p2.x) - p);
+    box.setAttribute('y', Math.min(p1.y, p2.y) - p);
+    box.setAttribute('width',  Math.abs(p2.x - p1.x) + p*2);
+    box.setAttribute('height', Math.abs(p2.y - p1.y) + p*2);
     box.style.display = '';
   } catch(e) { box.style.display = 'none'; }
 }
@@ -1405,14 +1408,65 @@ function _planoDeselect() {
   if (tb) tb.style.display = 'none';
 }
 
+// Seleccion con tolerancia: se puede pinchar CERCA de una linea fina o DENTRO
+// de un simbolo sin relleno (arqueta, pozo...). Si hay varios candidatos gana
+// el mas pequeno, para que un simbolo encima de un muro no quede tapado.
+const PLANO_SEL_TOL = 9;   // px de pantalla
+
+function _planoHitGeom(g, cx, cy) {
+  try {
+    const m = g.getScreenCTM();
+    if (!m) return false;
+    const p = new DOMPoint(cx, cy).matrixTransform(m.inverse());
+    const escala = Math.hypot(m.a, m.b) || 1;
+    const cs = getComputedStyle(g);
+    if (cs.fill && cs.fill !== 'none' && g.isPointInFill && g.isPointInFill(p)) return true;
+    if (!g.isPointInStroke) return false;
+    const swOrig = g.style.strokeWidth;
+    const sw = parseFloat(cs.strokeWidth) || 1;
+    g.style.strokeWidth = Math.max(sw, (PLANO_SEL_TOL * 2) / escala);
+    const dentro = g.isPointInStroke(p);
+    g.style.strokeWidth = swOrig;
+    return dentro;
+  } catch (err) { return false; }
+}
+
+function _planoHitElemento(el, cx, cy) {
+  const T = PLANO_SEL_TOL;
+  const r = el.getBoundingClientRect();
+  if (cx < r.left - T || cx > r.right + T || cy < r.top - T || cy > r.bottom + T) return false;
+  if (r.width <= 60 && r.height <= 60) return true;   // simbolos y textos cortos
+  if (el.tagName.toLowerCase() === 'text') return true;
+  const geoms = el instanceof SVGGeometryElement ? [el] : [...el.querySelectorAll('path,line,polyline,polygon,rect,circle,ellipse')];
+  if (geoms.some(g => _planoHitGeom(g, cx, cy))) return true;
+  return [...el.querySelectorAll('text')].some(t => {
+    const tr = t.getBoundingClientRect();
+    return cx >= tr.left - 3 && cx <= tr.right + 3 && cy >= tr.top - 3 && cy <= tr.bottom + 3;
+  });
+}
+
 function _planoGetTarget(e) {
-  let el = e.target;
-  while (el && el.tagName !== 'svg') {
-    if (el.id === 'plano-sel-box') return null;
-    if (el.dataset && el.dataset.planoEl) return el;
-    el = el.parentElement;
+  const svg = _getPlanoSvg();
+  if (!svg) return null;
+  if (e.clientX === undefined) {   // llamada interna ({target}) sin coordenadas
+    let el = e.target;
+    while (el && el.tagName !== 'svg') { if (el.dataset && el.dataset.planoEl) return el; el = el.parentElement; }
+    return null;
   }
-  return null;
+  let mejor = null, mejorArea = Infinity;
+  svg.querySelectorAll('[data-plano-el]').forEach(el => {
+    if (el.id === 'plano-sel-box') return;
+    if (!_planoHitElemento(el, e.clientX, e.clientY)) return;
+    const r = el.getBoundingClientRect();
+    const area = Math.max(1, r.width) * Math.max(1, r.height);
+    if (area < mejorArea) { mejor = el; mejorArea = area; }
+  });
+  return mejor;
+}
+
+// Punto de pantalla -> coordenadas del padre del elemento (donde vive su translate)
+function _planoScreenToParent(el, cx, cy) {
+  return new DOMPoint(cx, cy).matrixTransform(el.parentNode.getScreenCTM().inverse());
 }
 
 function _planoMD(e) {
@@ -1422,17 +1476,22 @@ function _planoMD(e) {
   e.preventDefault();
   e.stopPropagation();
   _planoSelect(el);
-  const svg = _getPlanoSvg();
-  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  const sp = _planoScreenToParent(el, e.clientX, e.clientY);
   const [tx, ty] = _planoGetTranslate(el);
-  planoDragData = { el, startX: sp.x, startY: sp.y, tx, ty };
+  planoDragData = { el, startX: sp.x, startY: sp.y, tx, ty, cx0: e.clientX, cy0: e.clientY, moviendo: false };
+  window.addEventListener('pointermove', _planoMV);
+  window.addEventListener('pointerup', _planoMU);
 }
 
 function _planoMV(e) {
   if (!planoDragData) return;
   e.preventDefault();
-  const svg = _getPlanoSvg();
-  const sp = _planoScreenToSvg(svg, e.clientX, e.clientY);
+  // Umbral: un clic con pulso no mueve el elemento
+  if (!planoDragData.moviendo) {
+    if (Math.hypot(e.clientX - planoDragData.cx0, e.clientY - planoDragData.cy0) < 4) return;
+    planoDragData.moviendo = true;
+  }
+  const sp = _planoScreenToParent(planoDragData.el, e.clientX, e.clientY);
   _planoSetTranslate(planoDragData.el,
     planoDragData.tx + sp.x - planoDragData.startX,
     planoDragData.ty + sp.y - planoDragData.startY);
@@ -1440,7 +1499,38 @@ function _planoMV(e) {
   _planoPosToolbar();
 }
 
-function _planoMU() { planoDragData = null; }
+function _planoMU() {
+  planoDragData = null;
+  window.removeEventListener('pointermove', _planoMV);
+  window.removeEventListener('pointerup', _planoMU);
+}
+
+function _planoHover(e) {
+  if (planoDragData) return;
+  const svg = _getPlanoSvg();
+  if (svg) svg.style.cursor = _planoGetTarget(e) ? 'move' : 'default';
+}
+
+// Marca como seleccionables las piezas del plano. Si la IA ha metido todo en
+// un grupo grande (capa), se entra dentro para poder coger cada pieza.
+function _planoMarcarSeleccionables(svg) {
+  const r0 = svg.getBoundingClientRect();
+  const areaSvg = Math.max(1, r0.width * r0.height);
+  const recorrer = parent => {
+    [...parent.children].forEach(el => {
+      const tag = el.tagName.toLowerCase();
+      if (['defs','style','title','desc','metadata','clippath','mask','pattern','lineargradient','radialgradient','marker','symbol'].includes(tag)) return;
+      if (el.id === 'plano-sel-box' || el.hasAttribute('data-svg-no-edit')) return;
+      if (tag === 'image') return;   // fondo (foto/plano original)
+      if (tag === 'g' && el.children.length > 1) {
+        const r = el.getBoundingClientRect();
+        if ((r.width * r.height) / areaSvg > 0.2) { recorrer(el); return; }
+      }
+      el.dataset.planoEl = '1';
+    });
+  };
+  recorrer(svg);
+}
 
 function _planoDbl(e) {
   const el = _planoGetTarget(e);
@@ -1499,22 +1589,15 @@ function _planoEnableEdit() {
     rect.id = 'plano-sel-box';
     svg.appendChild(rect);
   }
-  [...svg.children].forEach(el => {
-    if (el.tagName === 'defs' || el.tagName === 'style' || el.id === 'plano-sel-box') return;
-    // Fondo/marco/cajetin/leyenda vienen marcados con data-svg-no-edit desde
-    // el servidor (ver _marcar_boilerplate_no_editable en app.py): sin excluirlos
-    // aqui, el rectangulo de fondo a pantalla completa queda seleccionable como
-    // una pieza mas y arrastrarlo sin querer parece "mover todo el plano".
-    if (el.hasAttribute('data-svg-no-edit')) return;
-    el.dataset.planoEl = '1';
-  });
-  svg.addEventListener('mousedown', _planoMD);
-  svg.addEventListener('mousemove', _planoMV);
-  svg.addEventListener('mouseup', _planoMU);
-  svg.addEventListener('mouseleave', _planoMU);
+  // Fondo/marco/cajetin/leyenda vienen marcados con data-svg-no-edit desde
+  // el servidor (ver _marcar_boilerplate_no_editable en app.py) y se excluyen.
+  _planoMarcarSeleccionables(svg);
+  svg.addEventListener('pointerdown', _planoMD);
+  svg.addEventListener('mousemove', _planoHover);
   svg.addEventListener('dblclick', _planoDbl);
   document.addEventListener('keydown', _planoKey);
   svg.style.cursor = 'default';
+  svg.style.touchAction = 'none';
 }
 
 function _planoDisableEdit() {
@@ -1522,14 +1605,14 @@ function _planoDisableEdit() {
   _planoDeselect();
   const svg = _getPlanoSvg();
   if (!svg) return;
-  svg.removeEventListener('mousedown', _planoMD);
-  svg.removeEventListener('mousemove', _planoMV);
-  svg.removeEventListener('mouseup', _planoMU);
-  svg.removeEventListener('mouseleave', _planoMU);
+  svg.removeEventListener('pointerdown', _planoMD);
+  svg.removeEventListener('mousemove', _planoHover);
   svg.removeEventListener('dblclick', _planoDbl);
   document.removeEventListener('keydown', _planoKey);
   svg.querySelectorAll('[data-plano-el]').forEach(el => delete el.dataset.planoEl);
+  document.getElementById('plano-sel-box')?.remove();
   svg.style.cursor = '';
+  svg.style.touchAction = '';
 }
 
 function planoDeleteEl() {
@@ -1546,11 +1629,11 @@ function planoEditText() {
 
 function planoDuplicate() {
   if (!planoSelected) return;
-  const svg = _getPlanoSvg();
   const clone = planoSelected.cloneNode(true);
   const [tx, ty] = _planoGetTranslate(clone);
   _planoSetTranslate(clone, tx + 15, ty + 15);
-  svg.appendChild(clone);
+  // En el mismo grupo que el original (hereda sus transformaciones)
+  planoSelected.parentNode.insertBefore(clone, planoSelected.nextSibling);
   clone.dataset.planoEl = '1';
   _planoSelect(clone);
 }
@@ -1693,7 +1776,7 @@ let simboloLineaPlanoEl = null;
 
 function _simboloSvgHtml(tipo, cx, cy, escala) {
   const c = '#1F4E79';
-  const rPozo = 9 * escala, sArq = 15 * escala;
+  const rPozo = 9 * escala, sArq = 19 * escala;
   const wArgn = 24 * escala, hArgn = 16 * escala;
   const sw = Math.max(1.1, 1.5 * escala), swAspa = Math.max(0.9, sw * 0.75);
   const aspa = (x, y, hx, hy) =>

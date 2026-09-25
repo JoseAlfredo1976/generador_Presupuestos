@@ -748,7 +748,7 @@ def _simbolo_svg(tipo: str, cx: float, cy: float, color: str, escala: float = 1.
     centrado en (cx, cy). Usado por la leyenda; el mismo dibujo (a otra
     escala) es el que la IA debe reproducir en el plano segun el prompt."""
     r_pozo = 9 * escala
-    s_arq = 15 * escala
+    s_arq = 19 * escala
     w_argn, h_argn = 24 * escala, 16 * escala
     sw = max(1.1, 1.5 * escala)
     sw_aspa = max(0.9, sw * 0.75)
@@ -1188,7 +1188,7 @@ POZO (circulo) / POZO OCULTO (circulo + aspa, si oculto=true): <g transform="tra
 </g>
 
 ARQUETA (cuadrado pequeno) / ARQUETA OCULTA (cuadrado + aspa, si oculto=true): <g transform="translate(svg_x,svg_y)">
-  <rect x="-10" y="-10" width="20" height="20" fill="white" stroke="#1a2a3a" stroke-width="2"/>
+  <rect x="-12" y="-12" width="24" height="24" fill="white" stroke="#1a2a3a" stroke-width="2"/>
   (si oculto=true, anade dos <line> cruzadas en aspa dentro del cuadrado, stroke="#1a2a3a")
   <text text-anchor="middle" dy="-16" font-family="Arial" font-size="10" fill="#1a2a3a">id</text>
 </g>
