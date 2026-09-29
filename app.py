@@ -2383,8 +2383,9 @@ def api_chat_informe():
     """Chat con el perito IA para modificar o ampliar un informe generado."""
     import traceback as _tb
     try:
-        from core.ai_analyst import (SYSTEM_PROMPT, REPORT_SCHEMA,
-                                      generate_report_docx, files_to_content_blocks)
+        from core.ai_analyst import (SYSTEM_PROMPT, REPORT_SCHEMA, WINCAM_SCHEMA,
+                                      generate_report_docx, generate_wincam_docx,
+                                      attach_wincam_diagramas, files_to_content_blocks)
 
         # Acepta JSON (sin adjuntos) o multipart/form-data (con archivos nuevos a analizar)
         es_multipart = bool(request.content_type and request.content_type.startswith("multipart/"))
@@ -2441,24 +2442,32 @@ def api_chat_informe():
         # intentaria reescribir integros en la respuesta, agotando max_tokens y
         # devolviendo un JSON cortado e inservible (ver bug con stop_reason=max_tokens).
         # Se restauran tal cual tras la respuesta, mas abajo.
-        report_para_prompt = copy.deepcopy(report_actual)
-        report_para_prompt.pop("_raw", None)
-        for _sec in (report_para_prompt.get("_wincam") or {}).get("secciones", []) or []:
-            _sec.pop("_diagrama_png_b64", None)
-        report_para_prompt.pop("_evidencia_img", None)
-        if isinstance(report_para_prompt.get("_wincam"), dict):
-            report_para_prompt["_wincam"].pop("_evidencia_img", None)
-            report_para_prompt["_wincam"].pop("_raw", None)
-        # Red de seguridad: recortar cualquier otro campo anormalmente largo que
-        # se nos haya escapado (ver nota en _truncar_valores_grandes).
-        report_para_prompt = _truncar_valores_grandes(report_para_prompt)
-        _tam_prompt = len(json.dumps(report_para_prompt, ensure_ascii=False))
+        # Si el informe tiene parte WinCam, la IA debe poder modificarla tambien
+        # (antes solo se editaba el descriptivo y el WinCam quedaba congelado,
+        # ignorando p.ej. las respuestas a sus preguntas pendientes).
+        wc_actual = report_actual.get("_wincam") if isinstance(report_actual.get("_wincam"), dict) else None
+        formato = report_actual.get("_formato") or ("ambos" if wc_actual else "descriptivo")
+        if wc_actual and formato not in ("wincam", "ambos"):
+            formato = "ambos"
+
+        descriptivo_para_prompt = None
+        if formato != "wincam":
+            descriptivo_para_prompt = _truncar_valores_grandes(_sin_campos_internos(report_actual))
+        wincam_para_prompt = _truncar_valores_grandes(_sin_campos_internos(wc_actual)) if wc_actual else None
+
+        if wincam_para_prompt is not None:
+            payload_prompt = {"wincam": wincam_para_prompt}
+            if descriptivo_para_prompt is not None:
+                payload_prompt["descriptivo"] = descriptivo_para_prompt
+        else:
+            payload_prompt = descriptivo_para_prompt
+        _tam_prompt = len(json.dumps(payload_prompt, ensure_ascii=False))
         if _tam_prompt > 300_000:
             logging.getLogger(__name__).warning(
                 "chat_informe: prompt de informe aun grande tras sanear (%s caracteres)", _tam_prompt)
 
         intro = (
-            f"INFORME ACTUAL EN JSON:\n{json.dumps(report_para_prompt, ensure_ascii=False, indent=2)}\n\n"
+            f"INFORME ACTUAL EN JSON:\n{json.dumps(payload_prompt, ensure_ascii=False, indent=2)}\n\n"
             f"INSTRUCCION DEL TECNICO:\n{mensaje}\n\n"
         )
         if bloques_adjuntos:
@@ -2468,14 +2477,31 @@ def api_chat_informe():
                 "fotografias, datos del documento) al informe existente. No borres lo que ya es correcto; "
                 "amplia y actualiza:\n"
             )
-        cierre = (
-            f"\nDevuelve el informe completo actualizado en el mismo formato JSON. "
-            f"Si la instruccion es solo una pregunta tecnica, responde como texto en el campo "
-            f"'respuesta_chat' y manten el informe sin cambios. "
-            f"NO incluyas en tu respuesta los campos internos '_wincam', '_evidencia_img' ni ningun "
-            f"campo que empiece por guion bajo: se conservan automaticamente, no hace falta reenviarlos. "
-            f"Responde UNICAMENTE con JSON segun el esquema:\n{REPORT_SCHEMA}"
-        )
+        if wincam_para_prompt is not None:
+            partes = ['"wincam": <informe WinCam completo actualizado segun ESQUEMA WINCAM>']
+            if descriptivo_para_prompt is not None:
+                partes.insert(0, '"descriptivo": <informe descriptivo completo actualizado segun ESQUEMA DESCRIPTIVO>')
+            cierre = (
+                "\nEl informe tiene " + ("dos partes (descriptivo y WinCam)" if descriptivo_para_prompt is not None else "formato WinCam")
+                + ". Aplica la instruccion a TODAS las partes afectadas: si el tecnico responde a "
+                "preguntas pendientes, rellena los datos correspondientes y quita esas preguntas de "
+                "'preguntas_pendientes'. Conserva intactos los tramos, observaciones y numeros de "
+                "foto que no cambien. NO incluyas ningun campo que empiece por guion bajo: se "
+                "conservan automaticamente.\n"
+                "Responde UNICAMENTE con un objeto JSON {\"respuesta_chat\": \"<resumen breve de lo cambiado "
+                "o respuesta a la pregunta>\", " + ", ".join(partes) + "}.\n"
+                + (f"ESQUEMA DESCRIPTIVO:\n{REPORT_SCHEMA}\n" if descriptivo_para_prompt is not None else "")
+                + f"ESQUEMA WINCAM:\n{WINCAM_SCHEMA}"
+            )
+        else:
+            cierre = (
+                f"\nDevuelve el informe completo actualizado en el mismo formato JSON. "
+                f"Si la instruccion es solo una pregunta tecnica, responde como texto en el campo "
+                f"'respuesta_chat' y manten el informe sin cambios. "
+                f"NO incluyas en tu respuesta ningun campo que empiece por guion bajo: se conservan "
+                f"automaticamente, no hace falta reenviarlos. "
+                f"Responde UNICAMENTE con JSON segun el esquema:\n{REPORT_SCHEMA}"
+            )
         if bloques_adjuntos:
             user_content = [{"type": "text", "text": intro}]
             user_content.extend(bloques_adjuntos)
@@ -2484,12 +2510,15 @@ def api_chat_informe():
             user_content = intro + cierre
         messages.append({"role": "user", "content": user_content})
 
-        response = client.messages.create(
+        # Streaming: con la parte WinCam la respuesta puede ser larga y la API
+        # exige stream para peticiones potencialmente largas.
+        with client.messages.stream(
             model="claude-sonnet-4-6",
-            max_tokens=16000,
+            max_tokens=32000 if wincam_para_prompt is not None else 16000,
             system=SYSTEM_PROMPT,
             messages=messages,
-        )
+        ) as _stream:
+            response = _stream.get_final_message()
 
         raw = (response.content[0].text or "").strip()
 
@@ -2497,21 +2526,95 @@ def api_chat_informe():
         # Quitar fences markdown (```json ... ```)
         raw_clean = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
         raw_clean = re.sub(r"\n?```\s*$", "", raw_clean).strip()
-        updated = _parse_json_lenient(raw_clean)
+        parsed = _parse_json_lenient(raw_clean)
+
+        regen_desc = False
+        wc_nuevo = None
+        updated = None
+        if isinstance(parsed, dict) and wincam_para_prompt is not None:
+            wc_nuevo = parsed.get("wincam")
+            if not (isinstance(wc_nuevo, dict) and isinstance(wc_nuevo.get("secciones"), list)):
+                wc_nuevo = None
+            desc_nuevo = parsed.get("descriptivo") if descriptivo_para_prompt is not None else None
+            if not isinstance(desc_nuevo, dict):
+                desc_nuevo = None
+            if wc_nuevo is not None or desc_nuevo is not None:
+                if desc_nuevo is not None:
+                    updated = desc_nuevo
+                    regen_desc = True
+                else:
+                    updated = {k: v for k, v in report_actual.items() if not k.startswith("_")}
+                if parsed.get("respuesta_chat"):
+                    updated["respuesta_chat"] = parsed["respuesta_chat"]
+            else:
+                # Pregunta tecnica sin cambios en el informe
+                return jsonify({"report": report_actual, "raw": raw,
+                                "assistant_msg": parsed.get("respuesta_chat") or raw_clean})
+        elif isinstance(parsed, dict):
+            updated = parsed
+            regen_desc = True
+
         if isinstance(updated, dict):
+            # Conservar TODOS los campos internos previos (videos, Word WinCam,
+            # plano/croquis ya editado, enlace publico, formato...). Antes solo se
+            # restauraban algunos y el resto se perdia tras cada mensaje del chat.
+            for _k, _v in report_actual.items():
+                if _k.startswith("_") and _k not in updated and _k not in (
+                        "_raw", "_assistant_msg", "_docx_error", "_pdf_error", "_wincam_docx_error"):
+                    updated[_k] = _v
             # Conservar el anexo fotografico previo (Claude no reenvia las rutas) y
             # anadir las imagenes de los archivos nuevos aportados en este turno.
             prev_ev = report_actual.get("_evidencia_img") or []
             merged_ev = list(prev_ev) + [e for e in nuevos_evidencia if e not in prev_ev]
             if merged_ev:
                 updated["_evidencia_img"] = merged_ev
-            # Restaurar el WinCam original (con sus diagramas base64 ya calculados):
-            # no se le pidio a Claude que lo reenviara, ver nota mas arriba.
-            if report_actual.get("_wincam"):
-                updated["_wincam"] = report_actual["_wincam"]
-            # Restaurar enlaces a videos detectados al importar el informe.
-            if report_actual.get("_enlaces_video"):
-                updated["_enlaces_video"] = report_actual["_enlaces_video"]
+            enlace_video = report_actual.get("_enlace_video")
+
+            if wc_nuevo is not None:
+                wc = _fusionar_wincam(wc_actual, wc_nuevo, report_actual.get("_session_id") or "")
+                attach_wincam_diagramas(wc)
+                updated["_wincam"] = wc
+                wc_name = report_actual.get("_docx_wincam")
+                if not wc_name:
+                    _titulo_wc = _safe_filename(wc.get("proyecto", "") or "", maxlen=60)
+                    wc_name = (f"{_safe_filename(num_ref, maxlen=20)} - INFORME {_titulo_wc} WINCAM.docx"
+                               if num_ref else f"Informe_WinCam_{uuid.uuid4().hex[:8]}.docx")
+                wc_path = SALIDAS_DIR / wc_name
+                try:
+                    try:
+                        generate_wincam_docx(wc, wc_path, num_ref=num_ref, cliente=cliente,
+                                             enlace_video=enlace_video)
+                    except PermissionError:
+                        # El Word anterior esta abierto: guardar con otro nombre
+                        wc_path = wc_path.with_name(f"{wc_path.stem} {datetime.now():%H%M%S}.docx")
+                        generate_wincam_docx(wc, wc_path, num_ref=num_ref, cliente=cliente,
+                                             enlace_video=enlace_video)
+                    updated["_docx_wincam"] = wc_path.name
+                except Exception as _e_wc:
+                    updated["_wincam_docx_error"] = str(_e_wc)
+                    logging.getLogger(__name__).error(
+                        "chat_informe: fallo generando DOCX WinCam: %s\n%s", _e_wc, _tb.format_exc())
+                # Mantener sincronizado el visor publico del cliente (/ver/<token>)
+                _sid = report_actual.get("_session_id")
+                _comp = INFORMES_COMPARTIDOS_DIR / f"Informe_WinCam_{_sid}.json" if _sid else None
+                if _comp and _comp.exists():
+                    try:
+                        _datos = json.loads(_comp.read_text(encoding="utf-8"))
+                        _datos.update({
+                            "proyecto": wc.get("proyecto") or _datos.get("proyecto"),
+                            "nivel_urgencia_global": wc.get("nivel_urgencia_global"),
+                            "secciones": wc.get("secciones") or [],
+                            "totales": wc.get("totales") or {},
+                        })
+                        _comp.write_text(json.dumps(_datos, ensure_ascii=False), encoding="utf-8")
+                    except Exception as _e_comp:
+                        logging.getLogger(__name__).warning(
+                            "chat_informe: no se pudo actualizar el informe compartible: %s", _e_comp)
+
+            if not regen_desc:
+                updated["_assistant_msg"] = updated.get("respuesta_chat", "Informe actualizado.")
+                return jsonify({"report": updated, "raw": raw})
+
             # Regenerar DOCX con el informe actualizado
             session_id = uuid.uuid4().hex[:8]
             # Este endpoint (regeneracion via chat) no recibe calle/poblacion por
@@ -2526,7 +2629,8 @@ def api_chat_informe():
                 docx_name = f"Informe_IA_{session_id}.docx"
             docx_path = SALIDAS_DIR / docx_name
             try:
-                generate_report_docx(updated, docx_path, num_ref=num_ref, cliente=cliente)
+                generate_report_docx(updated, docx_path, num_ref=num_ref, cliente=cliente,
+                                     enlace_video=enlace_video)
                 updated["_docx"] = docx_name
                 # Regenerar tambien el PDF para que quede sincronizado (con el anexo fotografico)
                 try:
@@ -2585,6 +2689,39 @@ def _parse_json_lenient(text):
         return json.loads(frag2)
     except Exception:
         return None
+
+
+def _sin_campos_internos(obj):
+    """Copia de obj sin ninguna clave que empiece por '_' (a cualquier nivel):
+    diagramas base64, rutas de fotos, marcas de video... que no deben ir a la IA."""
+    if isinstance(obj, dict):
+        return {k: _sin_campos_internos(v) for k, v in obj.items() if not str(k).startswith("_")}
+    if isinstance(obj, list):
+        return [_sin_campos_internos(v) for v in obj]
+    return obj
+
+
+def _fusionar_wincam(wc_viejo: dict, wc_nuevo: dict, session_id: str) -> dict:
+    """WinCam devuelto por el chat + campos internos del original (fotos,
+    origen de cada foto...) y marcas de video (_video/_t) recalculadas."""
+    wc = {k: v for k, v in wc_nuevo.items() if not str(k).startswith("_")}
+    for k, v in wc_viejo.items():
+        if str(k).startswith("_"):
+            wc[k] = v
+    # Reconstruir {video_original: video_web} desde las observaciones previas
+    src = wc_viejo.get("_evidencia_src") or []
+    mapa: dict[str, str] = {}
+    for sec in wc_viejo.get("secciones") or []:
+        for obs in sec.get("observaciones_tabla") or []:
+            try:
+                i = int(obs.get("foto")) - 1
+            except (TypeError, ValueError):
+                continue
+            if obs.get("_video") and 0 <= i < len(src):
+                mapa[src[i]] = obs["_video"]
+    if mapa:
+        _marcar_timestamps_video(wc, session_id, mapa)
+    return wc
 
 
 def _truncar_valores_grandes(obj, max_len: int = 20000):
