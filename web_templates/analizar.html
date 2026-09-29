@@ -478,6 +478,22 @@
   <button class="btn btn-sm btn-light border" onclick="planoDuplicate()" style="font-size:.78rem;padding:4px 8px" title="Duplicar">
     <i class="bi bi-copy"></i>
   </button>
+  <input type="color" id="plano-el-color" class="form-control form-control-color border" value="#1F4E79" onchange="planoSetColor(this.value)" style="width:32px;height:30px;padding:2px" title="Cambiar color">
+  <button class="btn btn-sm btn-light border" onclick="planoEscalar(1/1.2)" style="font-size:.78rem;padding:4px 8px" title="Mas pequeno">
+    <i class="bi bi-dash-lg"></i>
+  </button>
+  <button class="btn btn-sm btn-light border" onclick="planoEscalar(1.2)" style="font-size:.78rem;padding:4px 8px" title="Mas grande">
+    <i class="bi bi-plus-lg"></i>
+  </button>
+  <button class="btn btn-sm btn-light border" onclick="planoGirar(45)" style="font-size:.78rem;padding:4px 8px" title="Girar 45 grados">
+    <i class="bi bi-arrow-clockwise"></i>
+  </button>
+  <select id="plano-el-sustituir" class="form-select form-select-sm border" onchange="planoSustituir(this.value); this.value=''" style="width:auto;font-size:.75rem;padding:3px 24px 3px 6px" title="Sustituir por otro elemento">
+    <option value="">Sustituir por...</option>
+  </select>
+  <button class="btn btn-sm btn-light border" onclick="planoUndo()" style="font-size:.78rem;padding:4px 8px" title="Deshacer (Ctrl+Z)">
+    <i class="bi bi-arrow-counterclockwise"></i>
+  </button>
   <button class="btn btn-sm btn-light border text-danger" onclick="planoDeleteEl()" style="font-size:.78rem;padding:4px 8px" title="Borrar (Del)">
     <i class="bi bi-trash"></i>
   </button>
@@ -573,7 +589,7 @@ async function importarInforme() {
     if (data.error) {
       showError(data.error, data.traceback);
     } else {
-      currentReport = data;
+      currentReport = data; planoUndoStack = [];
       chatHistory   = [];
       showResult(data);
       initChat();
@@ -760,7 +776,7 @@ async function startAnalysis() {
 
     // Por si el backend respondiera ya resuelto (no deberia pasar)
     document.getElementById('progress-wrap').style.display = 'none';
-    currentReport = data;
+    currentReport = data; planoUndoStack = [];
     chatHistory = [];
     showResult(data);
     initChat();
@@ -808,7 +824,7 @@ async function pollAnalisis(jobId) {
 
     if (job.status === 'done') {
       document.getElementById('progress-wrap').style.display = 'none';
-      currentReport = job.result;
+      currentReport = job.result; planoUndoStack = [];
       chatHistory = [];
       showResult(job.result);
       initChat();
@@ -1046,6 +1062,9 @@ function showResult(r) {
           <label class="mb-0 text-muted">Grosor</label>
           <input type="range" id="plano-borrar-fondo-grosor" min="5" max="60" value="20" style="width:80px">
         </span>
+        <button class="btn btn-sm btn-outline-secondary" id="btn-plano-undo" onclick="planoUndo()" title="Deshacer (Ctrl+Z)" ${planoUndoStack.length ? '' : 'disabled'}>
+          <i class="bi bi-arrow-counterclockwise me-1"></i>Deshacer <span id="plano-undo-count">${planoUndoStack.length ? '(' + planoUndoStack.length + ')' : ''}</span>
+        </button>
         <button class="btn btn-sm btn-success" onclick="regenerarPlanoDesdeEdicion(this)">
           <i class="bi bi-arrow-repeat me-1"></i>Guardar cambios y regenerar Word/PDF
         </button>
@@ -1336,6 +1355,50 @@ let planoDragData = null;
 
 function _getPlanoSvg() { return document.querySelector('#plano-svg-content svg'); }
 
+// ── Deshacer (Ctrl+Z): pila de fotos del SVG tomadas antes de cada cambio ──
+let planoUndoStack = [];
+const PLANO_UNDO_MAX = 60;
+
+function _planoSnap() {
+  const svg = _getPlanoSvg();
+  if (!svg) return;
+  planoUndoStack.push(svg.innerHTML);
+  if (planoUndoStack.length > PLANO_UNDO_MAX) planoUndoStack.shift();
+  _planoUndoBtn();
+}
+
+function _planoUndoBtn() {
+  const b = document.getElementById('btn-plano-undo');
+  if (!b) return;
+  b.disabled = planoUndoStack.length === 0;
+  const n = document.getElementById('plano-undo-count');
+  if (n) n.textContent = planoUndoStack.length ? `(${planoUndoStack.length})` : '';
+}
+
+function planoUndo() {
+  const svg = _getPlanoSvg();
+  if (!svg || !planoUndoStack.length) return;
+  _planoDeselect();
+  svg.innerHTML = planoUndoStack.pop();
+  document.getElementById('plano-sel-box')?.remove();
+  svg.querySelectorAll('[data-plano-el]').forEach(el => delete el.dataset.planoEl);
+  if (planoEditMode) {
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.id = 'plano-sel-box';
+    svg.appendChild(rect);
+    _planoMarcarSeleccionables(svg);
+  }
+  _planoUndoBtn();
+}
+
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z' || e.shiftKey) return;
+  if (document.activeElement && ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
+  if (!_getPlanoSvg() || !planoUndoStack.length) return;
+  e.preventDefault();
+  planoUndo();
+});
+
 function _planoScreenToSvg(svg, ex, ey) {
   const pt = svg.createSVGPoint();
   pt.x = ex; pt.y = ey;
@@ -1388,6 +1451,7 @@ function _planoSelect(el) {
   _planoDeselect();
   planoSelected = el;
   _planoUpdateSelBox();
+  _planoInitSustituir();
   const tb = document.getElementById('plano-el-toolbar');
   const tag = el.tagName.toLowerCase();
   const hasText = tag === 'text' || !!el.querySelector('text');
@@ -1490,6 +1554,7 @@ function _planoMV(e) {
   if (!planoDragData.moviendo) {
     if (Math.hypot(e.clientX - planoDragData.cx0, e.clientY - planoDragData.cy0) < 4) return;
     planoDragData.moviendo = true;
+    _planoSnap();
   }
   const sp = _planoScreenToParent(planoDragData.el, e.clientX, e.clientY);
   _planoSetTranslate(planoDragData.el,
@@ -1539,7 +1604,8 @@ function _planoDbl(e) {
   if (!textEl) return;
   e.preventDefault();
   const val = prompt('Editar texto:', textEl.textContent);
-  if (val !== null) {
+  if (val !== null && val !== textEl.textContent) {
+    _planoSnap();
     textEl.textContent = val;
     _planoUpdateSelBox();
   }
@@ -1547,12 +1613,13 @@ function _planoDbl(e) {
 
 function _planoKey(e) {
   if (!planoEditMode) return;
-  if (document.activeElement && ['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if (document.activeElement && ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
   if (e.key === 'Delete' || e.key === 'Backspace') { planoDeleteEl(); return; }
   if (e.key === 'Escape') { _planoDeselect(); return; }
   if (!planoSelected) return;
   if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) {
     e.preventDefault();
+    if (!e.repeat) _planoSnap();
     const step = e.shiftKey ? 10 : 1;
     const [tx, ty] = _planoGetTranslate(planoSelected);
     _planoSetTranslate(planoSelected,
@@ -1619,6 +1686,7 @@ function planoDeleteEl() {
   if (!planoSelected) return;
   const el = planoSelected;
   _planoDeselect();
+  _planoSnap();
   el.remove();
 }
 
@@ -1629,6 +1697,7 @@ function planoEditText() {
 
 function planoDuplicate() {
   if (!planoSelected) return;
+  _planoSnap();
   const clone = planoSelected.cloneNode(true);
   const [tx, ty] = _planoGetTranslate(clone);
   _planoSetTranslate(clone, tx + 15, ty + 15);
@@ -1636,6 +1705,105 @@ function planoDuplicate() {
   planoSelected.parentNode.insertBefore(clone, planoSelected.nextSibling);
   clone.dataset.planoEl = '1';
   _planoSelect(clone);
+}
+
+// ── Modificar elemento seleccionado: tamano, giro, color, sustituir ─────────
+// Tamano y giro se aplican sobre un <g> envoltorio (centro fijo guardado en
+// data-cx/cy) para no pelearse con el transform propio del elemento; el
+// translate del envoltorio sigue siendo el que usa el arrastre.
+function _planoEnvolver(el) {
+  if (el.dataset.envuelto) return el;
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  el.parentNode.insertBefore(g, el);
+  g.appendChild(el);
+  delete el.dataset.planoEl;
+  const b = g.getBBox();
+  Object.assign(g.dataset, { envuelto: '1', planoEl: '1',
+    cx: b.x + b.width / 2, cy: b.y + b.height / 2, esc: 1, rot: 0 });
+  planoSelected = g;
+  return g;
+}
+
+function _planoAplicarTransf(g) {
+  const [tx, ty] = _planoGetTranslate(g);
+  const cx = +g.dataset.cx, cy = +g.dataset.cy, s = +g.dataset.esc, r = +g.dataset.rot;
+  g.setAttribute('transform',
+    `translate(${tx.toFixed(1)},${ty.toFixed(1)}) rotate(${r},${cx.toFixed(1)},${cy.toFixed(1)}) ` +
+    `matrix(${s.toFixed(3)},0,0,${s.toFixed(3)},${(cx * (1 - s)).toFixed(1)},${(cy * (1 - s)).toFixed(1)})`);
+  _planoUpdateSelBox();
+  _planoPosToolbar();
+}
+
+function planoEscalar(f) {
+  if (!planoSelected) return;
+  _planoSnap();
+  const g = _planoEnvolver(planoSelected);
+  g.dataset.esc = Math.min(8, Math.max(0.2, +g.dataset.esc * f));
+  _planoAplicarTransf(g);
+}
+
+function planoGirar(grados) {
+  if (!planoSelected) return;
+  _planoSnap();
+  const g = _planoEnvolver(planoSelected);
+  g.dataset.rot = ((+g.dataset.rot + grados) % 360 + 360) % 360;
+  _planoAplicarTransf(g);
+}
+
+function planoSetColor(color) {
+  if (!planoSelected) return;
+  _planoSnap();
+  [planoSelected, ...planoSelected.querySelectorAll('*')].forEach(n => {
+    if (!(n instanceof SVGGeometryElement || n instanceof SVGTextContentElement)) return;
+    const cs = getComputedStyle(n);
+    if (cs.stroke && cs.stroke !== 'none') { n.setAttribute('stroke', color); n.style.stroke = color; }
+    const blanco = ['none', 'transparent', 'rgb(255, 255, 255)', 'rgba(0, 0, 0, 0)'].includes(cs.fill);
+    if (n instanceof SVGTextContentElement || !blanco) { n.setAttribute('fill', color); n.style.fill = color; }
+  });
+}
+
+function _planoInitSustituir() {
+  const sel = document.getElementById('plano-el-sustituir');
+  if (!sel || sel.options.length > 1) return;
+  PALETA_SIMBOLOS.filter(s => s.modo === 'punto').forEach(s => sel.add(new Option(s.label, s.tipo)));
+  sel.add(new Option('Texto...', '__texto'));
+}
+
+function planoSustituir(tipo) {
+  if (!planoSelected || !tipo) return;
+  const svg = _getPlanoSvg();
+  const old = planoSelected;
+  let texto = null;
+  if (tipo === '__texto') {
+    texto = prompt('Texto:', (old.textContent || '').trim());
+    if (!texto) return;
+  }
+  const r = old.getBoundingClientRect();
+  const c = _planoScreenToSvg(svg, r.left + r.width / 2, r.top + r.height / 2);
+  let vb = null;
+  try { const b = svg.viewBox.baseVal; if (b && b.width) vb = b; } catch (err) {}
+  if (!vb) vb = { width: svg.clientWidth || 900, height: svg.clientHeight || 660 };
+  _planoSnap();
+  let nuevo;
+  if (texto !== null) {
+    nuevo = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    nuevo.setAttribute('x', c.x.toFixed(1));
+    nuevo.setAttribute('y', c.y.toFixed(1));
+    nuevo.setAttribute('font-family', 'Arial');
+    nuevo.setAttribute('font-size', Math.max(12, Math.min(vb.width, vb.height) / 45));
+    nuevo.setAttribute('fill', '#1F4E79');
+    nuevo.setAttribute('text-anchor', 'middle');
+    nuevo.setAttribute('dominant-baseline', 'middle');
+    nuevo.textContent = texto;
+  } else {
+    nuevo = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    nuevo.innerHTML = _simboloSvgHtml(tipo, c.x, c.y, Math.max(0.6, Math.min(vb.width, vb.height) / 900));
+  }
+  _planoDeselect();
+  old.remove();
+  svg.appendChild(nuevo);
+  nuevo.dataset.planoEl = '1';
+  _planoSelect(nuevo);
 }
 
 // Anade un <text> nuevo, centrado en el plano, listo para arrastrarlo a su sitio.
@@ -1658,6 +1826,7 @@ function planoAddText() {
   el.setAttribute('fill', '#1F4E79');
   el.setAttribute('text-anchor', 'middle');
   el.textContent = texto;
+  _planoSnap();
   svg.appendChild(el);
   el.dataset.planoEl = '1';
   el.style.cursor = 'move';
@@ -1725,6 +1894,7 @@ function _flechaPlanoMD(e) {
   flechaPlanoEl.innerHTML =
     `<line x1="${sp.x.toFixed(1)}" y1="${sp.y.toFixed(1)}" x2="${sp.x.toFixed(1)}" y2="${sp.y.toFixed(1)}" stroke="#1F4E79" stroke-width="${sw.toFixed(1)}"/>` +
     `<path d="" fill="#1F4E79"/>`;
+  _planoSnap();
   svg.appendChild(flechaPlanoEl);
 }
 
@@ -1882,6 +2052,7 @@ function _simboloPlanoClick(e) {
 
   const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   g.innerHTML = _simboloSvgHtml(simboloActivoPlano, sp.x, sp.y, escala);
+  _planoSnap();
   svg.appendChild(g);
   g.dataset.planoEl = '1';
   g.style.cursor = 'move';
@@ -1905,6 +2076,7 @@ function _simboloLineaPlanoMD(e) {
   simboloLineaPlanoEl.setAttribute('y2', sp.y.toFixed(1));
   simboloLineaPlanoEl.setAttribute('stroke', '#1F4E79');
   simboloLineaPlanoEl.setAttribute('stroke-width', sw.toFixed(1));
+  _planoSnap();
   svg.appendChild(simboloLineaPlanoEl);
 }
 
@@ -1978,6 +2150,7 @@ function _borrarFondoPlanoMD(e) {
   borrarFondoPlanoPath.setAttribute('stroke-linecap', 'round');
   borrarFondoPlanoPath.setAttribute('stroke-linejoin', 'round');
   const fondoImg = svg.querySelector('image');
+  _planoSnap();
   if (fondoImg && fondoImg.nextSibling) {
     svg.insertBefore(borrarFondoPlanoPath, fondoImg.nextSibling);
   } else {
