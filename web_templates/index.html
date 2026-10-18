@@ -310,15 +310,22 @@ body {
    raton/dedo, distribuidos simetricamente. El numero de columnas y el
    tamano de icono/texto se adaptan de forma fluida (clamp segun vw) a la
    resolucion y tamano real del telefono, no solo a un unico punto de corte. */
+/* Flex con ancho fijo por columna (no grid 1fr): todas las tarjetas miden lo
+   mismo en todas las categorias, un nombre largo no estira su columna fuera
+   de la pantalla, y las filas incompletas quedan centradas. */
 .type-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: clamp(8px, 3vw, 14px);
+  --cols: 4;
+  --gap: clamp(8px, 3vw, 14px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--gap);
 }
-@media (max-width: 560px) { .type-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 340px) { .type-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 900px) { .type-grid { grid-template-columns: repeat(5, 1fr); } }
+@media (max-width: 560px) { .type-grid { --cols: 3; } }
+@media (max-width: 340px) { .type-grid { --cols: 2; } }
 .type-card {
+  flex: 0 0 calc((100% - (var(--cols) - 1) * var(--gap)) / var(--cols));
+  min-width: 0;
   aspect-ratio: 1;
   border: 1px solid rgba(255,255,255,.14);
   border-radius: clamp(14px, 5vw, 20px);
@@ -374,6 +381,9 @@ body {
   color: rgba(255,255,255,.88);
   margin-top: clamp(4px, 1.5vw, 7px);
   line-height: 1.2;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  hyphens: auto;
 }
 
 /* ── Tablas de partidas */
@@ -578,8 +588,13 @@ body {
   #sidebar.open { transform: translateX(0); }
   #main-content { margin-left: 0; }
   #content-area { padding: 20px 16px; }
-  #topbar { padding: 10px 16px; }
+  #topbar { padding: 10px 16px; gap: 8px; }
   #panel-card { padding: 18px 16px; }
+  /* Evita que la topbar (breadcrumb + enlaces) ensanche la pagina por encima
+     del ancho de pantalla y deje fuera la ultima columna de iconos. */
+  #main-content { min-width: 0; max-width: 100vw; }
+  #step-breadcrumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar-link { padding: 4px 8px; white-space: nowrap; flex-shrink: 0; }
   /* En movil, que crezca con el contenido y sea la pagina la que hace scroll
      (natural al tacto), en vez de una caja con su propio scroll interno. */
   #panel-card { max-height: none; overflow-y: visible; }
@@ -733,6 +748,7 @@ const fd = {};
 let tipo = '';
 const rc = {};
 let fdPrefill = null;  // datos extraidos por IA de la solicitud del cliente
+let erpPrefill = null; // cliente enviado por el ERP (?erp=<token>); prevalece sobre la IA
 
 // ─── Type catalogue
 const TIPOS = [
@@ -1027,7 +1043,7 @@ function stepSolicitudIA() {
 
     <div id="sol-error" class="text-danger mt-2" style="font-size:.83rem;display:none;"></div>
     <div class="d-flex justify-content-between align-items-center mt-3">
-      <a href="#" style="font-size:.83rem;color:#5a7184;" onclick="fdPrefill=null;step2();return false;">Saltar y rellenar manualmente</a>
+      <a href="#" style="font-size:.83rem;color:#5a7184;" onclick="fdPrefill=erpPrefill;step2();return false;">Saltar y rellenar manualmente</a>
       <button id="sol-btn" class="btn btn-next" onclick="_solAnalizar()" disabled>
         <i class="bi bi-magic"></i> Analizar con IA
       </button>
@@ -1080,6 +1096,10 @@ async function _solAnalizar() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     fdPrefill = data;
+    if (erpPrefill) {  // los datos del cliente del ERP prevalecen sobre los de la IA
+      fdPrefill = { ...data };
+      Object.entries(erpPrefill).forEach(([k, val]) => { if (val) fdPrefill[k] = val; });
+    }
     if (ov) ov.classList.remove('show');
     if (ovTxt) ovTxt.textContent = 'Generando documentos...';
     _solMostrarPreview(data);
@@ -1121,7 +1141,7 @@ function step2() {
   const label = isObra ? 'direccion de la obra' : isPlan ? 'nombre y direccion de la obra' : 'direccion del servicio';
   const p = fdPrefill || {};
   const iaBanner = fdPrefill ? `<div class="alert alert-success py-1 px-2 mb-2" style="font-size:.78rem;">
-    <i class="bi bi-magic me-1"></i>Datos pre-rellenados por IA. Revisa y corrige si es necesario.
+    <i class="bi bi-magic me-1"></i>${fdPrefill === erpPrefill ? 'Datos del cliente traidos del ERP' : 'Datos pre-rellenados por IA'}. Revisa y corrige si es necesario.
     </div>` : '';
   botMsg(`Introduce el numero de contrato, la ${label} y la fecha.`);
   // Pre-relleno: prioridad fd (vuelta atras) > fdPrefill (IA) > default
@@ -1255,7 +1275,7 @@ function step3() {
     fd.cliente_email  = ACOMETIDAS_DATOS.email;
   }
   const iaBanner = fdPrefill ? `<div class="alert alert-success py-1 px-2 mb-2" style="font-size:.78rem;">
-    <i class="bi bi-magic me-1"></i>Datos pre-rellenados por IA. Revisa y corrige si es necesario.
+    <i class="bi bi-magic me-1"></i>${fdPrefill === erpPrefill ? 'Datos del cliente traidos del ERP' : 'Datos pre-rellenados por IA'}. Revisa y corrige si es necesario.
     </div>` : '';
   botMsg('Introduce los datos del cliente o comunidad.');
   const adm = fd.administracion === '--' ? '' : (fd.administracion || '');
@@ -3828,6 +3848,23 @@ window.panel = function(html) {
 };
 
 // ─── Boot
+// Si viene del ERP (?erp=<token>), carga el cliente y guarda el token para que
+// /generar registre el presupuesto en el ERP con ese cliente.
+(async function bootErp() {
+  const token = new URLSearchParams(location.search).get('erp');
+  if (!token) return;
+  history.replaceState(null, '', location.pathname);
+  try {
+    const r = await fetch(`/api/erp/prefill?token=${encodeURIComponent(token)}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Enlace del ERP no valido');
+    erpPrefill = d;
+    fdPrefill = d;
+    fd.erp_token = token;
+  } catch (e) {
+    alert(e.message + '. Puedes hacer el presupuesto igualmente: se registrara en el ERP sin el cliente enlazado.');
+  }
+})();
 step1();
 
 // ── Estado disco externo ─────────────────────────────────────────────────────

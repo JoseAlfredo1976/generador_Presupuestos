@@ -30,7 +30,8 @@ from core.excel_generator import ExcelGenerator
 from core.html_generator import HtmlGenerator
 from core.pdf_converter import PdfConverter
 from utils.tarifa_loader import TarifaLoader
-from utils.sheets_registro import siguiente_numero, registrar as sheets_registrar
+from utils.sheets_registro import siguiente_numero, registrar as sheets_registrar, TIPO_A_PESTAÑA
+from utils import erp
 from utils.output_saver import guardar_en_red, estado_disco as disco_estado
 from utils import compartidos
 
@@ -3241,6 +3242,16 @@ def api_tarifa(code: str):
     return jsonify(item)
 
 
+@app.route("/api/erp/prefill")
+def api_erp_prefill():
+    """Datos del cliente que manda el ERP en el enlace ?erp=<token> (firmado)."""
+    datos = erp.leer_token(request.args.get("token", ""))
+    if not datos:
+        return jsonify({"error": "Enlace del ERP no valido o caducado"}), 400
+    campos = ("cliente_nombre", "cliente_dir", "cliente_tel", "cliente_email", "obra")
+    return jsonify({k: datos.get(k) or "" for k in campos})
+
+
 @app.route("/api/siguiente_numero")
 def api_siguiente_numero():
     """Devuelve el siguiente numero de presupuesto para un tipo dado.
@@ -3768,13 +3779,36 @@ def generar():
         SALIDAS_DIR / v for v in generated.values()
         if isinstance(v, str) and (SALIDAS_DIR / v).exists()
     ]
+    # En los modelos de servicio el total esta en total_estimado (total_sin_iva queda a 0).
+    importe_registro = total_sin_iva or total_estimado
     _registro_kwargs = dict(
         tipo=tipo, num_contrato=num_contrato,
         fecha=datetime.now().strftime("%d/%m/%Y"),
         cliente=data.get("[[CLIENTE_NOMBRE]]", ""),
-        obra=obra or servicio, importe=total_sin_iva,
+        obra=obra or servicio, importe=importe_registro,
         carpeta=folder_name,
     )
+
+    # Registro en el ERP: solo presupuestos con contador propio (los informes,
+    # certificados, planes y contratos de subcontrata comparten numero con su
+    # presupuesto y no son presupuestos nuevos).
+    from utils.base_datos import TIPOS_SIN_CONTADOR
+    erp_ctx = erp.leer_token(f.get("erp_token", "")) or {}
+    erp_datos = None
+    if tipo not in TIPOS_SIN_CONTADOR and num_contrato:
+        erp_datos = {
+            "empresa_nif": erp_ctx.get("empresa_nif"),
+            "tipo": TIPO_A_PESTAÑA.get(tipo, "VARIOS"),
+            "numero": num_contrato,
+            "cliente_id": erp_ctx.get("cliente_id"),
+            "cliente_nombre": data.get("[[CLIENTE_NOMBRE]]", "") or None,
+            "contacto_email": f.get("cliente_email", "").strip() or None,
+            "contacto_telefono": f.get("cliente_tel", "").strip() or None,
+            "direccion_obra": obra or None,
+            "concepto": (f.get("titulo_servicio", "").strip() or servicio or None),
+            "importe": round(importe_registro, 2) if importe_registro else None,
+            "carpeta": folder_name,
+        }
 
     def _background_save():
         try:
@@ -3785,6 +3819,8 @@ def generar():
         except Exception as ex:
             import logging
             logging.getLogger(__name__).warning("Background save error: %s", ex)
+        if erp_datos:
+            erp.registrar(erp_datos)
 
     threading.Thread(target=_background_save, daemon=True).start()
 
