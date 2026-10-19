@@ -48,8 +48,19 @@ def leer_token(token: str) -> dict | None:
     return datos
 
 
-def registrar(datos: dict) -> None:
-    """Registra el presupuesto en el ERP. Los fallos solo se anotan en el log."""
+_TIPOS_MIME = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+def registrar(datos: dict, archivos: dict | None = None) -> None:
+    """Registra el presupuesto en el ERP y sube sus documentos ({"pdf": Path, "docx": Path}).
+
+    El ERP devuelve una URL firmada de Supabase Storage por documento y aqui se
+    sube con PUT. Los fallos solo se anotan en el log.
+    """
+    archivos = {k: v for k, v in (archivos or {}).items() if k in _TIPOS_MIME and v and v.exists()}
     url = os.environ.get("ERP_URL", "").strip().rstrip("/")
     secret = _secret()
     if not url or not secret:
@@ -61,14 +72,32 @@ def registrar(datos: dict) -> None:
         return
     req = urllib.request.Request(
         f"{url}/api/internal/presupuestos",
-        data=json.dumps({"accion": "registrar", **datos}).encode(),
+        data=json.dumps({"accion": "registrar", **datos, "archivos": list(archivos)}).encode(),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {secret.decode()}"},
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
+            respuesta = json.loads(r.read() or b"{}")
             log.info("ERP: presupuesto %s registrado (%s)", datos.get("numero"), r.status)
     except urllib.error.HTTPError as e:
         log.warning("ERP: error %s al registrar %s: %s", e.code, datos.get("numero"), e.read()[:300])
+        return
     except Exception as e:
         log.warning("ERP: no se pudo registrar %s: %s", datos.get("numero"), e)
+        return
+
+    for ext, url_subida in (respuesta.get("subidas") or {}).items():
+        ruta = archivos.get(ext)
+        if not ruta:
+            continue
+        subida = urllib.request.Request(
+            url_subida, data=ruta.read_bytes(), headers={"Content-Type": _TIPOS_MIME[ext], "x-upsert": "true"}, method="PUT"
+        )
+        try:
+            with urllib.request.urlopen(subida, timeout=60):
+                log.info("ERP: %s de %s subido", ext, datos.get("numero"))
+        except urllib.error.HTTPError as e:
+            log.warning("ERP: error %s al subir %s de %s: %s", e.code, ext, datos.get("numero"), e.read()[:300])
+        except Exception as e:
+            log.warning("ERP: no se pudo subir %s de %s: %s", ext, datos.get("numero"), e)

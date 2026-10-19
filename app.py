@@ -3820,7 +3820,7 @@ def generar():
             import logging
             logging.getLogger(__name__).warning("Background save error: %s", ex)
         if erp_datos:
-            erp.registrar(erp_datos)
+            erp.registrar(erp_datos, {k: SALIDAS_DIR / generated[k] for k in ("pdf", "docx") if k in generated})
 
     threading.Thread(target=_background_save, daemon=True).start()
 
