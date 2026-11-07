@@ -25,7 +25,14 @@ class TarifaLoader:
                 price = 0.0
                 for col_idx in (4, 3):
                     if len(row) > col_idx and row[col_idx] is not None:
-                        raw = str(row[col_idx]).replace("€", "").replace(" ", "").replace(".", "").replace(",", ".")
+                        val = row[col_idx]
+                        # Celda numerica (lo normal en TARIFAS.xlsx): usar el valor tal cual.
+                        # Antes se convertia a texto y se quitaban los puntos, con lo que
+                        # 342.5 pasaba a 3425 (REB-300, REB-250, REB-500, valvulas WS...).
+                        if isinstance(val, (int, float)) and not isinstance(val, bool):
+                            price = float(val)
+                            break
+                        raw = str(val).replace("€", "").replace(" ", "").replace(".", "").replace(",", ".")
                         try:
                             price = float(raw)
                             break
