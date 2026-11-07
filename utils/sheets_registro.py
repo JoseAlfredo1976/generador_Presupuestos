@@ -181,6 +181,69 @@ def _siguiente_numero_local(tipo: str, num_base: int | None = None) -> str:
         return ""
 
 
+_PALABRAS_VACIAS = {
+    "c", "cl", "calle", "avda", "av", "avenida", "pza", "plaza", "pº", "paseo",
+    "n", "nº", "no", "num", "numero", "de", "del", "la", "las", "el", "los",
+    "y", "madrid", "comunidad", "propietarios", "cp", "ccpp", "cdad", "prop",
+}
+
+
+def _clave_direccion(texto: str) -> frozenset[str]:
+    """Normaliza una direccion a un conjunto de palabras significativas:
+    'Calle Gavilanes N.º 1, Madrid' y 'C/ Gavilanes 1' -> {'gavilanes', '1'}."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(texto).lower())
+    t = "".join(ch for ch in t if not unicodedata.combining(ch))
+    palabras = re.findall(r"[a-z]+|\d+", t)
+    return frozenset(p for p in palabras if p not in _PALABRAS_VACIAS)
+
+
+def buscar_revision(obra: str) -> dict | None:
+    """
+    Busca en todas las pestañas un presupuesto ya registrado para la misma
+    direccion (col D) o cliente (col C). Si lo encuentra devuelve el ultimo
+    (por fecha) y el siguiente numero de revision: 4352B/26 -> 4352C/26.
+    """
+    clave = _clave_direccion(obra)
+    # Exigir al menos un nombre y un numero para no casar direcciones vagas
+    if not any(p.isdigit() for p in clave) or not any(p.isalpha() for p in clave):
+        return None
+    try:
+        sh = _client().open_by_key(SHEET_ID)
+        patron = re.compile(r"^(\d+)([A-Z]*)/(\d{2})$")
+        coincidencias = []          # (fecha, numero, base, cliente, obra)
+        letras_por_base: dict[int, list[str]] = {}
+        for ws in sh.worksheets():
+            for fila in ws.get_all_values()[1:]:
+                fila = (fila + [""] * 4)[:4]
+                m = patron.match(fila[0].strip())
+                if not m:
+                    continue
+                base, letra = int(m.group(1)), m.group(2)
+                letras_por_base.setdefault(base, []).append(letra)
+                if clave in (_clave_direccion(fila[3]), _clave_direccion(fila[2])):
+                    try:
+                        fecha = datetime.strptime(fila[1].strip(), "%d/%m/%Y")
+                    except ValueError:
+                        fecha = datetime.min
+                    coincidencias.append((fecha, fila[0].strip(), base, fila[2], fila[3]))
+        if not coincidencias:
+            return None
+        fecha, numero, base, cliente, direccion = max(coincidencias, key=lambda c: c[0])
+        letras = [l for l in letras_por_base.get(base, []) if l]
+        siguiente_letra = chr(ord(max(letras)[-1]) + 1) if letras else "A"
+        return {
+            "existente": numero,
+            "fecha": fecha.strftime("%d/%m/%Y") if fecha != datetime.min else "",
+            "cliente": cliente,
+            "obra": direccion,
+            "numero": f"{base}{siguiente_letra}/{_año_corto()}",
+        }
+    except Exception as e:
+        log.warning("Sheets.buscar_revision error: %s", e)
+        return None
+
+
 def registrar(
     tipo: str,
     num_contrato: str,
