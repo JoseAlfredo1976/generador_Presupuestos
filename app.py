@@ -156,6 +156,11 @@ def get_tarifas() -> TarifaLoader:
     return _tarifas
 
 
+# ── Croquis · Red de saneamiento (mediciones sobre plano, verificación y partidas) ──
+from utils.mediciones_bp import crear_blueprint as _crear_bp_red
+app.register_blueprint(_crear_bp_red(BASE_DIR, get_tarifas))
+
+
 def _safe_filename(s: str, maxlen: int = 60) -> str:
     """Remove accents, keep only safe ASCII chars for Windows paths."""
     # Normalize to NFD and drop combining marks (removes accents)

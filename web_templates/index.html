@@ -682,6 +682,9 @@ body {
     <a href="/croquis" class="sb-nav-link" style="margin-top:4px">
       <i class="bi bi-map"></i> Croquis y Planos
     </a>
+    <a href="/croquis/red" class="sb-nav-link" style="margin-top:4px">
+      <i class="bi bi-diagram-3"></i> Red de saneamiento
+    </a>
     <a href="#" class="sb-nav-link" style="margin-top:4px" onclick="document.getElementById('imp-pres-input').click();return false;">
       <i class="bi bi-file-earmark-arrow-up"></i> Importar presupuesto
     </a>
@@ -2282,6 +2285,9 @@ function stepRevisarIA(result) {
         </table>
       </div>
       ${_pctAjusteHtml('tb'+which)}
+    <button type="button" class="btn btn-sm btn-outline-success mb-2" onclick="importarDesdeCroquis('${prefix}','tb${which}','${bid}')" title="Trae las partidas medidas en Croquis · Red de saneamiento">
+      <i class="bi bi-map"></i> Importar desde croquis
+    </button>
       <button type="button" class="btn btn-sm btn-outline-primary mb-2"
         onclick="addRow('${prefix}','tb${which}','${bid}')">
         <i class="bi bi-plus-circle"></i> Anadir partida
@@ -2443,6 +2449,9 @@ function stepPartidas(which) {
       </table>
     </div>
     ${_pctAjusteHtml('tb'+which)}
+    <button type="button" class="btn btn-sm btn-outline-success mb-2" onclick="importarDesdeCroquis('${prefix}','tb${which}','${bid}')" title="Trae las partidas medidas en Croquis · Red de saneamiento">
+      <i class="bi bi-map"></i> Importar desde croquis
+    </button>
     <button type="button" class="btn btn-sm btn-outline-primary mb-3" onclick="addRow('${prefix}','tb${which}','${bid}')">
       <i class="bi bi-plus-circle"></i> Anadir partida
     </button>
@@ -2487,6 +2496,48 @@ function _guardarPartidasDesdeDOM(which, prefix) {
     n++;
   });
   return n;
+}
+
+// ─── Importar partidas desde Croquis · Red de saneamiento (/croquis/red)
+async function importarDesdeCroquis(prefix, tbId, barId) {
+  let pend = null;
+  try { pend = JSON.parse(localStorage.getItem('red_partidas') || 'null'); } catch (e) {}
+  let obras = [];
+  try { obras = await (await fetch('/api/red/obras')).json(); } catch (e) {}
+  if (!pend && !obras.length) { alert('No hay obras en Croquis · Red de saneamiento. Abre /croquis/red, dibuja la red y vuelve.'); return; }
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:3000;display:flex;align-items:center;justify-content:center;padding:16px';
+  const opts = obras.map(o => `<option value="${esc(o.id)}" ${pend && pend.obra === o.id ? 'selected' : ''}>${esc(o.nombre)}${o.ref ? ' · ' + esc(o.ref) : ''} (${o.ml} ml, ${o.arquetas} arq., ${o.pozos} pozos)</option>`).join('');
+  ov.innerHTML = `<div style="background:#fff;border-radius:12px;padding:18px;width:min(520px,100%)">
+    <h5 class="mb-2"><i class="bi bi-map me-2"></i>Importar desde croquis</h5>
+    <label class="form-label small">Obra</label>
+    <select class="form-select mb-2" id="impRedSel">${opts}</select>
+    <div class="form-check mb-3"><input class="form-check-input" type="checkbox" id="impRedRepl" checked>
+      <label class="form-check-label small" for="impRedRepl">Sustituir las partidas vacías de la tabla</label></div>
+    <div class="small text-muted mb-3">Se importan cantidades y precios de tarifa. Después puedes ajustar precios como siempre.</div>
+    <div class="d-flex justify-content-end gap-2"><button class="btn btn-outline-secondary btn-sm" id="impRedNo">Cancelar</button>
+      <button class="btn btn-success btn-sm" id="impRedOk">Importar</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#impRedNo').onclick = () => ov.remove();
+  ov.querySelector('#impRedOk').onclick = async () => {
+    const id = ov.querySelector('#impRedSel').value;
+    let P = (pend && pend.obra === id) ? pend.partidas : null;
+    if (!P) { const r = await fetch('/api/red/obra/' + encodeURIComponent(id) + '/partidas'); if (!r.ok) { alert('No se pudieron leer las partidas.'); return; } P = await r.json(); }
+    if (ov.querySelector('#impRedRepl').checked) {
+      document.querySelectorAll('#' + tbId + ' tr').forEach(tr => {
+        const d = tr.querySelector('[name^="' + prefix + '_desc_"]');
+        if (d && !d.value.trim()) tr.remove();
+      });
+    }
+    let n = 0;
+    (P.capitulos || []).forEach(c => c.lineas.forEach(l => {
+      addRow(prefix, tbId, barId, `${l.codigo} · ${l.descripcion}`, l.unidad, l.cantidad, l.precio); n++;
+    }));
+    try { localStorage.removeItem('red_partidas'); } catch (e) {}
+    ov.remove();
+    botMsg(`<i class="bi bi-map text-success me-2"></i>Importadas <strong>${n}</strong> partidas desde el croquis. Total a precio de tarifa: <strong>${Number(P.total_sin_iva || 0).toLocaleString('es-ES', {minimumFractionDigits: 2})} €</strong> sin IVA.`);
+    if (P.faltan && P.faltan.length) alert('Atención: estos códigos no están en TARIFAS.xlsx y van a 0 €: ' + P.faltan.join(', '));
+  };
 }
 
 function okPartidas(which, prefix) {

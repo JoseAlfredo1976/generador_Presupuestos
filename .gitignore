@@ -12,3 +12,7 @@ config/enlaces.db
 config/informes_compartidos/
 config/videos_ia/
 debug_*.txt
+
+# Croquis · Red de saneamiento: obras de clientes (planos y mediciones)
+obras_red/
+*.bak_2026-11-07

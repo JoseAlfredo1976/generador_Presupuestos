@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Red de saneamiento - Croquis - Grupo Europa</title>
+<style>
+/* Croquis · Red de saneamiento: plano con la red dibujada (izq.) + libro de mediciones / partidas (dcha.) */
+:root{
+  --bg:#eef1f4;--paper:#fff;--ink:#18232f;--muted:#5d6b79;--rule:#d3dae1;--accent:#1f4e79;--accent2:#4f84b5;
+  --hl:#e8590c;--ok:#2b8a3e;--warn:#b07d00;--bad:#c92a2a;--new:#d6336c;
+  --dn160:#7048e8;--dn200:#1c7ed6;--dn250:#0ca678;--dn300:#e03131;--dn400:#9c36b5;--dn500:#7a4b1f;--gal:#f08c00;--ram:#1098ad;--arq:#343a40;
+  --f:"Segoe UI",system-ui,Arial,sans-serif;--fn:Consolas,"Cascadia Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px var(--f)}
+.top{background:linear-gradient(90deg,#1f4e79,#4f84b5);color:#fff;padding:10px 18px;display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center}
+.top h1{font-size:18px;margin:0;font-weight:700}
+.top .sub{opacity:.85;font-size:12.5px}
+.top nav{margin-left:auto;display:flex;gap:6px}
+.top nav a{color:#fff;text-decoration:none;border:1px solid rgba(255,255,255,.45);border-radius:999px;padding:4px 12px;font-size:13px}
+.top nav a.on{background:#fff;color:var(--accent)}
+.wrap{display:flex;flex-direction:column;gap:8px;height:calc(100% - 52px);padding:8px 14px}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.grp{display:flex;gap:4px;align-items:center;padding-right:8px;border-right:1px solid var(--rule)}
+.grp:last-child{border-right:0}
+button,select,input{font:13px var(--f);border:1px solid var(--rule);background:var(--paper);color:var(--ink);border-radius:6px;padding:5px 9px}
+button{font-weight:600;cursor:pointer}
+button:hover{border-color:var(--accent2)}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent2);outline-offset:1px}
+button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+button.on{background:var(--new);border-color:var(--new);color:#fff}
+.save{font-size:12px;color:var(--muted);min-width:120px}
+.save.dirty{color:var(--warn);font-weight:600}
+label.chk{display:flex;gap:5px;align-items:center;font-size:13px;color:var(--muted);white-space:nowrap}
+input[type=range]{width:80px;padding:0}
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(360px,1fr);gap:10px}
+.plano{background:var(--paper);border:1px solid var(--rule);border-radius:8px;position:relative;overflow:hidden;min-height:0}
+.plano svg{width:100%;height:100%;display:block;touch-action:none}
+.plano.drawing svg{cursor:crosshair}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);padding:30px;line-height:1.6}
+.now{position:absolute;top:8px;left:8px;background:var(--paper);border:1px solid var(--rule);border-left:4px solid var(--hl);border-radius:6px;padding:5px 9px;font-size:13px;max-width:70%}
+.hint{position:absolute;top:8px;right:8px;background:var(--new);color:#fff;border-radius:6px;padding:6px 10px;font-size:13px;max-width:55%}
+.hint button{margin-left:6px;padding:2px 8px;font-size:12px}
+.dlg{position:absolute;right:8px;bottom:8px;width:min(340px,calc(100% - 16px));background:var(--paper);border:1px solid var(--rule);border-top:4px solid var(--new);border-radius:8px;padding:12px;display:grid;gap:8px;box-shadow:0 8px 28px rgba(0,0,0,.18);z-index:5}
+.dlg h3{margin:0;font-size:15px}
+.f{display:grid;grid-template-columns:100px 1fr;gap:6px;align-items:center;font-size:13px}
+.f input,.f select{width:100%}
+.row{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+small{color:var(--muted);font-size:11.5px}
+[hidden]{display:none!important}
+.cap{position:absolute;left:8px;bottom:6px;right:8px;display:flex;flex-wrap:wrap;gap:2px 10px;font-size:11px;color:var(--muted);pointer-events:none}
+.cap i{display:inline-block;width:14px;height:4px;border-radius:2px;margin-right:3px;vertical-align:middle}
+.libro{background:var(--paper);border:1px solid var(--rule);border-radius:8px;display:flex;flex-direction:column;min-height:0;min-width:0}
+.tabs{display:flex;border-bottom:1px solid var(--rule)}
+.tabs button{border:0;border-radius:0;background:none;padding:9px 14px;color:var(--muted);border-bottom:3px solid transparent}
+.tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+.tot{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--rule);border-bottom:1px solid var(--rule)}
+.tot div{background:var(--paper);padding:5px 8px}
+.tot .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;align-items:center;gap:5px}
+.tot .k i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.tot .v{font-family:var(--fn);font-size:14px}
+.tbl{flex:1;min-height:0;overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{position:sticky;top:0;background:var(--paper);text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);padding:6px 5px;border-bottom:2px solid var(--rule);z-index:1}
+td{padding:4px 5px;border-bottom:1px solid var(--rule);vertical-align:top}
+td.n{font-family:var(--fn);text-align:right;white-space:nowrap}
+tr.sec td{background:var(--bg);font-weight:700;font-size:11.5px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
+tr.row{cursor:pointer}
+tr.row:hover td{background:#4f84b512}
+tr.cur td{background:#e8590c22}
+tr.isok td{opacity:.6}
+tr.isdu td{background:#b07d0020}
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.obs{display:block;font-size:11.5px;color:var(--muted)}
+.flag{display:inline-block;font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:4px;color:#fff;vertical-align:1px}
+.flag.r{background:var(--bad)}.flag.a{background:var(--warn)}
+td.act{white-space:nowrap;text-align:right}
+td.act button{padding:1px 6px;font-size:11.5px;margin-left:1px;color:var(--muted)}
+td.act .ok.on{background:var(--ok);border-color:var(--ok);color:#fff}
+td.act .du.on{background:var(--warn);border-color:var(--warn);color:#fff}
+.foot{border-top:1px solid var(--rule);padding:6px 10px;font-size:12.5px;display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
+.foot b{font-family:var(--fn)}
+.foot input{width:56px}
+.part td.n{font-size:12.5px}
+.part .desc{font-size:11.5px;color:var(--muted);display:block;max-height:3.1em;overflow:hidden}
+.part tr.st td{font-weight:700;background:#bdd7ee55}
+.warnbox{margin:8px;padding:8px 10px;border-radius:6px;background:#fff3bf;font-size:12.5px}
+svg .seg{fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-width:7;cursor:pointer}
+svg .seg.ram{stroke-dasharray:12 7;stroke-width:6}
+svg .seg.gal{stroke-width:12}
+svg .seg.cur{stroke:var(--hl)!important;stroke-width:12}
+svg .halo{fill:none;stroke:var(--hl);stroke-width:26;opacity:.25;stroke-linecap:round}
+svg .reg{stroke-width:3.5;cursor:pointer}
+svg .reg.cur{stroke:var(--hl)!important;stroke-width:6}
+svg .lab{font-family:var(--fn);font-weight:600;paint-order:stroke;stroke:#fff;stroke-width:5px;pointer-events:none}
+svg .tmp{fill:none;stroke:var(--new);stroke-width:6;stroke-dasharray:4 6}
+svg .tmpp{fill:var(--new)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:20;padding:16px}
+.modal>div{background:var(--paper);border-radius:10px;padding:16px;width:min(460px,100%);display:grid;gap:10px}
+.modal h2{margin:0;font-size:17px}
+.msg{font-size:12.5px;color:var(--bad)}
+@media (max-width:900px){main{grid-template-columns:1fr}.plano{min-height:60vh}.wrap{height:auto}}
+</style>
+</head>
+<body>
+<div class="top">
+  <div><h1>Croquis · Red de saneamiento</h1><div class="sub" id="obraTit">Mediciones sobre plano, verificación y partidas</div></div>
+  <nav><a href="/">Presupuestos</a><a href="/analizar">Análisis IA</a><a href="/croquis">Croquis</a><a href="/croquis/red" class="on">Red de saneamiento</a></nav>
+</div>
+<div class="wrap">
+  <div class="bar">
+    <div class="grp">
+      <select id="selObra" aria-label="Obra"><option value="">— Elegir obra —</option></select>
+      <button id="bNueva">+ Nueva obra</button>
+      <button id="bGuardar" class="pri" disabled>Guardar</button>
+      <span class="save" id="saveSt"></span>
+    </div>
+    <div class="grp">
+      <button id="bPrev" title="Anterior (←)">◀</button>
+      <button id="bPlay" title="Reproducir / pausar (espacio)">▶ Reproducir</button>
+      <button id="bNext" title="Siguiente (→)">▶</button>
+      <button id="bAll">Todo</button>
+      <span id="prog" style="font-family:var(--fn);font-size:12px;color:var(--muted)">0 / 0</span>
+    </div>
+    <div class="grp">
+      <label class="chk" for="op">Plano <input type="range" id="op" min="0" max="100" value="60"></label>
+      <label class="chk"><input type="checkbox" id="labs" checked> Rótulos</label>
+      <label class="chk"><input type="checkbox" id="zoom" checked> Zoom auto</label>
+      <button id="bFit" title="Ver plano completo">⤢</button>
+    </div>
+    <div class="grp">
+      <button id="bTramo">✏ Tramo</button><button id="bArq">⊠ Arqueta</button><button id="bPozo">○ Pozo</button>
+      <button id="bCal" title="Calibrar escala con una distancia conocida">📏 Escala</button>
+      <button id="bUndo" title="Deshacer (Ctrl+Z)" disabled>↶</button>
+    </div>
+  </div>
+  <main>
+    <section class="plano" id="plano" aria-label="Plano">
+      <svg id="svg" viewBox="0 0 2000 1415" preserveAspectRatio="xMidYMid meet">
+        <rect id="fondo" x="0" y="0" width="2000" height="1415" fill="#fff"/>
+        <image id="scan" x="0" y="0" width="2000" height="1415" opacity=".6"/>
+        <g id="gDone"></g><g id="gCur"></g><g id="gTmp"></g>
+      </svg>
+      <div class="empty" id="empty">Elige una obra o pulsa <b>&nbsp;+ Nueva obra&nbsp;</b> y sube el plano (PDF o imagen).<br>Después dibuja los tramos, arquetas y pozos sobre él.</div>
+      <div class="now" id="now" hidden></div>
+      <div class="hint" id="hint" hidden></div>
+      <div class="dlg" id="dlg" hidden></div>
+      <div class="cap" id="cap"></div>
+    </section>
+    <section class="libro" aria-label="Mediciones">
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tabM" aria-selected="true">Mediciones</button>
+        <button role="tab" id="tabP" aria-selected="false">Partidas</button>
+      </div>
+      <div id="paneM" style="display:flex;flex-direction:column;min-height:0;flex:1">
+        <div class="tot" id="tot"></div>
+        <div class="tbl"><table><thead><tr><th>Elemento</th><th>DN / medida</th><th style="text-align:right">Exacta</th><th style="text-align:right">Alza</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
+        <div class="foot" id="foot"></div>
+      </div>
+      <div id="paneP" hidden style="display:flex;flex-direction:column;min-height:0;flex:1">
+        <div class="tbl part" id="partBox"></div>
+        <div class="foot">
+          <span id="partTot"></span>
+          <span class="row"><button id="bExcel">Excel</button><button id="bPng">Imagen del plano</button><button id="bPres" class="pri">Pasar al presupuesto</button></span>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="mNueva" hidden><div>
+  <h2>Nueva obra</h2>
+  <div class="f"><label for="nNom">Nombre</label><input id="nNom" placeholder="C.P. Gavilanes N.º 1 · Sótano -1"></div>
+  <div class="f"><label for="nRef">Referencia</label><input id="nRef" placeholder="2141/26"></div>
+  <div class="f"><label for="nPlano">Plano</label><input id="nPlano" type="file" accept=".pdf,image/*"></div>
+  <label class="chk"><input type="checkbox" id="nGirar"> Girar si el plano está en vertical</label>
+  <div class="msg" id="nMsg"></div>
+  <div class="row"><button id="nCan">Cancelar</button><button id="nOk" class="pri">Crear</button></div>
+</div></div>
+<div class="modal" id="mImg" hidden><div style="width:min(1000px,100%)">
+  <h2>Imagen del plano</h2><img id="imgOut" alt="Plano con la red" style="max-width:100%;border:1px solid var(--rule)">
+  <small>Clic derecho sobre la imagen → «Guardar imagen como…», o pulsa Descargar.</small>
+  <div class="row"><a id="imgA" download="plano_red.png"><button class="pri">Descargar PNG</button></a><button id="imgC">Cerrar</button></div>
+</div></div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id), NS="http://www.w3.org/2000/svg";
+const C={"160":"--dn160","200":"--dn200","250":"--dn250","300":"--dn300","400":"--dn400","500":"--dn500","GAL":"--gal","RAM":"--ram"};
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const col=dn=>css(C[dn]||"--arq");
+const DN_ORD=["160","200","250","300","400","500","GAL","RAM"];
+const DN_TXT=d=>d==="GAL"?"Galería visitable":d==="RAM"?"Ramal (≤DN200)":"DN"+d;
+const MEDIDAS=["100x100","90x90","80x80","70x70","60x60","50x50","40x40","30x30"];
+const fmt=v=>v==null||v===""?"—":Number(v).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2});
+const eur=v=>Number(v).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2})+" €";
+const up=v=>v==null||v===""?0:Math.ceil(+v-1e-9);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const el=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e};
+const plen=p=>{let L=0;for(let i=1;i<p.length;i++)L+=Math.hypot(p[i][0]-p[i-1][0],p[i][1]-p[i-1][1]);return L};
+
+let O=null, steps=[], idx=-1, timer=null, mode=null, tmp=[], dirty=false, UNDO=[];
+const W=()=>O?O.plano.w:2000, H=()=>O?O.plano.h:1415;
+
+// ---------- carga / guardado
+async function listar(sel){
+  const r=await fetch("/api/red/obras");const L=await r.json();
+  $("selObra").innerHTML='<option value="">— Elegir obra —</option>'+L.map(o=>`<option value="${esc(o.id)}">${esc(o.nombre)}${o.ref?" · "+esc(o.ref):""} (${o.ml} ml)</option>`).join("");
+  if(sel)$("selObra").value=sel;
+}
+async function abrir(id){
+  if(dirty&&O&&!await confirmar("Hay cambios sin guardar. ¿Guardar antes de cambiar de obra?",true))return;
+  if(!id){O=null;render();return}
+  const r=await fetch("/api/red/obra/"+encodeURIComponent(id));if(!r.ok){alertMsg("No se pudo abrir la obra.");return}
+  O=await r.json();O.verificacion=O.verificacion||{};O.arquetas_sin_localizar=O.arquetas_sin_localizar||{n:0,medida:"40x40"};
+  UNDO=[];setDirty(false);
+  $("svg").setAttribute("viewBox",`0 0 ${W()} ${H()}`);$("fondo").setAttribute("width",W());$("fondo").setAttribute("height",H());
+  $("scan").setAttribute("href","/api/red/obra/"+encodeURIComponent(O.id)+"/plano");$("scan").setAttribute("width",W());$("scan").setAttribute("height",H());
+  vb=[0,0,W(),H()];applyVB();$("obraTit").textContent=`${O.nombre}${O.ref?" · "+O.ref:""}`;
+  try{localStorage.setItem("red_ultima",O.id)}catch(e){}
+  idx=-1;build();idx=steps.length?0:-1;render();if($("tabP").getAttribute("aria-selected")==="true")cargarPartidas();
+}
+async function guardar(){
+  if(!O)return;$("saveSt").textContent="Guardando…";
+  const r=await fetch("/api/red/obra/"+encodeURIComponent(O.id),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(O)});
+  if(r.ok){setDirty(false);$("saveSt").textContent="Guardado "+new Date().toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit"});listar(O.id)}
+  else{$("saveSt").textContent="Error al guardar";$("saveSt").classList.add("dirty")}
+}
+function setDirty(v){dirty=v;$("bGuardar").disabled=!O||!v;$("saveSt").classList.toggle("dirty",v);if(v)$("saveSt").textContent="Cambios sin guardar"}
+function cambio(){UNDO.push(JSON.stringify(O));if(UNDO.length>80)UNDO.shift();$("bUndo").disabled=false;setDirty(true)}
+function deshacer(){if(!UNDO.length)return;O=JSON.parse(UNDO.pop());$("bUndo").disabled=!UNDO.length;setDirty(true);build();idx=Math.min(idx,steps.length-1);render(true)}
+window.addEventListener("beforeunload",e=>{if(dirty){e.preventDefault();e.returnValue=""}});
+
+// ---------- pasos (orden de revisión)
+function build(){
+  steps=[];if(!O)return;
+  DN_ORD.forEach(dn=>{const ts=O.tramos.filter(t=>String(t.dn)===dn);if(!ts.length)return;
+    const ex=ts.reduce((a,t)=>a+(+t.long||0),0),al=ts.reduce((a,t)=>a+up(t.long),0);
+    steps.push({sec:`${DN_TXT(dn)} · ${ts.length} · ${fmt(ex)} m → ${al} ml`});ts.forEach(t=>steps.push({k:"T",o:t}))});
+  MEDIDAS.forEach(m=>{const as=O.arquetas.filter(a=>a.medida===m);if(!as.length)return;steps.push({sec:`Arquetas ${m} · ${as.length} ud`});as.forEach(a=>steps.push({k:"A",o:a}))});
+  if(O.pozos.length){steps.push({sec:`Pozos · ${O.pozos.length} ud`});O.pozos.forEach(p=>steps.push({k:"P",o:p}))}
+}
+const items=()=>steps.filter(s=>!s.sec);
+const vkey=s=>s.k+":"+s.o.id;
+
+// ---------- dibujo
+function mid(p){const L=plen(p)/2;let a=0;for(let i=1;i<p.length;i++){const d=Math.hypot(p[i][0]-p[i-1][0],p[i][1]-p[i-1][1]);if(a+d>=L&&d>0){const t=(L-a)/d;return[p[i-1][0]+t*(p[i][0]-p[i-1][0]),p[i-1][1]+t*(p[i][1]-p[i-1][1]),Math.atan2(p[i][1]-p[i-1][1],p[i][0]-p[i-1][0])]}a+=d}return[p[0][0],p[0][1],0]}
+function draw(s,cur){
+  const g=cur?$("gCur"):$("gDone"),labs=$("labs").checked,o=s.o;
+  if(s.k==="T"){if(!o.pts||o.pts.length<2)return;const c=col(String(o.dn)),pts=o.pts.map(p=>p.join(",")).join(" ");
+    if(cur)g.appendChild(el("polyline",{points:pts,class:"halo"}));
+    const pl=el("polyline",{points:pts,class:"seg"+(o.dn==="RAM"?" ram":"")+(o.dn==="GAL"?" gal":"")+(cur?" cur":""),stroke:c});
+    pl.addEventListener("click",e=>{if(mode)return;e.stopPropagation();go(items().indexOf(s))});g.appendChild(pl);
+    if(cur||labs){const[mx,my,an]=mid(o.pts);let d=an*180/Math.PI;if(d>90)d-=180;if(d<-90)d+=180;
+      const t=el("text",{x:mx,y:my,class:"lab","font-size":cur?18:12.5,fill:cur?css("--hl"):c,"text-anchor":"middle",transform:`rotate(${d.toFixed(1)} ${mx} ${my}) translate(0 ${cur?-14:-9})`});
+      t.textContent=cur?`${o.id} · ${o.long==null?"?":fmt(o.long)} m · ${DN_TXT(String(o.dn))}`:`${o.id} ${o.long==null?"?":(+o.long).toLocaleString("es-ES")}`;g.appendChild(t)}
+  }else{const r=s.k==="P"?13:11,c=css("--arq");
+    const sh=s.k==="P"?el("circle",{cx:o.x,cy:o.y,r,class:"reg"+(cur?" cur":""),fill:"#fff",stroke:o.tipo==="nuevo"?css("--hl"):c}):el("rect",{x:o.x-r,y:o.y-r,width:2*r,height:2*r,class:"reg"+(cur?" cur":""),fill:"#fff",stroke:c});
+    sh.addEventListener("click",e=>{if(mode)return;e.stopPropagation();go(items().indexOf(s))});g.appendChild(sh);
+    if(s.k==="A")g.appendChild(el("line",{x1:o.x-r,y1:o.y-r,x2:o.x+r,y2:o.y+r,stroke:c,"stroke-width":2,"pointer-events":"none"}));
+    if(cur||labs){const t=el("text",{x:o.x+16,y:o.y+(cur?-16:22),class:"lab","font-size":cur?17:11.5,fill:cur?css("--hl"):c});
+      t.textContent=s.k==="A"?(cur?`${o.id} · ${o.medida}${o.prof?" · "+fmt(o.prof)+" m":""}`:o.medida):(cur?`${o.id} · ${o.tipo==="nuevo"?"nuevo Ø"+(o.diam||100):"pozo"} · ${o.prof?fmt(o.prof)+" m":"prof. s/d"}`:o.id);g.appendChild(t)}}
+}
+function render(keep){
+  $("empty").hidden=!!O;$("gDone").innerHTML=$("gCur").innerHTML="";
+  const it=items();it.forEach((s,i)=>{if(i!==idx)draw(s,false)});const s=it[idx];if(s)draw(s,true);
+  tabla();totales();foot();$("prog").textContent=`${Math.max(0,idx+1)} / ${it.length}`;
+  const now=$("now");if(s){now.hidden=false;now.innerHTML=desc(s)}else now.hidden=true;
+  if(!keep)focus(s);const r=$("tb").querySelector("tr.cur");if(r&&!keep)r.scrollIntoView({block:"nearest"});
+}
+function desc(s){const o=s.o;if(s.k==="T")return`<b>${esc(o.id)}</b> · ${DN_TXT(String(o.dn))} · ${o.long==null?"sin cota":fmt(o.long)+" m → "+up(o.long)+" ml"}`;
+  if(s.k==="A")return`<b>${esc(o.id)}</b> · arqueta ${o.medida}${o.prof?" · prof. "+fmt(o.prof)+" m":""}`;
+  return`<b>${esc(o.id)}</b> · ${o.tipo==="nuevo"?"pozo nuevo Ø"+(o.diam||100):"pozo a reconstruir"} · ${o.prof?fmt(o.prof)+" m":"prof. s/d"}`}
+function tabla(){
+  const tb=$("tb");tb.innerHTML="";const it=items();
+  steps.forEach(s=>{if(s.sec){const tr=document.createElement("tr");tr.className="sec";tr.innerHTML=`<td colspan="5">${esc(s.sec)}</td>`;tb.appendChild(tr);return}
+    const i=it.indexOf(s),o=s.o,v=O.verificacion[vkey(s)],tr=document.createElement("tr");
+    tr.className="row"+(i===idx?" cur":"")+(v==="ok"?" isok":"")+(v==="duda"?" isdu":"");
+    const c=s.k==="T"?col(String(o.dn)):css("--arq");
+    const fl=o.estado==="revisar"?'<span class="flag r">REVISAR</span>':o.estado==="ajuste"?'<span class="flag a">AJUSTE</span>':"";
+    const sinPlano=s.k==="T"&&(!o.pts||o.pts.length<2)?'<span class="obs">Sin dibujar en el plano</span>':"";
+    const med=s.k==="T"?DN_TXT(String(o.dn)):s.k==="A"?o.medida+(o.prof?` · ${fmt(o.prof)} m`:""):(o.tipo==="nuevo"?"Nuevo Ø"+(o.diam||100):"Reconstruir")+(o.prof?` · ${fmt(o.prof)} m`:"");
+    tr.innerHTML=`<td><span class="sw" style="background:${c}"></span><b>${esc(o.id)}</b>${fl}${o.nota?`<span class="obs">${esc(o.nota)}</span>`:""}${sinPlano}</td><td>${esc(med)}</td><td class="n">${s.k==="T"?fmt(o.long):"1"}</td><td class="n"><b>${s.k==="T"?(o.long==null?"—":up(o.long)):"1 ud"}</b></td>
+      <td class="act"><button class="ok ${v==="ok"?"on":""}" title="Correcto">✓</button><button class="du ${v==="duda"?"on":""}" title="Duda">?</button><button class="ed" title="Editar">✎</button><button class="rm" title="Borrar">✕</button></td>`;
+    tr.addEventListener("click",e=>{if(e.target.tagName!=="BUTTON")go(i)});
+    tr.querySelector(".ok").onclick=()=>marcar(s,"ok",i);tr.querySelector(".du").onclick=()=>marcar(s,"duda",i);
+    tr.querySelector(".ed").onclick=()=>{go(i);editar(s)};
+    tr.querySelector(".rm").onclick=async()=>{if(await confirmar(`¿Borrar ${o.id}?`))borrar(s)};
+    tb.appendChild(tr)});
+}
+function marcar(s,v,i){O.verificacion[vkey(s)]=O.verificacion[vkey(s)]===v?undefined:v;setDirty(true);if(v==="ok"&&O.verificacion[vkey(s)]&&!timer){go(i+1)}else render(true)}
+function totales(){
+  if(!O){$("tot").innerHTML="";return}
+  const g=(f)=>O.tramos.filter(f).reduce((a,t)=>a+up(t.long),0);
+  const cells=[["DN160+200+Ram.","--dn200",g(t=>["160","200","RAM"].includes(String(t.dn))),"ml"],["DN250","--dn250",g(t=>t.dn=="250"),"ml"],["DN300","--dn300",g(t=>t.dn=="300"),"ml"],["DN400","--dn400",g(t=>t.dn=="400"),"ml"],
+    ["DN500","--dn500",g(t=>t.dn=="500"),"ml"],["Galería","--gal",g(t=>t.dn==="GAL"),"ml"],["Arquetas","--arq",O.arquetas.length+(+O.arquetas_sin_localizar.n||0),"ud"],["Pozos","--arq",O.pozos.length,"ud"]];
+  $("tot").innerHTML=cells.map(([k,c,v,u])=>`<div><div class="k"><i style="background:${css(c)}"></i>${k}</div><div class="v">${v} <small>${u}</small></div></div>`).join("");
+}
+function foot(){
+  if(!O){$("foot").innerHTML="";return}
+  const it=items(),ok=it.filter(s=>O.verificacion[vkey(s)]==="ok").length,du=it.filter(s=>O.verificacion[vkey(s)]==="duda").length;
+  const tot=O.tramos.reduce((a,t)=>a+up(t.long),0),ex=O.tramos.reduce((a,t)=>a+(+t.long||0),0);
+  $("foot").innerHTML=`<span>Total tubería <b>${fmt(ex)} m → ${tot} ml</b></span><span>✓ ${ok} · ? ${du} · de ${it.length}</span>
+   <span>Arquetas sin localizar <input type="number" id="slN" min="0" value="${+O.arquetas_sin_localizar.n||0}" aria-label="Arquetas sin localizar"> <select id="slM" aria-label="Medida">${MEDIDAS.map(m=>`<option ${m===O.arquetas_sin_localizar.medida?"selected":""}>${m}</option>`).join("")}</select></span>
+   <span>Escala ${O.escala_px_m?"calibrada":"estimada"}: <b>${(escala()||0).toFixed(1)}</b> px/m</span>`;
+  $("slN").onchange=e=>{cambio();O.arquetas_sin_localizar.n=Math.max(0,parseInt(e.target.value)||0);totales();foot()};
+  $("slM").onchange=e=>{cambio();O.arquetas_sin_localizar.medida=e.target.value};
+}
+function escala(){if(!O)return 0;if(O.escala_px_m)return O.escala_px_m;const r=O.tramos.filter(t=>t.pts&&t.pts.length>1&&+t.long>2&&t.dn!=="RAM").map(t=>plen(t.pts)/t.long).sort((a,b)=>a-b);return r.length?r[Math.floor(r.length/2)]:0}
+
+// ---------- vista (zoom / desplazamiento)
+const svg=$("svg");let vb=[0,0,2000,1415],anim=null;
+function applyVB(){svg.setAttribute("viewBox",vb.join(" "))}
+function setVB(t){cancelAnimationFrame(anim);const f=[...vb],t0=performance.now(),D=matchMedia("(prefers-reduced-motion:reduce)").matches?0:400;
+  const st=n=>{const k=D?Math.min(1,(n-t0)/D):1,e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;vb=f.map((v,i)=>v+(t[i]-v)*e);applyVB();if(k<1)anim=requestAnimationFrame(st)};anim=requestAnimationFrame(st)}
+function bbox(s){const o=s.o;if(s.k==="T"){if(!o.pts||!o.pts.length)return null;const xs=o.pts.map(p=>p[0]),ys=o.pts.map(p=>p[1]);return[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)]}return[o.x,o.y,o.x,o.y]}
+function focus(s){const b=s&&bbox(s);if(!$("zoom").checked||!b)return;const cx=(b[0]+b[2])/2,cy=(b[1]+b[3])/2,w=Math.min(W(),Math.max(W()*.35,(b[2]-b[0])*2.6)),h=w*H()/W();
+  setVB([Math.max(0,Math.min(W()-w,cx-w/2)),Math.max(0,Math.min(H()-h,cy-h/2)),w,h])}
+const svgPt=e=>{const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;const q=p.matrixTransform(svg.getScreenCTM().inverse());return[Math.round(q.x),Math.round(q.y)]};
+svg.addEventListener("wheel",e=>{if(!O)return;e.preventDefault();cancelAnimationFrame(anim);const[px,py]=svgPt(e),f=e.deltaY>0?1.15:1/1.15;let w=Math.min(W(),Math.max(W()*.08,vb[2]*f)),h=w*H()/W();
+  vb=[Math.max(0,Math.min(W()-w,px-(px-vb[0])*w/vb[2])),Math.max(0,Math.min(H()-h,py-(py-vb[1])*h/vb[3])),w,h];applyVB()},{passive:false});
+let drag=null,moved=false;
+svg.addEventListener("pointerdown",e=>{drag={x:e.clientX,y:e.clientY,vb:[...vb]};moved=false});
+window.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>4)moved=true;if(!moved)return;
+  const k=vb[2]/svg.getBoundingClientRect().width;vb=[Math.max(0,Math.min(W()-vb[2],drag.vb[0]-dx*k)),Math.max(0,Math.min(H()-vb[3],drag.vb[1]-dy*k)),vb[2],vb[3]];applyVB()});
+window.addEventListener("pointerup",()=>{drag=null});
+
+// ---------- navegación
+function go(i){const n=items().length;idx=Math.max(-1,Math.min(n-1,i));render()}
+function play(){if(timer){stop();return}if(idx>=items().length-1)idx=-1;$("bPlay").textContent="❚❚ Pausa";tick()}
+function tick(){go(idx+1);if(idx<items().length-1)timer=setTimeout(tick,1300);else stop()}
+function stop(){clearTimeout(timer);timer=null;$("bPlay").textContent="▶ Reproducir"}
+
+// ---------- herramientas de dibujo
+const hint=$("hint"),dlg=$("dlg");
+function setMode(m){mode=m;tmp=[];$("gTmp").innerHTML="";dlg.hidden=true;stop();
+  [["bTramo","tramo"],["bArq","arq"],["bPozo","pozo"],["bCal","cal"]].forEach(([b,k])=>$(b).classList.toggle("on",m===k));
+  $("plano").classList.toggle("drawing",!!m);if(!m){hint.hidden=true;return}
+  hint.hidden=false;hint.innerHTML=m==="tramo"?'Pulsa los puntos del tramo. Doble clic o «Terminar» para acabar.<button id="hEnd">Terminar</button><button id="hUndo">↶</button><button id="hEsc">Cancelar</button>'
+   :m==="cal"?'Pulsa los dos extremos de una distancia conocida.<button id="hEsc">Cancelar</button>':`Pulsa donde está ${m==="arq"?"la arqueta":"el pozo"}.<button id="hEsc">Cancelar</button>`;
+  $("hEsc").onclick=()=>setMode(null);if($("hEnd"))$("hEnd").onclick=finTramo;if($("hUndo"))$("hUndo").onclick=()=>{tmp.pop();drawTmp()}}
+function drawTmp(){const g=$("gTmp");g.innerHTML="";if(!tmp.length)return;
+  if(tmp.length>1)g.appendChild(el("polyline",{points:tmp.map(p=>p.join(",")).join(" "),class:"tmp"}));
+  tmp.forEach(p=>g.appendChild(el("circle",{cx:p[0],cy:p[1],r:6,class:"tmpp"})));
+  if(tmp.length>1&&escala()){const m=mid(tmp),t=el("text",{x:m[0],y:m[1]-14,class:"lab","font-size":16,fill:css("--new"),"text-anchor":"middle"});t.textContent=(mode==="cal"?"":"≈ ")+(plen(tmp)/escala()).toFixed(2)+" m";g.appendChild(t)}}
+svg.addEventListener("click",e=>{if(!O||!mode||moved)return;const p=svgPt(e);
+  if(mode==="arq"||mode==="pozo"){tmp=[p];drawTmp();dlgElemento(mode==="arq"?"A":"P",null,p);return}
+  if(mode==="cal"){tmp.push(p);drawTmp();if(tmp.length===2)dlgCal();return}
+  if(dlg.hidden){const l=tmp[tmp.length-1];if(!l||Math.hypot(l[0]-p[0],l[1]-p[1])>4)tmp.push(p);drawTmp()}});
+svg.addEventListener("dblclick",e=>{if(mode==="tramo"){e.preventDefault();finTramo()}});
+function nextId(pref,list){let n=1;const ids=new Set(list.map(x=>x.id));while(ids.has(pref+n))n++;return pref+n}
+function finTramo(){if(tmp.length<2)return;dlgElemento("T",null,null,tmp.slice())}
+function dlgElemento(k,s,p,pts){
+  const o=s?s.o:null,L=pts&&escala()?plen(pts)/escala():null;
+  const head=o?`Editar ${esc(o.id)}`:k==="T"?"Nuevo tramo":k==="A"?"Nueva arqueta":"Nuevo pozo";
+  let body=`<div class="f"><label for="eId">Código</label><input id="eId" value="${esc(o?o.id:nextId(k==="T"?"V":k==="A"?"A":"P",k==="T"?O.tramos:k==="A"?O.arquetas:O.pozos))}"></div>`;
+  if(k==="T")body+=`<div class="f"><label for="eDn">Tipo</label><select id="eDn">${DN_ORD.map(d=>`<option value="${d}" ${(o?String(o.dn):"300")===d?"selected":""}>${DN_TXT(d)}</option>`).join("")}</select></div>
+    <div class="f"><label for="eL">Longitud (m)</label><input id="eL" type="number" step="0.01" min="0" value="${o?(o.long??""):(L?L.toFixed(2):"")}"></div>
+    ${L?`<small>Medida en plano (escala ${O.escala_px_m?"calibrada":"estimada"}): ${L.toFixed(2)} m. Pon la del parte o el vídeo si la tienes.</small>`:""}
+    <div class="f"><label for="eSt">Estado</label><select id="eSt"><option value="">Correcto</option><option value="ajuste" ${o&&o.estado==="ajuste"?"selected":""}>Ajustado</option><option value="revisar" ${o&&o.estado==="revisar"?"selected":""}>Revisar</option></select></div>`;
+  if(k==="A")body+=`<div class="f"><label for="eM">Medida</label><select id="eM">${MEDIDAS.map(m=>`<option ${(o?o.medida:"40x40")===m?"selected":""}>${m}</option>`).join("")}</select></div>
+    <div class="f"><label for="eP">Prof. (m)</label><input id="eP" type="number" step="0.05" min="0" value="${o&&o.prof!=null?o.prof:""}"></div>`;
+  if(k==="P")body+=`<div class="f"><label for="eTp">Actuación</label><select id="eTp"><option value="reconstruir">Reconstruir</option><option value="nuevo" ${o&&o.tipo==="nuevo"?"selected":""}>Pozo nuevo</option></select></div>
+    <div class="f"><label for="eDi">Diámetro (cm)</label><select id="eDi"><option ${o&&o.diam==80?"selected":""}>80</option><option ${!o||o.diam!=80?"selected":""}>100</option></select></div>
+    <div class="f"><label for="eP">Prof. (m)</label><input id="eP" type="number" step="0.05" min="0" value="${o&&o.prof!=null?o.prof:""}"></div>`;
+  body+=`<div class="f"><label for="eN">Nota</label><input id="eN" value="${esc(o?o.nota||"":"")}" placeholder="Origen de la medida, observaciones…"></div>`;
+  dlg.hidden=false;dlg.innerHTML=`<h3>${head}</h3>${body}<div class="msg" id="eMsg"></div><div class="row"><button id="eCan">Cancelar</button><button id="eOk" class="pri">${o?"Guardar cambios":"Añadir"}</button></div>`;
+  $("eId").focus();$("eCan").onclick=()=>{dlg.hidden=true;if(mode)setMode(mode)};
+  $("eOk").onclick=()=>{
+    const id=$("eId").value.trim(),list=k==="T"?O.tramos:k==="A"?O.arquetas:O.pozos;
+    if(!id){$("eMsg").textContent="Pon un código.";return}
+    if(list.some(x=>x.id===id&&x!==o)){$("eMsg").textContent="Ya existe un elemento con ese código.";return}
+    const num=v=>{v=String(v).replace(",",".").trim();return v===""?null:Math.round(parseFloat(v)*100)/100};
+    cambio();let n=o||{};
+    if(o&&o.id!==id){const old=vkey({k,o});delete O.verificacion[old]}
+    n.id=id;n.nota=$("eN").value.trim();
+    if(k==="T"){n.dn=$("eDn").value;n.long=num($("eL").value);n.estado=$("eSt").value;if(pts)n.pts=pts;if(!o){n.pts=n.pts||null;O.tramos.push(n)}}
+    if(k==="A"){n.medida=$("eM").value;n.prof=num($("eP").value);if(!o){n.x=p[0];n.y=p[1];O.arquetas.push(n)}}
+    if(k==="P"){n.tipo=$("eTp").value;n.diam=+$("eDi").value;n.prof=num($("eP").value);if(!o){n.x=p[0];n.y=p[1];O.pozos.push(n)}}
+    dlg.hidden=true;const keep=mode;build();const i=items().findIndex(s=>s.o===n);idx=i;render(true);if(keep&&!o)setMode(keep);else setMode(null)};
+}
+function editar(s){setMode(null);dlgElemento(s.k,s)}
+function borrar(s){cambio();const list=s.k==="T"?O.tramos:s.k==="A"?O.arquetas:O.pozos;list.splice(list.indexOf(s.o),1);delete O.verificacion[vkey(s)];build();idx=Math.min(idx,items().length-1);render(true)}
+function dlgCal(){const px=plen(tmp);
+  dlg.hidden=false;dlg.innerHTML=`<h3>Calibrar escala</h3><div class="f"><label for="cL">Distancia real (m)</label><input id="cL" type="number" step="0.01" min="0.1"></div>
+  <small>Distancia en el plano: ${px.toFixed(0)} px.</small><div class="row"><button id="cRes">Usar estimada</button><button id="cCan">Cancelar</button><button id="cOk" class="pri">Aplicar</button></div>`;
+  $("cL").focus();$("cCan").onclick=()=>setMode(null);$("cRes").onclick=()=>{cambio();O.escala_px_m=null;setMode(null);foot()};
+  $("cOk").onclick=()=>{const m=parseFloat(String($("cL").value).replace(",","."));if(!(m>0))return;cambio();O.escala_px_m=px/m;setMode(null);foot()}}
+
+// ---------- partidas
+async function cargarPartidas(){
+  const box=$("partBox");if(!O){box.innerHTML='<div class="warnbox">Elige una obra.</div>';return}
+  if(dirty)await guardar();
+  box.innerHTML='<div style="padding:12px;color:var(--muted)">Calculando…</div>';
+  const P=await (await fetch(`/api/red/obra/${encodeURIComponent(O.id)}/partidas`)).json();
+  let h=P.faltan.length?`<div class="warnbox">Estos códigos no están en TARIFAS.xlsx y van a 0 €: <b>${P.faltan.map(esc).join(", ")}</b></div>`:"";
+  h+='<table><thead><tr><th>Nº</th><th>Código / descripción</th><th>Ud</th><th style="text-align:right">Uds</th><th style="text-align:right">Precio</th><th style="text-align:right">Importe</th></tr></thead><tbody>';
+  P.capitulos.forEach(c=>{h+=`<tr class="sec"><td colspan="6">${c.num}. ${esc(c.titulo)}</td></tr>`;
+    c.lineas.forEach(l=>h+=`<tr><td>${l.num}</td><td><b>${esc(l.codigo)}</b><span class="desc">${esc(l.descripcion)}</span></td><td>${l.unidad}</td><td class="n">${l.cantidad}</td><td class="n">${fmt(l.precio)}</td><td class="n">${fmt(l.importe)}</td></tr>`);
+    h+=`<tr class="st"><td></td><td colspan="4">Subtotal capítulo ${c.num}</td><td class="n">${fmt(c.subtotal)}</td></tr>`});
+  h+=`<tr class="st"><td></td><td colspan="4">TOTAL SIN IVA</td><td class="n">${eur(P.total_sin_iva)}</td></tr></tbody></table>`;
+  box.innerHTML=h;$("partTot").innerHTML=`Total sin IVA: <b>${eur(P.total_sin_iva)}</b> · precios de tarifa`;window._partidas=P;
+}
+function tab(p){$("tabM").setAttribute("aria-selected",!p);$("tabP").setAttribute("aria-selected",p);$("paneM").hidden=p;$("paneP").hidden=!p;if(p)cargarPartidas()}
+$("tabM").onclick=()=>tab(false);$("tabP").onclick=()=>tab(true);
+$("bExcel").onclick=async()=>{if(!O)return;if(dirty)await guardar();location.href=`/api/red/obra/${encodeURIComponent(O.id)}/excel`};
+$("bPres").onclick=async()=>{if(!O)return;if(!window._partidas)await cargarPartidas();
+  try{localStorage.setItem("red_partidas",JSON.stringify({obra:O.id,nombre:O.nombre,ref:O.ref,partidas:window._partidas}))}catch(e){}
+  window.open("/","_blank");alertMsg("Partidas preparadas. En el presupuesto de obra, en el paso de partidas, pulsa «Importar desde croquis».")};
+
+// ---------- imagen del plano (PNG con la red en limpio)
+$("bPng").onclick=async()=>{if(!O)return;
+  const K=1.5,cw=Math.round(W()*K),ch=Math.round(H()*K)+90,cv=document.createElement("canvas");cv.width=cw;cv.height=ch;const x=cv.getContext("2d");
+  x.fillStyle="#fff";x.fillRect(0,0,cw,ch);
+  const img=new Image();img.src=$("scan").getAttribute("href");await img.decode();x.globalAlpha=+$("op").value/100;x.drawImage(img,0,0,W()*K,H()*K);x.globalAlpha=1;
+  const keep=idx;idx=-1;render(true);
+  const s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W()} ${H()}" width="${W()*K}" height="${H()*K}"><style>.seg{fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-width:7}.ram{stroke-dasharray:12 7;stroke-width:6}.gal{stroke-width:12}.reg{stroke-width:3.5}.lab{font-family:Consolas,monospace;font-weight:600;paint-order:stroke;stroke:#fff;stroke-width:5px}</style>${$("gDone").innerHTML}</svg>`;
+  idx=keep;render(true);
+  const v=new Image();v.src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(s);await v.decode();x.drawImage(v,0,0);
+  x.fillStyle="#1f4e79";x.font="bold 26px Segoe UI, Arial";x.fillText(`${O.nombre}${O.ref?" · "+O.ref:""} · Red de saneamiento`,24,H()*K+38);
+  x.fillStyle="#5d6b79";x.font="17px Segoe UI, Arial";
+  const tot=O.tramos.reduce((a,t)=>a+up(t.long),0);x.fillText(`Acometidas Europa S.L. · ${tot} ml de tubería · ${O.arquetas.length+(+O.arquetas_sin_localizar.n||0)} arquetas · ${O.pozos.length} pozos · ${new Date().toLocaleDateString("es-ES")} · esquema no apto para replanteo`,24,H()*K+68);
+  const url=cv.toDataURL("image/png");$("imgOut").src=url;$("imgA").href=url;$("imgA").download=`Plano_red_${O.id}.png`;$("mImg").hidden=false};
+$("imgC").onclick=()=>$("mImg").hidden=true;
+
+// ---------- nueva obra
+$("bNueva").onclick=()=>{$("nMsg").textContent="";$("mNueva").hidden=false;$("nNom").focus()};
+$("nCan").onclick=()=>$("mNueva").hidden=true;
+$("nOk").onclick=async()=>{const fd=new FormData();fd.append("nombre",$("nNom").value.trim());fd.append("ref",$("nRef").value.trim());
+  if($("nPlano").files[0])fd.append("plano",$("nPlano").files[0]);if($("nGirar").checked)fd.append("girar","1");
+  $("nOk").disabled=true;$("nMsg").textContent="";try{const r=await fetch("/api/red/nueva",{method:"POST",body:fd});const j=await r.json();
+    if(!r.ok){$("nMsg").textContent=j.error||"No se pudo crear la obra.";return}
+    $("mNueva").hidden=true;dirty=false;await listar(j.id);await abrir(j.id);setMode("tramo")}finally{$("nOk").disabled=false}};
+
+// ---------- utilidades de diálogo (sin alert/confirm nativos)
+function confirmar(txt,saveOpt){return new Promise(res=>{dlg.hidden=false;dlg.innerHTML=`<h3>${esc(txt)}</h3><div class="row"><button id="qNo">${saveOpt?"No guardar":"Cancelar"}</button><button id="qSi" class="pri">${saveOpt?"Guardar":"Sí, borrar"}</button></div>`;
+  $("qNo").onclick=()=>{dlg.hidden=true;res(saveOpt?true:false)};$("qSi").onclick=async()=>{dlg.hidden=true;if(saveOpt)await guardar();res(true)}})}
+function alertMsg(t){dlg.hidden=false;dlg.innerHTML=`<h3>${esc(t)}</h3><div class="row"><button id="qOk" class="pri">Entendido</button></div>`;$("qOk").onclick=()=>dlg.hidden=true}
+
+// ---------- controles
+$("selObra").onchange=e=>abrir(e.target.value);$("bGuardar").onclick=guardar;
+$("bPlay").onclick=play;$("bNext").onclick=()=>{stop();go(idx+1)};$("bPrev").onclick=()=>{stop();go(idx-1)};
+$("bAll").onclick=()=>{stop();idx=-1;render(true);setVB([0,0,W(),H()])};$("bFit").onclick=()=>setVB([0,0,W(),H()]);
+$("op").oninput=e=>$("scan").setAttribute("opacity",e.target.value/100);$("labs").onchange=()=>render(true);
+$("bTramo").onclick=()=>O&&setMode(mode==="tramo"?null:"tramo");$("bArq").onclick=()=>O&&setMode(mode==="arq"?null:"arq");
+$("bPozo").onclick=()=>O&&setMode(mode==="pozo"?null:"pozo");$("bCal").onclick=()=>O&&setMode(mode==="cal"?null:"cal");$("bUndo").onclick=deshacer;
+document.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="s"){e.preventDefault();guardar();return}
+  if(["INPUT","SELECT","TEXTAREA"].includes(e.target.tagName))return;
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"){e.preventDefault();deshacer();return}
+  if(e.key==="Escape"&&mode){setMode(null);return}if(mode)return;
+  if(e.key==="ArrowRight"){stop();go(idx+1)}else if(e.key==="ArrowLeft"){stop();go(idx-1)}else if(e.key===" "){e.preventDefault();play()}});
+$("cap").innerHTML=DN_ORD.map(k=>`<span><i style="background:${col(k)}"></i>${k==="GAL"?"Galería":k==="RAM"?"Ramal":"DN"+k}</span>`).join("")+"<span>⊠ arqueta · ○ pozo (naranja = nuevo)</span>";
+(async()=>{await listar();const q=new URLSearchParams(location.search).get("obra");let last=null;try{last=localStorage.getItem("red_ultima")}catch(e){}
+  const id=q||last;if(id&&[...$("selObra").options].some(o=>o.value===id)){$("selObra").value=id;abrir(id)}else render()})();
+</script>
+</body>
+</html>
