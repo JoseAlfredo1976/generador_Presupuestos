@@ -11,9 +11,9 @@ API:       GET  /api/red/obras                      lista de obras guardadas
            GET  /api/red/obra/<id>/partidas         partidas valoradas con TARIFAS.xlsx
            GET  /api/red/obra/<id>/excel            Excel de mediciones y partidas
 
-Las obras se guardan en <BASE_DIR>/obras_red/<id>/ (obra.json + plano.jpg). Esa carpeta
-está en .gitignore porque contiene planos de clientes. En Railway el disco es efímero:
-para producción conviene un volumen persistente o mover las obras al ERP.
+Las obras se guardan en <BASE_DIR>/config/obras_red/<id>/ (obra.json + plano.jpg). Esa
+carpeta está en .gitignore porque contiene planos de clientes. En Railway config/ es el
+volumen persistente, así que las obras sobreviven a los despliegues.
 
 Se registra desde app.py con:
     from utils.mediciones_bp import crear_blueprint
@@ -44,8 +44,8 @@ def _slug(s: str) -> str:
 
 def crear_blueprint(base_dir: Path, get_tarifas) -> Blueprint:
     bp = Blueprint("mediciones_red", __name__)
-    raiz = Path(base_dir) / "obras_red"
-    raiz.mkdir(exist_ok=True)
+    raiz = Path(base_dir) / "config" / "obras_red"
+    raiz.mkdir(parents=True, exist_ok=True)
     pagina = Path(base_dir) / "web_templates" / "red_saneamiento.html"
 
     def carpeta(oid: str) -> Path:

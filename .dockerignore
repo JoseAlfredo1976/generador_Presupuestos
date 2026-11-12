@@ -7,6 +7,8 @@ salidas/
 uploads_ia/
 config/google_credentials.json
 config/app_config.json
+config/obras_red/
+obras_red/
 *.log
 .env
 .env.*

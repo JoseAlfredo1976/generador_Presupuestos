@@ -11,6 +11,7 @@ CLAUDE.md
 config/enlaces.db
 config/informes_compartidos/
 config/videos_ia/
+config/obras_red/
 debug_*.txt
 
 # Croquis · Red de saneamiento: obras de clientes (planos y mediciones)

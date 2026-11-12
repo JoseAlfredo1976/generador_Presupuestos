@@ -48,7 +48,7 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.5fr) minm
 .dlg h3{margin:0;font-size:15px}
 .f{display:grid;grid-template-columns:100px 1fr;gap:6px;align-items:center;font-size:13px}
 .f input,.f select{width:100%}
-.row{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+div.row,span.row{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
 small{color:var(--muted);font-size:11.5px}
 [hidden]{display:none!important}
 .cap{position:absolute;left:8px;bottom:6px;right:8px;display:flex;flex-wrap:wrap;gap:2px 10px;font-size:11px;color:var(--muted);pointer-events:none}
@@ -88,14 +88,9 @@ td.act .du.on{background:var(--warn);border-color:var(--warn);color:#fff}
 .part .desc{font-size:11.5px;color:var(--muted);display:block;max-height:3.1em;overflow:hidden}
 .part tr.st td{font-weight:700;background:#bdd7ee55}
 .warnbox{margin:8px;padding:8px 10px;border-radius:6px;background:#fff3bf;font-size:12.5px}
-svg .seg{fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-width:7;cursor:pointer}
-svg .seg.ram{stroke-dasharray:12 7;stroke-width:6}
-svg .seg.gal{stroke-width:12}
-svg .seg.cur{stroke:var(--hl)!important;stroke-width:12}
-svg .halo{fill:none;stroke:var(--hl);stroke-width:26;opacity:.25;stroke-linecap:round}
-svg .reg{stroke-width:3.5;cursor:pointer}
-svg .reg.cur{stroke:var(--hl)!important;stroke-width:6}
-svg .lab{font-family:var(--fn);font-weight:600;paint-order:stroke;stroke:#fff;stroke-width:5px;pointer-events:none}
+/* El trazado (grosores, simbolos, rotulos) va en atributos dentro de draw() para que la lamina exportada sea autocontenida */
+svg .seg,svg .reg,svg .hit{cursor:pointer}
+svg .lab{pointer-events:none}
 svg .tmp{fill:none;stroke:var(--new);stroke-width:6;stroke-dasharray:4 6}
 svg .tmpp{fill:var(--new)}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:20;padding:16px}
@@ -114,7 +109,7 @@ svg .tmpp{fill:var(--new)}
   <div class="bar">
     <div class="grp">
       <select id="selObra" aria-label="Obra"><option value="">— Elegir obra —</option></select>
-      <button id="bNueva">+ Nueva obra</button>
+      <button id="bNueva">+ Nueva obra (subir plano)</button>
       <button id="bGuardar" class="pri" disabled>Guardar</button>
       <span class="save" id="saveSt"></span>
     </div>
@@ -144,7 +139,7 @@ svg .tmpp{fill:var(--new)}
         <image id="scan" x="0" y="0" width="2000" height="1415" opacity=".6"/>
         <g id="gDone"></g><g id="gCur"></g><g id="gTmp"></g>
       </svg>
-      <div class="empty" id="empty">Elige una obra o pulsa <b>&nbsp;+ Nueva obra&nbsp;</b> y sube el plano (PDF o imagen).<br>Después dibuja los tramos, arquetas y pozos sobre él.</div>
+      <div class="empty" id="empty"><div><button id="eNueva" class="pri" style="font-size:16px;padding:12px 22px">+ Subir plano nuevo</button><br><br>Sube el plano de la obra (PDF o imagen) y dibuja encima los tramos, arquetas y pozos.<br>Para seguir con una obra ya empezada, elígela en el desplegable de arriba.</div></div>
       <div class="now" id="now" hidden></div>
       <div class="hint" id="hint" hidden></div>
       <div class="dlg" id="dlg" hidden></div>
@@ -164,7 +159,7 @@ svg .tmpp{fill:var(--new)}
         <div class="tbl part" id="partBox"></div>
         <div class="foot">
           <span id="partTot"></span>
-          <span class="row"><button id="bExcel">Excel</button><button id="bPng">Imagen del plano</button><button id="bPres" class="pri">Pasar al presupuesto</button></span>
+          <span class="row"><button id="bExcel">Excel</button><button id="bPng">Lámina del plano</button><button id="bPres" class="pri">Pasar al presupuesto</button></span>
         </div>
       </div>
     </section>
@@ -180,10 +175,10 @@ svg .tmpp{fill:var(--new)}
   <div class="msg" id="nMsg"></div>
   <div class="row"><button id="nCan">Cancelar</button><button id="nOk" class="pri">Crear</button></div>
 </div></div>
-<div class="modal" id="mImg" hidden><div style="width:min(1000px,100%)">
-  <h2>Imagen del plano</h2><img id="imgOut" alt="Plano con la red" style="max-width:100%;border:1px solid var(--rule)">
-  <small>Clic derecho sobre la imagen → «Guardar imagen como…», o pulsa Descargar.</small>
-  <div class="row"><a id="imgA" download="plano_red.png"><button class="pri">Descargar PNG</button></a><button id="imgC">Cerrar</button></div>
+<div class="modal" id="mImg" hidden><div style="width:min(1200px,100%)">
+  <h2>Lámina del plano (A3)</h2><img id="imgOut" alt="Lámina con la red de saneamiento" style="max-width:100%;max-height:70vh;object-fit:contain;border:1px solid var(--rule)">
+  <small>PNG para insertar en Word o enviar; SVG vectorial para imprimir a escala o abrir en un programa de dibujo.</small>
+  <div class="row"><a id="imgS" download="plano_red.svg"><button>Descargar SVG</button></a><a id="imgA" download="plano_red.png"><button class="pri">Descargar PNG</button></a><button id="imgC">Cerrar</button></div>
 </div></div>
 
 <script>
@@ -248,26 +243,46 @@ const vkey=s=>s.k+":"+s.o.id;
 
 // ---------- dibujo
 function mid(p){const L=plen(p)/2;let a=0;for(let i=1;i<p.length;i++){const d=Math.hypot(p[i][0]-p[i-1][0],p[i][1]-p[i-1][1]);if(a+d>=L&&d>0){const t=(L-a)/d;return[p[i-1][0]+t*(p[i][0]-p[i-1][0]),p[i-1][1]+t*(p[i][1]-p[i-1][1]),Math.atan2(p[i][1]-p[i-1][1],p[i][0]-p[i-1][0])]}a+=d}return[p[0][0],p[0][1],0]}
-function draw(s,cur){
-  const g=cur?$("gCur"):$("gDone"),labs=$("labs").checked,o=s.o;
-  if(s.k==="T"){if(!o.pts||o.pts.length<2)return;const c=col(String(o.dn)),pts=o.pts.map(p=>p.join(",")).join(" ");
-    if(cur)g.appendChild(el("polyline",{points:pts,class:"halo"}));
-    const pl=el("polyline",{points:pts,class:"seg"+(o.dn==="RAM"?" ram":"")+(o.dn==="GAL"?" gal":"")+(cur?" cur":""),stroke:c});
-    pl.addEventListener("click",e=>{if(mode)return;e.stopPropagation();go(items().indexOf(s))});g.appendChild(pl);
+// Trazado tipo plano de ingenieria: grosor por diametro, galeria en doble linea,
+// arqueta = cuadrado con aspa, pozo = doble circulo con centro, rotulos condensados
+// con halo blanco. Las medidas van en unidades del plano (normalizado a 2000 px de ancho).
+const DN_W={"160":3,"200":3.5,"250":4.2,"300":5,"400":6,"500":7,"GAL":11,"RAM":2.6};
+const INK="#1d2731",FONT="'Arial Narrow','Roboto Condensed',Arial,sans-serif";
+const DN_CORTO=d=>d==="GAL"?"GAL":d==="RAM"?"RAM":"Ø"+d;
+function rotulo(x,y,txt,size,fill,extra){const t=el("text",Object.assign({x,y,class:"lab","font-family":FONT,"font-size":size,"font-weight":600,fill,stroke:"#fff","stroke-width":size*.28,"stroke-linejoin":"round","paint-order":"stroke"},extra||{}));t.textContent=txt;return t}
+// tk: aumento de rotulos para la lamina (texto minimo ~1,9 mm impreso en A3)
+function draw(s,cur,g0,tk=1){
+  const g=g0||(cur?$("gCur"):$("gDone")),labs=g0?true:$("labs").checked,o=s.o,u=W()/2000,hl=css("--hl"),tu=u*tk;
+  const pick=e=>{if(mode)return;e.stopPropagation();go(items().indexOf(s))};
+  if(s.k==="T"){if(!o.pts||o.pts.length<2)return;const dn=String(o.dn),c=cur?hl:col(dn),pts=o.pts.map(p=>p.join(",")).join(" "),w=(DN_W[dn]||4)*u;
+    const base={points:pts,fill:"none","stroke-linejoin":"round","stroke-linecap":"butt"};
+    if(cur)g.appendChild(el("polyline",Object.assign({},base,{stroke:hl,"stroke-width":w+20*u,opacity:.22,"stroke-linecap":"round"})));
+    g.appendChild(el("polyline",Object.assign({},base,{class:"seg",stroke:c,"stroke-width":w},dn==="RAM"?{"stroke-dasharray":`${10*u} ${5*u}`}:{})));
+    if(dn==="GAL")g.appendChild(el("polyline",Object.assign({},base,{class:"seg",stroke:"#fff","stroke-width":w-3.2*u})));
+    if(!g0){const hit=el("polyline",Object.assign({},base,{class:"hit",stroke:"transparent","stroke-width":Math.max(w,18*u)}));hit.addEventListener("click",pick);g.appendChild(hit)}
+    for(const p of [o.pts[0],o.pts[o.pts.length-1]])g.appendChild(el("circle",{cx:p[0],cy:p[1],r:w*.75,fill:c,"pointer-events":"none"}));
     if(cur||labs){const[mx,my,an]=mid(o.pts);let d=an*180/Math.PI;if(d>90)d-=180;if(d<-90)d+=180;
-      const t=el("text",{x:mx,y:my,class:"lab","font-size":cur?18:12.5,fill:cur?css("--hl"):c,"text-anchor":"middle",transform:`rotate(${d.toFixed(1)} ${mx} ${my}) translate(0 ${cur?-14:-9})`});
-      t.textContent=cur?`${o.id} · ${o.long==null?"?":fmt(o.long)} m · ${DN_TXT(String(o.dn))}`:`${o.id} ${o.long==null?"?":(+o.long).toLocaleString("es-ES")}`;g.appendChild(t)}
-  }else{const r=s.k==="P"?13:11,c=css("--arq");
-    const sh=s.k==="P"?el("circle",{cx:o.x,cy:o.y,r,class:"reg"+(cur?" cur":""),fill:"#fff",stroke:o.tipo==="nuevo"?css("--hl"):c}):el("rect",{x:o.x-r,y:o.y-r,width:2*r,height:2*r,class:"reg"+(cur?" cur":""),fill:"#fff",stroke:c});
-    sh.addEventListener("click",e=>{if(mode)return;e.stopPropagation();go(items().indexOf(s))});g.appendChild(sh);
-    if(s.k==="A")g.appendChild(el("line",{x1:o.x-r,y1:o.y-r,x2:o.x+r,y2:o.y+r,stroke:c,"stroke-width":2,"pointer-events":"none"}));
-    if(cur||labs){const t=el("text",{x:o.x+16,y:o.y+(cur?-16:22),class:"lab","font-size":cur?17:11.5,fill:cur?css("--hl"):c});
-      t.textContent=s.k==="A"?(cur?`${o.id} · ${o.medida}${o.prof?" · "+fmt(o.prof)+" m":""}`:o.medida):(cur?`${o.id} · ${o.tipo==="nuevo"?"nuevo Ø"+(o.diam||100):"pozo"} · ${o.prof?fmt(o.prof)+" m":"prof. s/d"}`:o.id);g.appendChild(t)}}
+      const L=o.long==null?"?":fmt(o.long),fs=(cur?16:10)*tu;
+      g.appendChild(rotulo(mx,my,cur?`${o.id} · ${DN_TXT(dn)} · L=${L} m`:`${o.id} ${DN_CORTO(dn)} L=${L}`,fs,c,{"text-anchor":"middle",transform:`rotate(${d.toFixed(1)} ${mx} ${my}) translate(0 ${-(w/2+fs*.45).toFixed(1)})`}))}
+  }else{const c=cur?hl:(s.k==="P"&&o.tipo==="nuevo"?hl:INK),sw=(cur?2.8:1.6)*u;let sh;
+    if(s.k==="A"){const r=8.5*u;sh=el("rect",{x:o.x-r,y:o.y-r,width:2*r,height:2*r,class:"reg",fill:"#fff",stroke:c,"stroke-width":sw});g.appendChild(sh);
+      for(const[a,b]of[[-1,-1],[-1,1]])g.appendChild(el("line",{x1:o.x+a*r,y1:o.y+b*r,x2:o.x-a*r,y2:o.y-b*r,stroke:c,"stroke-width":.9*u,"pointer-events":"none"}));
+    }else{const r=12*u;sh=el("circle",{cx:o.x,cy:o.y,r,class:"reg",fill:"#fff",stroke:c,"stroke-width":sw});g.appendChild(sh);
+      g.appendChild(el("circle",{cx:o.x,cy:o.y,r:r*.58,fill:"none",stroke:c,"stroke-width":u,"pointer-events":"none"}));
+      g.appendChild(el("circle",{cx:o.x,cy:o.y,r:1.8*u,fill:c,"pointer-events":"none"}))}
+    if(!g0)sh.addEventListener("click",pick);
+    if(cur||labs){const fs=(cur?15:9.5)*tu,off=(s.k==="P"?15:12)*u;
+      const txt=s.k==="A"?(cur?`${o.id} · ${o.medida}${o.prof?" · H="+fmt(o.prof)+" m":""}`:`${o.id} ${o.medida}`)
+        :(cur?`${o.id} · ${o.tipo==="nuevo"?"pozo nuevo Ø"+(o.diam||100):"pozo a reconstruir"} · ${o.prof?"H="+fmt(o.prof)+" m":"H s/d"}`:`${o.id}${o.tipo==="nuevo"?" Ø"+(o.diam||100):""}${o.prof?" H="+fmt(o.prof):""}`);
+      g.appendChild(rotulo(o.x+off,o.y-off*.35,txt,fs,c))}}
 }
 function render(keep){
   $("empty").hidden=!!O;$("gDone").innerHTML=$("gCur").innerHTML="";
   const it=items();it.forEach((s,i)=>{if(i!==idx)draw(s,false)});const s=it[idx];if(s)draw(s,true);
   tabla();totales();foot();$("prog").textContent=`${Math.max(0,idx+1)} / ${it.length}`;
+  $("bPrev").disabled=$("bNext").disabled=!it.length;
+  if(O&&!it.length&&!mode){hint.hidden=false;hint.innerHTML='Obra sin dibujar: pulsa <b>✏ Tramo</b> y marca los puntos de cada tubería sobre el plano, o <b>⊠ Arqueta</b> / <b>○ Pozo</b>. Calibra antes la escala con <b>📏 Escala</b>.'}
+  else if(!mode)hint.hidden=true;
   const now=$("now");if(s){now.hidden=false;now.innerHTML=desc(s)}else now.hidden=true;
   if(!keep)focus(s);const r=$("tb").querySelector("tr.cur");if(r&&!keep)r.scrollIntoView({block:"nearest"});
 }
@@ -330,7 +345,8 @@ window.addEventListener("pointerup",()=>{drag=null});
 
 // ---------- navegación
 function go(i){const n=items().length;idx=Math.max(-1,Math.min(n-1,i));render()}
-function play(){if(timer){stop();return}if(idx>=items().length-1)idx=-1;$("bPlay").textContent="❚❚ Pausa";tick()}
+function play(){if(timer){stop();return}
+  if(!items().length){alertMsg(O?"Esta obra aún no tiene nada dibujado. Reproducir recorre los tramos, arquetas y pozos ya dibujados: empieza con ✏ Tramo, ⊠ Arqueta u ○ Pozo.":"Elige una obra o sube un plano nuevo.");return}if(idx>=items().length-1)idx=-1;$("bPlay").textContent="❚❚ Pausa";tick()}
 function tick(){go(idx+1);if(idx<items().length-1)timer=setTimeout(tick,1300);else stop()}
 function stop(){clearTimeout(timer);timer=null;$("bPlay").textContent="▶ Reproducir"}
 
@@ -411,19 +427,90 @@ $("bPres").onclick=async()=>{if(!O)return;if(!window._partidas)await cargarParti
   try{localStorage.setItem("red_partidas",JSON.stringify({obra:O.id,nombre:O.nombre,ref:O.ref,partidas:window._partidas}))}catch(e){}
   window.open("/","_blank");alertMsg("Partidas preparadas. En el presupuesto de obra, en el paso de partidas, pulsa «Importar desde croquis».")};
 
-// ---------- imagen del plano (PNG con la red en limpio)
-$("bPng").onclick=async()=>{if(!O)return;
-  const K=1.5,cw=Math.round(W()*K),ch=Math.round(H()*K)+90,cv=document.createElement("canvas");cv.width=cw;cv.height=ch;const x=cv.getContext("2d");
-  x.fillStyle="#fff";x.fillRect(0,0,cw,ch);
-  const img=new Image();img.src=$("scan").getAttribute("href");await img.decode();x.globalAlpha=+$("op").value/100;x.drawImage(img,0,0,W()*K,H()*K);x.globalAlpha=1;
-  const keep=idx;idx=-1;render(true);
-  const s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W()} ${H()}" width="${W()*K}" height="${H()*K}"><style>.seg{fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-width:7}.ram{stroke-dasharray:12 7;stroke-width:6}.gal{stroke-width:12}.reg{stroke-width:3.5}.lab{font-family:Consolas,monospace;font-weight:600;paint-order:stroke;stroke:#fff;stroke-width:5px}</style>${$("gDone").innerHTML}</svg>`;
-  idx=keep;render(true);
-  const v=new Image();v.src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(s);await v.decode();x.drawImage(v,0,0);
-  x.fillStyle="#1f4e79";x.font="bold 26px Segoe UI, Arial";x.fillText(`${O.nombre}${O.ref?" · "+O.ref:""} · Red de saneamiento`,24,H()*K+38);
-  x.fillStyle="#5d6b79";x.font="17px Segoe UI, Arial";
-  const tot=O.tramos.reduce((a,t)=>a+up(t.long),0);x.fillText(`Acometidas Europa S.L. · ${tot} ml de tubería · ${O.arquetas.length+(+O.arquetas_sin_localizar.n||0)} arquetas · ${O.pozos.length} pozos · ${new Date().toLocaleDateString("es-ES")} · esquema no apto para replanteo`,24,H()*K+68);
-  const url=cv.toDataURL("image/png");$("imgOut").src=url;$("imgA").href=url;$("imgA").download=`Plano_red_${O.id}.png`;$("mImg").hidden=false};
+// ---------- lamina del plano (A3 horizontal: marco, plano a escala normalizada, leyenda, resumen y cajetin)
+// Unidades de la lamina: 1 = 0,1 mm en A3 (4200 x 2970), asi la escala 1:N es real si se imprime en A3.
+const ESCALAS=[20,25,50,75,100,125,150,200,250,300,400,500,750,1000,1250,1500,2000,2500,5000];
+const xe=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function partir(txt,n){const out=[];let l="";for(const w of String(txt).split(/\s+/)){if((l+" "+w).trim().length>n&&l){out.push(l);l=w}else l=(l+" "+w).trim()}if(l)out.push(l);return out}
+async function lamina(){
+  const SW=4200,SH=2970,M=100,ML=200,PX=3120,PR=SW-M,u=W()/2000,hoy=new Date().toLocaleDateString("es-ES");
+  // encuadre: caja de la red + margen, ajustada a una escala normalizada
+  const P=[];O.tramos.forEach(t=>(t.pts||[]).forEach(p=>P.push(p)));O.arquetas.concat(O.pozos).forEach(a=>P.push([a.x,a.y]));
+  let x0=0,y0=0,x1=W(),y1=H();
+  if(P.length){x0=Math.min(...P.map(p=>p[0]));x1=Math.max(...P.map(p=>p[0]));y0=Math.min(...P.map(p=>p[1]));y1=Math.max(...P.map(p=>p[1]));
+    const pad=Math.max(x1-x0,y1-y0)*.06+40*u;x0=Math.max(0,x0-pad);y0=Math.max(0,y0-pad);x1=Math.min(W(),x1+pad);y1=Math.min(H(),y1+pad)}
+  const vx=ML+30,vy=M+30,vw=PX-ML-60,vh=SH-2*M-60,bw=x1-x0,bh=y1-y0,e=escala();
+  // escala normalizada solo si apenas reduce el dibujo (<=12 %); si no, se llena la lamina y manda la escala grafica
+  let f=Math.min(vw/bw,vh/bh),den=0;
+  if(e>0){const dmin=10000/(e*f),d=ESCALAS.find(d=>d>=dmin);if(d&&d/dmin<=1.12){den=d;f=10000/(e*den)}}
+  const ox=vx+(vw-bw*f)/2-x0*f,oy=vy+(vh-bh*f)/2-y0*f;
+  // red trazada con el mismo estilo que en pantalla, siempre con rotulos
+  const g=el("g",{});items().forEach(s=>draw(s,false,g,Math.max(1,1.9/f)));const red=new XMLSerializer().serializeToString(g);
+  const blob=await (await fetch($("scan").getAttribute("href"))).blob();
+  const fondo=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(blob)});
+  const T=(x,y,t,sz,o)=>`<text x="${x}" y="${y}" font-size="${sz}" ${o||""}>${xe(t)}</text>`;
+  let s=`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${SW} ${SH}" width="${SW}" height="${SH}" font-family="${FONT.replace(/"/g,"'")}" fill="${INK}">
+<rect width="${SW}" height="${SH}" fill="#fff"/>
+<defs><clipPath id="vp"><rect x="${vx}" y="${vy}" width="${vw}" height="${vh}"/></clipPath></defs>
+<g clip-path="url(#vp)"><g transform="translate(${ox.toFixed(2)} ${oy.toFixed(2)}) scale(${f.toFixed(5)})">
+<image href="${fondo}" xlink:href="${fondo}" width="${W()}" height="${H()}" opacity="${+$("op").value/100}" preserveAspectRatio="none"/>${red}</g></g>
+<rect x="${ML}" y="${M}" width="${SW-ML-M}" height="${SH-2*M}" fill="none" stroke="${INK}" stroke-width="7"/>
+<rect x="${ML+14}" y="${M+14}" width="${SW-ML-M-28}" height="${SH-2*M-28}" fill="none" stroke="${INK}" stroke-width="1.5"/>
+<line x1="${PX}" y1="${M+14}" x2="${PX}" y2="${SH-M-14}" stroke="${INK}" stroke-width="4"/>`;
+  // panel derecho
+  const cx=PX+36,cw=PR-14-cx-30,CB=SH-M-14-760;let y=M+70;
+  const cab=t=>{s+=`<rect x="${PX}" y="${y-48}" width="${PR-14-PX}" height="66" fill="${INK}"/>`+T(cx,y,t,36,`fill="#fff" font-weight="700" letter-spacing="3"`);y+=76};
+  cab("LEYENDA");
+  const usados=DN_ORD.filter(d=>O.tramos.some(t=>String(t.dn)===d)),ls=cx+190;
+  usados.forEach(d=>{const w=Math.max(3,(DN_W[d]||4)*u*f);
+    s+=`<line x1="${cx}" y1="${y-11}" x2="${cx+160}" y2="${y-11}" stroke="${col(d)}" stroke-width="${w.toFixed(1)}" ${d==="RAM"?`stroke-dasharray="${(10*u*f).toFixed(0)} ${(5*u*f).toFixed(0)}"`:""}/>`;
+    if(d==="GAL")s+=`<line x1="${cx}" y1="${y-11}" x2="${cx+160}" y2="${y-11}" stroke="#fff" stroke-width="${Math.max(1,w-3.2*u*f).toFixed(1)}"/>`;
+    s+=T(ls,y,d==="GAL"?"Galería visitable":d==="RAM"?"Ramal / acometida (≤ DN200)":"Colector DN"+d,32);y+=50});
+  const r=8.5*u*f,rp=12*u*f,sx=cx+80;
+  if(O.arquetas.length||+O.arquetas_sin_localizar.n){s+=`<rect x="${sx-r}" y="${y-11-r}" width="${2*r}" height="${2*r}" fill="#fff" stroke="${INK}" stroke-width="${1.6*u*f}"/><path d="M${sx-r} ${y-11-r}L${sx+r} ${y-11+r}M${sx-r} ${y-11+r}L${sx+r} ${y-11-r}" stroke="${INK}" stroke-width="${.9*u*f}"/>`+T(ls,y,"Arqueta de registro",32);y+=54}
+  [["reconstruir",INK,"Pozo de registro a reconstruir"],["nuevo",css("--hl"),"Pozo de registro nuevo"]].forEach(([tp,c,txt])=>{if(!O.pozos.some(p=>(p.tipo==="nuevo")===(tp==="nuevo")))return;
+    s+=`<circle cx="${sx}" cy="${y-11}" r="${rp}" fill="#fff" stroke="${c}" stroke-width="${1.6*u*f}"/><circle cx="${sx}" cy="${y-11}" r="${rp*.58}" fill="none" stroke="${c}" stroke-width="${u*f}"/><circle cx="${sx}" cy="${y-11}" r="${1.8*u*f}" fill="${c}"/>`+T(ls,y,txt,32);y+=56});
+  s+=T(cx,y,"Rótulo de tramo: código · diámetro · L = longitud (m)",26,`fill="#5d6b79"`);y+=90;
+  cab("RESUMEN DE MEDICIONES");
+  // filas del resumen con alto ajustado al hueco que queda hasta el cajetin
+  const R=[];usados.forEach(d=>{const ts=O.tramos.filter(t=>String(t.dn)===d);R.push([DN_TXT(d),ts.length+" tr.",ts.reduce((a,t)=>a+up(t.long),0)+" ml"])});
+  R.push(["Total tubería",O.tramos.length+" tr.",O.tramos.reduce((a,t)=>a+up(t.long),0)+" ml",1]);
+  MEDIDAS.forEach(m=>{const n=O.arquetas.filter(a=>a.medida===m).length+(O.arquetas_sin_localizar.medida===m?+O.arquetas_sin_localizar.n||0:0);if(n)R.push(["Arqueta "+m,"",n+" ud"])});
+  const pr=O.pozos.filter(p=>p.tipo!=="nuevo").length,pn=O.pozos.length-pr;if(pr)R.push(["Pozo a reconstruir","",pr+" ud"]);if(pn)R.push(["Pozo nuevo","",pn+" ud"]);
+  const nota=+O.arquetas_sin_localizar.n?`Incluye ${+O.arquetas_sin_localizar.n} arqueta(s) sin localizar en plano.`:"";
+  const rh=Math.min(48,(CB-40-y-(nota?40:0))/R.length),fz=Math.min(32,rh*.68);
+  R.forEach(([a,b,c,bold])=>{const B=bold?`font-weight="700"`:"";s+=T(cx,y,a,fz,B)+T(cx+cw-230,y,b,fz,`text-anchor="end"`)+T(cx+cw,y,c,fz,`text-anchor="end" ${B}`)+`<line x1="${cx}" y1="${(y+rh*.3).toFixed(1)}" x2="${cx+cw}" y2="${(y+rh*.3).toFixed(1)}" stroke="#c9d0d6" stroke-width="2"/>`;y+=rh});
+  if(nota)s+=T(cx,y+6,nota,24,`fill="#5d6b79"`);
+  // escala grafica, abajo a la izquierda dentro del plano
+  if(e>0){const upm=e*f,L=[1,2,5,10,20,25,50,100,200].find(l=>l*upm>=420)||200,bl=L*upm,bx=vx+40,by=vy+vh-70;
+    s+=`<rect x="${bx-24}" y="${by-70}" width="${bl+90}" height="130" fill="#fff" fill-opacity=".9" stroke="${INK}" stroke-width="1.5"/>`;
+    s+=T(bx,by-30,"ESCALA GRÁFICA",24,`font-weight="700" letter-spacing="2"`);
+    for(let i=0;i<4;i++)s+=`<rect x="${(bx+i*bl/4).toFixed(1)}" y="${by-14}" width="${(bl/4).toFixed(1)}" height="16" fill="${i%2?"#fff":INK}" stroke="${INK}" stroke-width="2"/>`;
+    [[0,"0"],[bl/2,String(L/2).replace(".",",")],[bl,L+" m"]].forEach(([dx,t])=>s+=T((bx+dx).toFixed(1),by+36,t,24,`text-anchor="middle"`))}
+  // cajetin
+  const cy0=CB,X0=PX,X1=PR-14,mx=X0+(X1-X0)/2,lab=(x,yy,t)=>T(x+18,yy+36,t.toUpperCase(),24,`fill="#5d6b79" letter-spacing="1.5"`);
+  s+=`<g stroke="${INK}" fill="none"><rect x="${X0}" y="${cy0}" width="${X1-X0}" height="${SH-M-14-cy0}" stroke-width="4"/>
+<line x1="${X0}" y1="${cy0+170}" x2="${X1}" y2="${cy0+170}" stroke-width="2"/><line x1="${X0}" y1="${cy0+400}" x2="${X1}" y2="${cy0+400}" stroke-width="2"/>
+<line x1="${X0}" y1="${cy0+520}" x2="${X1}" y2="${cy0+520}" stroke-width="2"/><line x1="${X0}" y1="${cy0+640}" x2="${X1}" y2="${cy0+640}" stroke-width="2"/>
+<line x1="${mx}" y1="${cy0+520}" x2="${mx}" y2="${cy0+640}" stroke-width="2"/></g>`;
+  s+=T(X0+18,cy0+82,"ACOMETIDAS EUROPA S.L.",58,`font-weight="700" letter-spacing="2"`)+T(X0+18,cy0+136,"Saneamiento · Pocería · Inspección CCTV",32,`fill="#5d6b79"`);
+  s+=lab(X0,cy0+170,"Obra");partir(O.nombre||"",40).slice(0,2).forEach((l,i)=>s+=T(X0+18,cy0+262+i*58,l,46,`font-weight="700"`));
+  if(O.ref)s+=T(X1-18,cy0+206,"Ref. "+O.ref,30,`text-anchor="end" fill="#5d6b79"`);
+  s+=lab(X0,cy0+400,"Plano");s+=T(X0+18,cy0+488,"RED DE SANEAMIENTO · MEDICIONES",44,`font-weight="700"`);
+  s+=lab(X0,cy0+520,"Escala");s+=T(X0+18,cy0+608,den?`1:${den} (A3)${O.escala_px_m?"":" aprox."}`:e>0?"Ver escala gráfica":"S/E",42,`font-weight="700"`);
+  s+=lab(mx,cy0+520,"Fecha");s+=T(mx+18,cy0+608,hoy,42,`font-weight="700"`);
+  s+=T(X0+18,cy0+690,"Esquema de mediciones sobre plano. No apto para replanteo.",28,`fill="#5d6b79"`);
+  s+=T(X0+18,cy0+730,"Cotas y longitudes según parte de trabajo / inspección CCTV.",28,`fill="#5d6b79"`);
+  s+="</svg>";
+  // PNG a resolucion de lamina (~254 ppp en A3) + SVG vectorial
+  const v=new Image();v.src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(s);await v.decode();
+  const cv=document.createElement("canvas");cv.width=SW;cv.height=SH;cv.getContext("2d").drawImage(v,0,0);
+  return{png:cv.toDataURL("image/png"),svg:URL.createObjectURL(new Blob([s],{type:"image/svg+xml"}))};
+}
+$("bPng").onclick=async()=>{if(!O)return;$("bPng").disabled=true;
+  try{const L=await lamina(),nom=`${new Date().toISOString().slice(0,10)}_Plano_red_${O.id}`;
+    $("imgOut").src=L.png;$("imgA").href=L.png;$("imgA").download=nom+".png";$("imgS").href=L.svg;$("imgS").download=nom+".svg";$("mImg").hidden=false}
+  catch(err){alertMsg("No se pudo generar la lámina: "+err.message)}finally{$("bPng").disabled=false}};
 $("imgC").onclick=()=>$("mImg").hidden=true;
 
 // ---------- nueva obra
@@ -453,8 +540,10 @@ document.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLower
   if(e.key==="Escape"&&mode){setMode(null);return}if(mode)return;
   if(e.key==="ArrowRight"){stop();go(idx+1)}else if(e.key==="ArrowLeft"){stop();go(idx-1)}else if(e.key===" "){e.preventDefault();play()}});
 $("cap").innerHTML=DN_ORD.map(k=>`<span><i style="background:${col(k)}"></i>${k==="GAL"?"Galería":k==="RAM"?"Ramal":"DN"+k}</span>`).join("")+"<span>⊠ arqueta · ○ pozo (naranja = nuevo)</span>";
-(async()=>{await listar();const q=new URLSearchParams(location.search).get("obra");let last=null;try{last=localStorage.getItem("red_ultima")}catch(e){}
-  const id=q||last;if(id&&[...$("selObra").options].some(o=>o.value===id)){$("selObra").value=id;abrir(id)}else render()})();
+// Al entrar no se abre ninguna obra (antes reabria la ultima y parecia que no se podia empezar otra); solo con ?obra=<id>
+(async()=>{await listar();const id=new URLSearchParams(location.search).get("obra");
+  if(id&&[...$("selObra").options].some(o=>o.value===id)){$("selObra").value=id;abrir(id)}else render()})();
+$("eNueva").onclick=()=>$("bNueva").click();
 </script>
 </body>
 </html>
